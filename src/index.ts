@@ -25,7 +25,6 @@ import * as lineupTools from './tools/lineup.js';
 // Configuration from environment variables
 const NEVENT_API_URL = process.env.NEVENT_API_URL || 'https://api.nevent.io';
 const NEVENT_JWT_TOKEN = process.env.NEVENT_JWT_TOKEN || '';
-const NEVENT_TENANT_ID = process.env.NEVENT_TENANT_ID;
 
 if (!NEVENT_JWT_TOKEN) {
   console.error('Error: NEVENT_JWT_TOKEN environment variable is required');
@@ -36,7 +35,6 @@ if (!NEVENT_JWT_TOKEN) {
 const client = new NeventClient({
   baseUrl: NEVENT_API_URL,
   jwtToken: NEVENT_JWT_TOKEN,
-  tenantId: NEVENT_TENANT_ID,
 });
 
 // Create the MCP server

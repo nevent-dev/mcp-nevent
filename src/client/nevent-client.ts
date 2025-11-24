@@ -5,7 +5,6 @@
 export interface NeventClientConfig {
   baseUrl: string;
   jwtToken: string;
-  tenantId?: string;
 }
 
 export interface ApiResponse<T> {
@@ -17,26 +16,10 @@ export interface ApiResponse<T> {
 export class NeventClient {
   private baseUrl: string;
   private jwtToken: string;
-  private tenantId?: string;
 
   constructor(config: NeventClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.jwtToken = config.jwtToken;
-    this.tenantId = config.tenantId;
-  }
-
-  /**
-   * Set the current tenant context for multi-tenant operations
-   */
-  setTenant(tenantId: string): void {
-    this.tenantId = tenantId;
-  }
-
-  /**
-   * Get the current tenant ID
-   */
-  getTenantId(): string | undefined {
-    return this.tenantId;
   }
 
   /**
@@ -48,7 +31,6 @@ export class NeventClient {
     options: {
       body?: unknown;
       params?: Record<string, string | number | boolean | undefined>;
-      tenantId?: string;
     } = {}
   ): Promise<ApiResponse<T>> {
     const url = new URL(`${this.baseUrl}${path}`);
@@ -66,12 +48,6 @@ export class NeventClient {
       'Authorization': `Bearer ${this.jwtToken}`,
       'Content-Type': 'application/json',
     };
-
-    // Add tenant header for multi-tenant operations
-    const effectiveTenantId = options.tenantId || this.tenantId;
-    if (effectiveTenantId) {
-      headers['X-Tenant-ID'] = effectiveTenantId;
-    }
 
     const fetchOptions: RequestInit = {
       method,
