@@ -1,51 +1,46 @@
-# MCP Server for Nevent API
+# Nevent MCP Server
 
-A Model Context Protocol (MCP) server that provides tools for managing users and marketing campaigns in the Nevent platform.
+A Model Context Protocol (MCP) server that gives AI agents (Claude Desktop, Claude Code) direct access to Nevent's analytics and segmentation capabilities. Query BigQuery event data and build audience segments using natural language — no SQL or API knowledge required.
 
-## Features
-
-### User Management (14 tools)
-- List, search, and filter users
-- Create, update, and delete users
-- View user purchase history and events
-- Manage custom property definitions
-- Handle communication preferences
-- Export users to CSV/Excel
-
-### Campaign Management (25 tools)
-- Create and manage email, push, SMS, and WhatsApp campaigns
-- Schedule, send, pause, and cancel campaigns
-- View campaign metrics (opens, clicks, bounces)
-- Create and manage user segments for targeting
-- Email templates with MJML support
-- AI-powered email content generation
-
-## Installation
+## Quick Start
 
 ```bash
+# 1. Install
 npm install
-npm run build
+
+# 2. Set your JWT token
+export NEVENT_JWT_TOKEN=your_nevent_jwt_token
+
+# 3. Run
+npm run dev
 ```
+
+## Available Tools (Sprint 1)
+
+| Tool | Description |
+|------|-------------|
+| `nevent_analytics_capabilities` | Discover available BigQuery tables. Call first if unsure what data exists. |
+| `nevent_analytics_table_schema` | Get column definitions for a specific table (requires ADMIN role). |
+| `nevent_analytics_query` | Query a BigQuery collection with dimensions, metrics, filters, time ranges. |
+| `nevent_analytics_filter_values` | Get distinct field values to build valid analytics filters. |
+| `nevent_segmentation_criteria` | List all criteria available for building audience segments. |
+| `nevent_dimension_values` | Autocomplete values for a segmentation criterion. |
+| `nevent_segment_preview` | Preview estimated audience size without saving (always call before execute). |
+| `nevent_segment_execute` | Execute a segment and get paginated matching contacts. |
 
 ## Configuration
 
-The server requires the following environment variables:
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEVENT_JWT_TOKEN` | Yes | — | JWT token for authentication |
+| `NEVENT_DATA_API_URL` | No | `https://data.nevent.es` | nev-data-api base URL |
+| `NEVENT_OPERATION_MODE` | No | `READ_ONLY` | `READ_ONLY` \| `STANDARD` \| `FULL` |
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NEVENT_JWT_TOKEN` | Yes | JWT token for API authentication |
-| `NEVENT_API_URL` | No | API base URL (default: https://api.nevent.io) |
-| `NEVENT_TENANT_ID` | No | Default tenant ID for multi-tenant operations |
-
-### Getting a JWT Token
-
-1. Log in to the Nevent admin panel
-2. Navigate to Settings > API Access
-3. Generate a new API token with the required permissions
+Sprint 1 tools are all read-only — `READ_ONLY` mode is appropriate for all use cases.
 
 ## Usage with Claude Desktop
 
-Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -54,8 +49,7 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
       "command": "node",
       "args": ["/path/to/mcp-nevent/dist/index.js"],
       "env": {
-        "NEVENT_JWT_TOKEN": "your-jwt-token-here",
-        "NEVENT_TENANT_ID": "your-tenant-id"
+        "NEVENT_JWT_TOKEN": "your_token_here"
       }
     }
   }
@@ -65,123 +59,67 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 ## Usage with Claude Code
 
 ```bash
-claude mcp add nevent node /path/to/mcp-nevent/dist/index.js \
-  -e NEVENT_JWT_TOKEN=your-token \
-  -e NEVENT_TENANT_ID=your-tenant-id
+# In your project, add to .claude/mcp.json or use the CLI
+claude mcp add nevent -- node /path/to/mcp-nevent/dist/index.js
+# Then set the env var in your shell before launching Claude Code
+export NEVENT_JWT_TOKEN=your_token
 ```
-
-## Available Tools
-
-### User Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_users` | List users with filters and pagination |
-| `get_user` | Get user by ID |
-| `get_user_by_email` | Get user by email address |
-| `create_user` | Create a new user |
-| `update_user` | Update user information |
-| `delete_user` | Delete a user |
-| `get_user_purchases` | Get user's purchase history |
-| `get_user_events` | Get user's events |
-| `get_property_definitions` | Get custom property definitions |
-| `create_property_definition` | Create custom property |
-| `get_user_communication_preferences` | Get user preferences |
-| `update_user_communication_preferences` | Update preferences |
-| `get_user_count` | Get total user count |
-| `export_users` | Export users to file |
-
-### Campaign Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_campaigns` | List campaigns with filters |
-| `get_campaign` | Get campaign details |
-| `create_campaign` | Create new campaign |
-| `update_campaign` | Update campaign |
-| `delete_campaign` | Delete campaign |
-| `send_campaign` | Send immediately |
-| `schedule_campaign` | Schedule for later |
-| `pause_campaign` | Pause sending |
-| `cancel_campaign` | Cancel campaign |
-| `get_campaign_metrics` | Get performance metrics |
-| `send_test_campaign` | Send test email |
-| `duplicate_campaign` | Duplicate campaign |
-
-### Segment Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_segments` | List segments |
-| `get_segment` | Get segment details |
-| `create_segment` | Create segment |
-| `update_segment` | Update segment |
-| `delete_segment` | Delete segment |
-| `preview_segment` | Preview user count |
-| `execute_segment` | Refresh segment |
-
-### Template Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_email_templates` | List templates |
-| `get_email_template` | Get template |
-| `create_email_template` | Create template |
-| `update_email_template` | Update template |
-| `delete_email_template` | Delete template |
-| `render_email_template` | Render MJML to HTML |
-| `generate_email_content` | AI content generation |
-
-## Examples
-
-### List users from a specific event
-```
-Use list_users with eventId="event123" to get all users who purchased tickets
-```
-
-### Create an email campaign
-```
-1. Create a segment with criteria for targeting
-2. Create an email template with MJML
-3. Create a campaign using the segment and template
-4. Send a test email
-5. Schedule or send the campaign
-```
-
-### Generate AI content
-```
-Use generate_email_content with:
-- prompt: "Promotional email for summer festival early bird tickets"
-- tone: "exciting"
-- length: "medium"
-- language: "es"
-```
-
-## Multi-Tenant Support
-
-The server supports multi-tenant operations. You can:
-
-1. Set a default tenant via `NEVENT_TENANT_ID` environment variable
-2. The server uses this tenant for all API calls
-
-For admin users, the tenant is determined by the JWT token. For superadmin users who need to switch between tenants, additional configuration may be needed.
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Run in development mode
-npm run dev
-
-# Build for production
-npm run build
-
-# Run production build
-npm start
+npm run build        # Compile TypeScript
+npm run dev          # Run with tsx (no build needed)
+npm test             # Run unit tests (68 tests)
+npm run test:watch   # Watch mode
+npm run test:coverage # Coverage report
 ```
 
-## License
+## Architecture
 
-MIT
+```
+src/
+├── index.ts                # MCP server entrypoint
+├── clients/
+│   ├── base-client.ts      # Shared HTTP client (JWT auth, error handling)
+│   └── data-client.ts      # nev-data-api client (data.nevent.es)
+├── config/
+│   └── operation-mode.ts   # READ_ONLY | STANDARD | FULL guard
+├── tools/
+│   └── analytics.ts        # 8 Sprint 1 tool registrations
+├── schemas/
+│   └── analytics.ts        # Zod validation schemas
+└── types/
+    ├── analytics.ts         # BigQuery analytics types
+    ├── segmentation.ts      # Segmentation DSL types
+    └── common.ts            # Error format, pagination, HTTP types
+```
+
+## Error Format
+
+All errors follow a Stripe-inspired structured format:
+
+```json
+{
+  "error": {
+    "type": "authentication_error | invalid_request | api_error | rate_limit_error | not_found",
+    "message": "Human-readable explanation with actionable guidance",
+    "code": "machine_readable_code",
+    "param": "offending_parameter (when applicable)"
+  }
+}
+```
+
+## Workflow Tips
+
+For best results with analytics queries:
+1. Call `nevent_analytics_capabilities` to see available tables
+2. Call `nevent_analytics_table_schema` for a specific table to see column names
+3. Call `nevent_analytics_filter_values` to see valid filter values
+4. Call `nevent_analytics_query` with the correct field names
+
+For segmentation:
+1. Call `nevent_segmentation_criteria` to see available criteria and operators
+2. Call `nevent_dimension_values` with a `criterion_id` to see valid values
+3. Call `nevent_segment_preview` to validate your segment definition
+4. Call `nevent_segment_execute` to get the full paginated contact list
