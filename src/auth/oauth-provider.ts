@@ -227,6 +227,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
         scope: params.scopes?.join(' ') ?? '',
         state: params.state ?? '',
         resource: params.resource?.toString() ?? '',
+        clientName: client.client_name ?? undefined,
       })
     );
   }
@@ -316,6 +317,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
           state,
           resource,
           errorMessage: 'Email and password are required.',
+          clientName: client.client_name ?? undefined,
         })
       );
       return;
@@ -344,6 +346,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
           resource,
           errorMessage: 'Invalid email or password. If you do not have a Nevent account, register below.',
           showRegisterPrompt: true,
+          clientName: client.client_name ?? undefined,
         })
       );
       return;

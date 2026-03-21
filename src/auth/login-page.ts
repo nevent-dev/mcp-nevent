@@ -18,6 +18,8 @@
  *   - Primary: #2c1dd0, Secondary: #975cf8
  *   - Gradient: linear-gradient(45deg, #2c1dd0, #975cf8)
  *   - Font: Poppins
+ * - When `clientName` is provided, the header shows both the Nevent wordmark
+ *   and the client icon with a connector between them.
  *
  * @module auth/login-page
  */
@@ -51,13 +53,65 @@ export interface LoginPageParams {
    * correspond to any Nevent user account.
    */
   showRegisterPrompt?: boolean;
+  /**
+   * Optional human-readable name of the OAuth client (e.g. "Claude", "ChatGPT").
+   * When provided, the page header shows "Connect Nevent with {clientName}"
+   * along with both the Nevent wordmark and a client-specific icon.
+   * When omitted, the page defaults to "Single Sign-On".
+   */
+  clientName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Client icon helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the background colour for a client icon based on the client name.
+ *
+ * Known mappings:
+ * - "claude"            → Anthropic orange (#D97757)
+ * - "chatgpt"/"openai"  → OpenAI green (#10A37F)
+ * - "gemini"/"google"   → Google blue (#4285F4)
+ * - "cursor"            → Black (#000000)
+ * - unknown             → Neutral gray (#6B7280)
+ *
+ * @param nameLower - Lowercase client name.
+ * @returns Hex colour string.
+ */
+function clientIconColor(nameLower: string): string {
+  if (nameLower.includes('claude')) return '#D97757';
+  if (nameLower.includes('chatgpt') || nameLower.includes('openai')) return '#10A37F';
+  if (nameLower.includes('gemini') || nameLower.includes('google')) return '#4285F4';
+  if (nameLower.includes('cursor')) return '#000000';
+  return '#6B7280';
+}
+
+/**
+ * Renders a small rounded-square icon for the OAuth client.
+ *
+ * Displays the first character of the client name centred on a coloured
+ * background. The colour is derived from known client mappings.
+ *
+ * @param clientName - Human-readable client name, already XSS-escaped.
+ * @returns HTML string for the client icon element.
+ */
+function renderClientIcon(clientName: string): string {
+  const nameLower = clientName.toLowerCase();
+  const color = clientIconColor(nameLower);
+  // Use first character of the display name (already escaped by caller)
+  const letter = clientName.charAt(0).toUpperCase();
+  return `<div class="client-icon" style="background:${color};">${letter}</div>`;
 }
 
 /**
  * Generates the full HTML string for the Nevent MCP login page.
  *
- * The page is branded to match admin.nevent.es and styled as the
- * "Nevent Single Sign-On" portal.
+ * The page is branded to match admin.nevent.es. When `clientName` is
+ * supplied, the header shows both the Nevent wordmark and a client icon
+ * connected by a dotted line, with the title "Connect Nevent with
+ * {clientName}". Without a client name the title defaults to
+ * "Single Sign-On".
  *
  * @param params - Render parameters including OAuth flow context and
  *   optional error / registration messages.
@@ -69,6 +123,7 @@ export interface LoginPageParams {
  * res.send(renderLoginPage({
  *   clientId: req.query.client_id,
  *   redirectUri: req.query.redirect_uri,
+ *   clientName: client.client_name,
  *   ...
  * }));
  * ```
@@ -85,12 +140,48 @@ export function renderLoginPage(params: LoginPageParams): string {
     resource = '',
     errorMessage,
     showRegisterPrompt,
+    clientName,
   } = params;
 
   // Escape HTML entities to prevent XSS through query parameters
   const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+  // ---- Title logic --------------------------------------------------------
+  // Use client name when available, fall back to generic "Single Sign-On"
+  const escapedClientName = clientName ? esc(clientName) : '';
+  const pageTitle = escapedClientName
+    ? `Connect Nevent with ${escapedClientName}`
+    : 'Single Sign-On';
+
+  // ---- Header section (logos + connector) ---------------------------------
+  const logoSection = escapedClientName
+    ? `
+    <div class="logo-header">
+      <div class="logo-nevent">
+        <img
+          src="https://admin.nevent.es/assets/images/nevent-logo-black.webp"
+          alt="Nevent"
+          class="nevent-wordmark"
+        />
+      </div>
+      <div class="connector" aria-hidden="true">
+        <div class="connector-dot"></div>
+        <div class="connector-line"></div>
+        <div class="connector-dot"></div>
+      </div>
+      ${renderClientIcon(escapedClientName)}
+    </div>`
+    : `
+    <div class="logo-header logo-header--centered">
+      <img
+        src="https://admin.nevent.es/assets/images/nevent-logo-black.webp"
+        alt="Nevent"
+        class="nevent-wordmark"
+      />
+    </div>`;
+
+  // ---- Alert banners ------------------------------------------------------
   const errorBanner = errorMessage
     ? `
     <div class="alert alert-error">
@@ -124,7 +215,7 @@ export function renderLoginPage(params: LoginPageParams): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nevent — Single Sign-On</title>
+  <title>Nevent — ${pageTitle}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -157,23 +248,73 @@ export function renderLoginPage(params: LoginPageParams): string {
     }
 
     /* -----------------------------------------------------------------------
-       Logo
+       Logo header — Nevent wordmark [connector] Client icon
     ----------------------------------------------------------------------- */
-    .logo-wrap {
-      display: flex;
-      justify-content: center;
-      margin-bottom: 1.75rem;
-    }
-
-    .logo-mark {
-      width: 56px;
-      height: 56px;
-      border-radius: 14px;
-      background: linear-gradient(45deg, #2c1dd0, #975cf8);
+    .logo-header {
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 14px rgba(44, 29, 208, 0.35);
+      gap: 0.75rem;
+      margin-bottom: 1.75rem;
+    }
+
+    .logo-header--centered {
+      justify-content: center;
+    }
+
+    .logo-nevent {
+      display: flex;
+      align-items: center;
+    }
+
+    .nevent-wordmark {
+      max-width: 120px;
+      height: auto;
+      display: block;
+    }
+
+    /* Connector: dot — line — dot */
+    .connector {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+
+    .connector-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #d1d5db;
+      flex-shrink: 0;
+    }
+
+    .connector-line {
+      width: 24px;
+      height: 2px;
+      background: repeating-linear-gradient(
+        to right,
+        #d1d5db 0px,
+        #d1d5db 4px,
+        transparent 4px,
+        transparent 8px
+      );
+      flex-shrink: 0;
+    }
+
+    /* Client icon: rounded square with first letter */
+    .client-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: #ffffff;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
 
     /* -----------------------------------------------------------------------
@@ -185,7 +326,7 @@ export function renderLoginPage(params: LoginPageParams): string {
     }
 
     .heading h1 {
-      font-size: 1.5rem;
+      font-size: 1.35rem;
       font-weight: 700;
       letter-spacing: -0.02em;
       background: linear-gradient(45deg, #2c1dd0, #975cf8);
@@ -193,6 +334,7 @@ export function renderLoginPage(params: LoginPageParams): string {
       -webkit-text-fill-color: transparent;
       background-clip: text;
       margin-bottom: 0.35rem;
+      line-height: 1.3;
     }
 
     .heading .subtitle {
@@ -352,18 +494,12 @@ export function renderLoginPage(params: LoginPageParams): string {
 <body>
   <div class="card">
 
-    <!-- Logo -->
-    <div class="logo-wrap">
-      <div class="logo-mark">
-        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M6 24V6L15 15L24 6V24" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
+    <!-- Logo header: Nevent wordmark + connector + client icon (or wordmark only) -->
+    ${logoSection}
 
     <!-- Title -->
     <div class="heading">
-      <h1>Single Sign-On</h1>
+      <h1>${pageTitle}</h1>
       <p class="subtitle">Sign in with your Nevent account</p>
     </div>
 
