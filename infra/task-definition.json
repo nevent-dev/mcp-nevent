@@ -1,0 +1,85 @@
+{
+  "family": "mcp-nevent",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "mcp-nevent",
+      "image": "ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/mcp-nevent:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "hostPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "NEVENT_DATA_API_URL",
+          "value": "https://data.nevent.es"
+        },
+        {
+          "name": "NEVENT_API_URL",
+          "value": "https://api.nevent.es"
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "value": "http"
+        },
+        {
+          "name": "MCP_PORT",
+          "value": "3000"
+        },
+        {
+          "name": "MCP_SERVER_URL",
+          "value": "https://mcp.nevent.ai"
+        },
+        {
+          "name": "NEVENT_OPERATION_MODE",
+          "value": "READ_ONLY"
+        },
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "NEVENT_JWT_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:eu-west-1:ACCOUNT_ID:secret:mcp-nevent/jwt-token-nPNBug"
+        },
+        {
+          "name": "MCP_JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:eu-west-1:ACCOUNT_ID:secret:mcp-nevent/mcp-jwt-secret-1uVcFy"
+        },
+        {
+          "name": "MONGODB_URI",
+          "valueFrom": "arn:aws:secretsmanager:eu-west-1:ACCOUNT_ID:secret:mcp-nevent/mongodb-uri-jmRPca"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:3000/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mcp-nevent",
+          "awslogs-region": "eu-west-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
