@@ -163,17 +163,20 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
       if (denied) return err(denied);
 
       try {
-        const result = await client.queryAnalytics({
-          collection: params.collection,
-          dimensions: params.dimensions,
-          metrics: params.metrics,
-          timeRange: params.timeRange,
-          filters: params.filters as typeof params.filters,
-          having: params.having as typeof params.having,
-          sort: params.sort,
-          limit: params.limit,
-          compareDimensions: params.compareDimensions,
-        });
+        const result = await client.queryAnalytics(
+          {
+            collection: params.collection,
+            dimensions: params.dimensions,
+            metrics: params.metrics,
+            timeRange: params.timeRange,
+            filters: params.filters as typeof params.filters,
+            having: params.having as typeof params.having,
+            sort: params.sort,
+            limit: params.limit,
+            compareDimensions: params.compareDimensions,
+          },
+          params.tenant_id
+        );
         return ok(result);
       } catch (caught) {
         return err(toErrorEnvelope(caught));
