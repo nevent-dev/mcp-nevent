@@ -12,6 +12,21 @@
  * 3. `MongoRefreshTokenStore` — Long-lived refresh tokens (30-day TTL).
  *    Collection: `oauth_refresh_tokens`.
  *
+ * ## Token revocation design (stateless access tokens)
+ *
+ * Access tokens are short-lived stateless JWTs (1-hour expiry). We deliberately
+ * do NOT store access tokens in MongoDB. This means:
+ *   - No per-request database lookup for bearer token validation (JWT-only).
+ *   - Access token revocation has up to a 1-hour window. This is an accepted
+ *     trade-off: users who are logged out may continue to use the MCP server
+ *     until their access token expires naturally.
+ *   - Refresh tokens ARE stored in MongoDB and can be immediately revoked,
+ *     which prevents new access tokens from being issued.
+ *
+ * Decision: Option A (stateless JWTs) was chosen over a Redis/MongoDB denylist
+ * because the MCP server is primarily used interactively; a 1-hour revocation
+ * window is acceptable for this use case.
+ *
  * All collections live in the database referenced by `MONGODB_URI`. The
  * `initialize()` method creates TTL indexes on first startup; it is safe to
  * call repeatedly (MongoDB `createIndex` is idempotent).
@@ -61,6 +76,12 @@ export interface AuthCodeDocument {
   resource?: string;
   /** Sub (user identifier) for the authenticated Nevent user. */
   userId: string;
+  /** User email from nev-api login response. */
+  email: string;
+  /** User role from nev-api login response (e.g. ADMIN, SUPERADMIN). */
+  role: string;
+  /** Tenant ID from nev-api login response. */
+  tenantId: string;
   /** Creation timestamp — used for TTL index (5-minute expiry). */
   createdAt: Date;
 }
@@ -77,29 +98,15 @@ export interface RefreshTokenDocument {
   scopes: string[];
   /** Sub (user identifier). */
   userId: string;
+  /** User email from nev-api login response. */
+  email: string;
+  /** User role from nev-api login response (e.g. ADMIN, SUPERADMIN). */
+  role: string;
+  /** Tenant ID from nev-api login response. */
+  tenantId: string;
   /** Optional RFC 8707 resource indicator. */
   resource?: string;
   /** Creation timestamp — used for TTL index (30-day expiry). */
-  createdAt: Date;
-}
-
-/** MongoDB document for an access token. */
-export interface AccessTokenDocument {
-  /** The access token value. */
-  token: string;
-  /** Associated client ID. */
-  clientId: string;
-  /** Scopes granted. */
-  scopes: string[];
-  /** Sub (user identifier). */
-  userId: string;
-  /** Optional RFC 8707 resource indicator. */
-  resource?: string;
-  /** Expiry timestamp (unix seconds). */
-  expiresAt: number;
-  /** Whether the token has been revoked. */
-  revoked: boolean;
-  /** Creation timestamp — used for TTL index (1-hour expiry). */
   createdAt: Date;
 }
 
@@ -241,7 +248,7 @@ export class MongoAuthCodeStore {
  * Persistent store for OAuth 2.1 refresh tokens.
  *
  * A TTL index expires tokens after 30 days. Revocation is also supported via
- * the `revoke()` method (soft-delete by setting `revoked: true`).
+ * the `consume()` method (hard delete).
  *
  * @example
  * ```ts
@@ -295,72 +302,6 @@ export class MongoRefreshTokenStore {
 }
 
 // ---------------------------------------------------------------------------
-// MongoAccessTokenStore
-// ---------------------------------------------------------------------------
-
-/**
- * Persistent store for OAuth 2.1 access tokens.
- *
- * Tokens expire automatically via a TTL index after 1 hour. `verifyToken`
- * also enforces the `expiresAt` timestamp in application-level code.
- *
- * @example
- * ```ts
- * const store = new MongoAccessTokenStore(db);
- * await store.initialize();
- * ```
- */
-export class MongoAccessTokenStore {
-  private collection: Collection<AccessTokenDocument>;
-
-  constructor(db: Db) {
-    this.collection = db.collection<AccessTokenDocument>('oauth_access_tokens');
-  }
-
-  /**
-   * Creates indexes. Idempotent — safe to call on every startup.
-   */
-  async initialize(): Promise<void> {
-    await this.collection.createIndex({ token: 1 }, { unique: true });
-    // 1-hour TTL for access tokens (matching JWT expiry)
-    await this.collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 3600 });
-  }
-
-  /**
-   * Saves a new access token document.
-   *
-   * @param doc - Full access token document.
-   */
-  async save(doc: AccessTokenDocument): Promise<void> {
-    await this.collection.insertOne(doc);
-  }
-
-  /**
-   * Retrieves a non-revoked, non-expired access token document.
-   *
-   * @param token - The access token string.
-   */
-  async find(token: string): Promise<AccessTokenDocument | undefined> {
-    const now = Math.floor(Date.now() / 1000);
-    const doc = await this.collection.findOne({
-      token,
-      revoked: false,
-      expiresAt: { $gt: now },
-    });
-    return doc ?? undefined;
-  }
-
-  /**
-   * Marks an access token as revoked.
-   *
-   * @param token - The access token string to revoke.
-   */
-  async revoke(token: string): Promise<void> {
-    await this.collection.updateOne({ token }, { $set: { revoked: true } });
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Store container + MongoDB lifecycle
 // ---------------------------------------------------------------------------
 
@@ -369,7 +310,6 @@ export interface OAuthStores {
   clients: MongoClientStore;
   authCodes: MongoAuthCodeStore;
   refreshTokens: MongoRefreshTokenStore;
-  accessTokens: MongoAccessTokenStore;
   /** Underlying Mongo client — caller can call .close() on shutdown. */
   mongoClient: MongoClient;
 }
@@ -378,30 +318,35 @@ export interface OAuthStores {
  * Connects to MongoDB, creates all store instances, and runs `initialize()`
  * on each store to ensure indexes exist.
  *
+ * Connection options include timeouts and pool sizing appropriate for
+ * production use. Values are conservative to fail fast on connection issues.
+ *
  * @param mongoUri - MongoDB connection URI (must be set in `MONGODB_URI`).
  * @returns Ready-to-use stores and the underlying MongoClient.
  *
  * @throws Will throw if the MongoDB connection fails.
  */
 export async function createOAuthStores(mongoUri: string): Promise<OAuthStores> {
-  const mongoClient = new MongoClient(mongoUri);
+  const mongoClient = new MongoClient(mongoUri, {
+    connectTimeoutMS: 10000,
+    serverSelectionTimeoutMS: 10000,
+    maxPoolSize: 10,
+  });
   await mongoClient.connect();
   const db = mongoClient.db();
 
   const clients = new MongoClientStore(db);
   const authCodes = new MongoAuthCodeStore(db);
   const refreshTokens = new MongoRefreshTokenStore(db);
-  const accessTokens = new MongoAccessTokenStore(db);
 
   // Initialize indexes in parallel
   await Promise.all([
     clients.initialize(),
     authCodes.initialize(),
     refreshTokens.initialize(),
-    accessTokens.initialize(),
   ]);
 
   console.error('[nevent-mcp] OAuth MongoDB stores initialized');
 
-  return { clients, authCodes, refreshTokens, accessTokens, mongoClient };
+  return { clients, authCodes, refreshTokens, mongoClient };
 }

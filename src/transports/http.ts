@@ -19,7 +19,7 @@
  *   │
  *   ├── POST /mcp                — MCP JSON-RPC (requireBearerAuth)
  *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth)
- *   ├── DELETE /mcp              — Session termination
+ *   ├── DELETE /mcp              — Session termination (requireBearerAuth)
  *   └── GET  /health             — Health check (no auth)
  * ```
  *
@@ -29,10 +29,31 @@
  * `McpServer` instance. Sessions are keyed by `Mcp-Session-Id` header. The
  * SDK's `sessionIdGenerator` assigns UUIDs on initialization.
  *
+ * A background interval prunes orphaned sessions (those not cleaned up via
+ * transport close events) every 30 minutes to prevent memory leaks.
+ *
  * ## Rate limiting
  *
  * `express-rate-limit` is applied on all `/mcp` and `/authorize` endpoints to
  * prevent brute-force attacks.
+ *
+ * ## CORS
+ *
+ * The `MCP_ALLOWED_ORIGINS` environment variable controls CORS. Set it to a
+ * comma-separated list of allowed origins for production deployments.
+ * Defaults to `*` for local development.
+ *
+ * Production example:
+ * ```
+ * MCP_ALLOWED_ORIGINS=https://claude.ai,https://chatgpt.com
+ * ```
+ *
+ * ## Signal handling
+ *
+ * `createHttpApp()` returns a `shutdown()` function. Signal handlers
+ * (`SIGTERM`, `SIGINT`) are registered in `index.ts` — NOT here — so that
+ * the same server can be started and stopped by tests without registering
+ * duplicate process-level handlers.
  *
  * @module transports/http
  */
@@ -73,12 +94,23 @@ export interface HttpTransportConfig {
   dataClient: DataClient;
 }
 
+/** Result of `createHttpApp()` — app plus a shutdown function. */
+export interface HttpAppResult {
+  /** Configured Express application. */
+  app: express.Application;
+  /**
+   * Graceful shutdown function. Closes all active sessions and the MongoDB
+   * connection. Should be called on SIGTERM / SIGINT from `index.ts`.
+   */
+  shutdown: () => Promise<void>;
+}
+
 // ---------------------------------------------------------------------------
 // Transport registry
 // ---------------------------------------------------------------------------
 
 /** Active MCP transport sessions, keyed by session ID. */
-const activeSessions: Record<string, StreamableHTTPServerTransport> = {};
+const activeSessions: Record<string, { transport: StreamableHTTPServerTransport; createdAt: Date }> = {};
 
 // ---------------------------------------------------------------------------
 // Rate limiters
@@ -109,26 +141,22 @@ const mcpRateLimiter = rateLimit({
 /**
  * Creates and configures the Express application with all MCP and OAuth routes.
  *
- * This is the main entry point for HTTP transport. Call `app.listen()` on the
- * returned app to start accepting connections.
+ * Returns both the Express app and a `shutdown()` function. Signal handlers
+ * are NOT registered here — they belong in `index.ts` to avoid registering
+ * duplicate process-level handlers when the module is imported multiple times
+ * (e.g., in tests).
  *
  * @param config - HTTP transport configuration.
- * @returns A promise resolving to the configured Express `Application`.
+ * @returns A promise resolving to `{ app, shutdown }`.
  *
  * @example
  * ```ts
- * const app = await createHttpApp({
- *   port: 3000,
- *   mcpServerUrl: new URL('https://mcp.nevent.es'),
- *   jwtSecret: process.env.MCP_JWT_SECRET!,
- *   mongoUri: process.env.MONGODB_URI!,
- *   neventApiUrl: 'https://api.nevent.es',
- *   dataClient,
- * });
- * app.listen(config.port, () => console.log('Listening on :3000'));
+ * const { app, shutdown } = await createHttpApp({ ... });
+ * app.listen(3000);
+ * process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
  * ```
  */
-export async function createHttpApp(config: HttpTransportConfig): Promise<express.Application> {
+export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAppResult> {
   const app = express();
 
   // -------------------------------------------------------------------------
@@ -138,10 +166,26 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
-  // CORS: expose Mcp-Session-Id so browser-based clients can read it
+  // CORS: expose Mcp-Session-Id so browser-based clients can read it.
+  //
+  // The `MCP_ALLOWED_ORIGINS` environment variable controls allowed origins.
+  // In development, leave it unset to default to `*`.
+  // In production, set it to a comma-separated list of allowed origins, e.g.:
+  //   MCP_ALLOWED_ORIGINS=https://claude.ai,https://chatgpt.com
+  const allowedOriginsEnv = process.env['MCP_ALLOWED_ORIGINS'];
+  const corsOrigin: cors.CorsOptions['origin'] = allowedOriginsEnv
+    ? allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean)
+    : '*';
+
+  if (allowedOriginsEnv) {
+    console.error(`[nevent-mcp] CORS restricted to: ${allowedOriginsEnv}`);
+  } else {
+    console.error('[nevent-mcp] CORS origin: * (set MCP_ALLOWED_ORIGINS for production)');
+  }
+
   app.use(
     cors({
-      origin: '*',
+      origin: corsOrigin,
       exposedHeaders: ['Mcp-Session-Id'],
       allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID'],
     })
@@ -165,13 +209,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   // OAuth 2.1 router (SDK-managed endpoints)
   // -------------------------------------------------------------------------
 
-  // Install all standard OAuth endpoints at the application root:
-  //   GET  /.well-known/oauth-authorization-server
-  //   GET  /.well-known/oauth-protected-resource/<path>
-  //   POST /register
-  //   GET  /authorize   → calls provider.authorize() (serves login page)
-  //   POST /token
-  //   POST /revoke
   app.use(
     authRateLimiter,
     mcpAuthRouter({
@@ -186,12 +223,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   // POST /authorize — custom handler for HTML form submission
   // -------------------------------------------------------------------------
 
-  /**
-   * The SDK's `GET /authorize` handler calls `provider.authorize()` which
-   * serves the login HTML. When the user submits the form, the browser POSTs
-   * to `/authorize`. The SDK does NOT handle this POST natively for the
-   * "login page served by provider" pattern, so we handle it here.
-   */
   app.post('/authorize', authRateLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
       await provider.handleLoginPost(req.body as Parameters<typeof provider.handleLoginPost>[0], res);
@@ -223,7 +254,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
     try {
       // Reuse existing session transport
       if (sessionId && activeSessions[sessionId]) {
-        await activeSessions[sessionId].handleRequest(req, res, req.body);
+        await activeSessions[sessionId].transport.handleRequest(req, res, req.body);
         return;
       }
 
@@ -233,7 +264,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
             console.error(`[nevent-mcp] Session initialized: ${newSessionId}`);
-            activeSessions[newSessionId] = transport;
+            activeSessions[newSessionId] = { transport, createdAt: new Date() };
           },
         });
 
@@ -294,7 +325,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
     }
 
     try {
-      await activeSessions[sessionId].handleRequest(req, res);
+      await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
       console.error('[nevent-mcp] Error handling GET /mcp:', err);
       if (!res.headersSent) {
@@ -307,7 +338,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   // DELETE /mcp — Session termination
   // -------------------------------------------------------------------------
 
-  app.delete('/mcp', bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/mcp', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
@@ -318,7 +349,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
     console.error(`[nevent-mcp] Session termination requested: ${sessionId}`);
 
     try {
-      await activeSessions[sessionId].handleRequest(req, res);
+      await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
       console.error('[nevent-mcp] Error handling DELETE /mcp:', err);
       if (!res.headersSent) {
@@ -331,11 +362,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   // GET /health — Health check (no auth required)
   // -------------------------------------------------------------------------
 
-  /**
-   * Health check endpoint. Returns 200 with a JSON body when the server is
-   * running. Useful for AWS ELB/ALB health checks and container orchestration
-   * liveness probes.
-   */
   app.get('/health', (_req: Request, res: Response): void => {
     res.json({
       status: 'ok',
@@ -347,16 +373,47 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
   });
 
   // -------------------------------------------------------------------------
-  // Graceful shutdown
+  // Orphaned session cleanup (every 30 minutes)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Periodic cleanup for sessions that were not closed via the transport
+   * `onclose` event (e.g., clients that disconnected without a DELETE /mcp).
+   * Sessions older than 30 minutes are considered orphaned and removed.
+   */
+  const SESSION_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    const orphaned = Object.entries(activeSessions).filter(
+      ([, { createdAt }]) => now - createdAt.getTime() > SESSION_MAX_AGE_MS
+    );
+    for (const [sid] of orphaned) {
+      console.error(`[nevent-mcp] Cleaning up orphaned session: ${sid}`);
+      activeSessions[sid].transport.close().catch(() => {
+        // Ignore errors during cleanup — session may already be closed
+      });
+      delete activeSessions[sid];
+    }
+    if (orphaned.length > 0) {
+      console.error(`[nevent-mcp] Cleaned up ${orphaned.length} orphaned session(s)`);
+    }
+  }, SESSION_MAX_AGE_MS);
+
+  // Prevent the interval from keeping the process alive on graceful shutdown
+  cleanupInterval.unref();
+
+  // -------------------------------------------------------------------------
+  // Shutdown function (returned to caller — NOT registered as signal handler)
   // -------------------------------------------------------------------------
 
   const shutdown = async (): Promise<void> => {
     console.error('[nevent-mcp] Shutting down HTTP transport...');
+    clearInterval(cleanupInterval);
     const sessionIds = Object.keys(activeSessions);
     await Promise.allSettled(
       sessionIds.map(async (sid) => {
         try {
-          await activeSessions[sid].close();
+          await activeSessions[sid].transport.close();
           delete activeSessions[sid];
         } catch (err) {
           console.error(`[nevent-mcp] Error closing session ${sid}:`, err);
@@ -367,8 +424,5 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<expres
     console.error('[nevent-mcp] HTTP transport shutdown complete');
   };
 
-  process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
-  process.on('SIGINT', () => void shutdown().then(() => process.exit(0)));
-
-  return app;
+  return { app, shutdown };
 }

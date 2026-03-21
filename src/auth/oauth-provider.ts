@@ -18,23 +18,27 @@
  * 6. Client uses Bearer token to access MCP endpoints. The SDK middleware
  *    calls `provider.verifyAccessToken()` on each request.
  *
- * ## Login — existing users only
- *
- * Registration is NOT supported via the MCP flow. Users must already have a
- * Nevent account. If a login attempt fails because the user doesn't exist,
- * the authorize endpoint shows a message directing them to admin.nevent.es.
- *
- * ## Credential validation
+ * ## Credential validation — aligned with nev-api
  *
  * Credentials are validated by calling `POST /auth/admin/login` on nev-api.
- * If nev-api returns a 401, the login fails. If it returns a userId / sub,
- * that identifier is embedded in the issued tokens.
+ * The nev-api response contains an `access_token` JWT that carries user
+ * metadata (userId, email, role, tenantId). These claims are decoded and
+ * embedded into the MCP access token, aligning the token format with
+ * nev-api's `CustomAuthenticationFilter` expectations.
+ *
+ * ## Token revocation
+ *
+ * Access tokens are stateless JWTs with a 1-hour expiry. Immediate revocation
+ * of access tokens is not supported — the 1-hour window is an accepted
+ * trade-off. Only refresh tokens are stored in MongoDB and can be immediately
+ * revoked. When an access token revocation is requested, a warning is logged.
  *
  * @module auth/oauth-provider
  */
 
 import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
+import jwt from 'jsonwebtoken';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
@@ -53,14 +57,25 @@ import { renderLoginPage } from './login-page.js';
 
 /** Result of a successful Nevent credential validation. */
 interface NeventAuthResult {
+  /** Nevent user ID (sub claim from nev-api JWT). */
   userId: string;
+  /** User email address. */
+  email: string;
+  /** User role (e.g. ADMIN, SUPERADMIN). */
+  role: string;
+  /** Tenant ID. */
+  tenantId: string;
 }
 
 /**
  * Validates a user's email + password against the Nevent API.
  *
- * Calls `POST /auth/admin/login` on nev-api and expects a 200 with a `userId`
- * (or `sub`) field. Returns `null` if the credentials are invalid.
+ * Calls `POST /auth/admin/login` on nev-api and, on success, decodes the
+ * returned `access_token` JWT to extract user metadata (userId, email, role,
+ * tenantId). These values are later embedded in the MCP access token.
+ *
+ * A 10-second timeout is applied to the fetch call to prevent hanging on
+ * nev-api availability issues.
  *
  * @param neventApiUrl - Base URL of nev-api, e.g. `https://api.nevent.es`.
  * @param email        - User's email address.
@@ -77,6 +92,7 @@ async function validateNeventCredentials(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -84,13 +100,38 @@ async function validateNeventCredentials(
     }
 
     const data = await response.json() as Record<string, unknown>;
-    // Support both `userId` and `sub` response field names
-    const userId = (data['userId'] ?? data['sub'] ?? data['id']) as string | undefined;
+
+    // nev-api returns { loggedIn, access_token, ... }
+    // The access_token is a JWT containing sub, email, role, tenantId claims.
+    const accessTokenStr = data['access_token'] as string | undefined;
+    if (!accessTokenStr) return null;
+
+    // Decode (without verification) to extract user claims.
+    // We trust the token because we just received it directly from nev-api
+    // over an authenticated request — no need to verify the signature here.
+    const decoded = jwt.decode(accessTokenStr) as Record<string, unknown> | null;
+    if (!decoded) return null;
+
+    const userId = (decoded['sub'] ?? data['userId'] ?? data['id']) as string | undefined;
+    const userEmail = decoded['email'] as string | undefined;
+    const userRole = decoded['role'] as string | undefined;
+    const userTenantId = (decoded['tenantId'] ?? decoded['activeTenantId']) as string | undefined;
+
     if (!userId) return null;
 
-    return { userId };
+    return {
+      userId,
+      email: userEmail ?? email,       // Fall back to form email if claim missing
+      role: userRole ?? 'ADMIN',        // Default to ADMIN (login endpoint is /admin/login)
+      tenantId: userTenantId ?? '',
+    };
   } catch (err) {
-    console.error('[nevent-mcp] Error calling Nevent auth API:', err);
+    // AbortError is thrown by AbortSignal.timeout — treat as transient failure
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error('[nevent-mcp] Timeout calling Nevent auth API (10s)');
+    } else {
+      console.error('[nevent-mcp] Error calling Nevent auth API:', err);
+    }
     return null;
   }
 }
@@ -148,24 +189,15 @@ export class NeventOAuthProvider implements OAuthServerProvider {
   }
 
   // -------------------------------------------------------------------------
-  // authorize() — Serves the login page (GET) or validates credentials (POST)
+  // authorize() — Serves the login page (GET)
   // -------------------------------------------------------------------------
 
   /**
-   * Handles the OAuth authorization endpoint.
+   * Handles the OAuth authorization endpoint (GET /authorize).
    *
-   * The SDK calls this method for BOTH the initial `GET /authorize` (to start
-   * the login UI) and the `POST /authorize` form submission (to validate
-   * credentials). We distinguish the two cases by checking `params` for a
-   * `_credentials` field that the login form appends via a hidden field trick.
-   *
-   * Actually: the SDK calls `authorize()` only for `GET /authorize` and expects
-   * us to redirect or serve HTML. For `POST /authorize` we add an extra Express
-   * route outside the SDK that validates credentials, stores the code, and
-   * redirects — that route is wired in `http.ts`.
-   *
-   * For `GET /authorize`, we simply render the login form; actual credential
-   * validation happens in the POST handler in `http.ts`.
+   * Serves the Nevent login HTML page. The SDK calls this for the initial
+   * GET request. Credential validation happens in `handleLoginPost()` which
+   * is wired to POST /authorize in `http.ts`.
    *
    * @param client - The registered OAuth client making the authorization request.
    * @param params - Standard OAuth authorization parameters (PKCE, scopes, etc.).
@@ -176,8 +208,6 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response
   ): Promise<void> {
-    // Serve the Nevent login page. Credential validation is handled by the
-    // POST /authorize route wired in http.ts which calls handleLoginPost().
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(
       renderLoginPage({
@@ -201,15 +231,21 @@ export class NeventOAuthProvider implements OAuthServerProvider {
    * Validates user credentials submitted via the HTML login form and, if
    * successful, stores an authorization code and redirects the client.
    *
+   * Security: `redirect_uri` is validated against the registered client's
+   * `redirect_uris` list before issuing a code. This prevents open redirect
+   * attacks where a malicious `redirect_uri` could be used to steal
+   * authorization codes.
+   *
    * This method is NOT part of the `OAuthServerProvider` interface; it is
    * called directly by the `POST /authorize` Express route defined in
    * `http.ts`.
    *
    * Flow:
-   * 1. Extract email + password from `req.body`.
-   * 2. Validate against Nevent API.
-   * 3. If invalid → re-render login page with error message.
-   * 4. If valid → store auth code in MongoDB → redirect to `redirect_uri`.
+   * 1. Validate `redirect_uri` is registered for the client.
+   * 2. Extract email + password from `req.body`.
+   * 3. Validate against Nevent API.
+   * 4. If invalid → re-render login page with error message.
+   * 5. If valid → store auth code in MongoDB → redirect to `redirect_uri`.
    *
    * @param formData - Parsed form body containing credentials and OAuth params.
    * @param res      - Express `Response` to redirect or serve error page.
@@ -241,6 +277,23 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       resource,
     } = formData;
 
+    // ---- Open redirect prevention ----
+    // Validate that redirect_uri is registered for this client before doing
+    // anything else. A forged redirect_uri could be used to steal auth codes.
+    const client = await this.stores.clients.getClient(client_id);
+    if (!client) {
+      res.status(400).send('Unknown client_id');
+      return;
+    }
+    const allowedUris: string[] = client.redirect_uris ?? [];
+    if (!allowedUris.includes(redirect_uri)) {
+      res.status(400).send(
+        'redirect_uri is not registered for this client. ' +
+        'Ensure the redirect_uri matches one of the registered redirect URIs.'
+      );
+      return;
+    }
+
     // Basic input validation
     if (!email || !password) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -268,9 +321,8 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     );
 
     if (!authResult) {
-      // Determine if we should show "user not found" vs "invalid password"
-      // We can't distinguish reliably (security best practice), so show generic error.
-      // However, we add a register callout to help new users.
+      // Use a generic error message — do not distinguish user-not-found from
+      // wrong-password to avoid user enumeration (security best practice).
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(
         renderLoginPage({
@@ -300,6 +352,9 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       state,
       resource,
       userId: authResult.userId,
+      email: authResult.email,
+      role: authResult.role,
+      tenantId: authResult.tenantId,
       createdAt: new Date(),
     };
 
@@ -321,7 +376,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
    * Returns the `code_challenge` stored alongside the given authorization code.
    * The SDK uses this to verify the `code_verifier` during the token exchange.
    *
-   * @param _client          - The requesting client (unused — code uniquely
+   * @param _client           - The requesting client (unused — code uniquely
    *   identifies the challenge).
    * @param authorizationCode - The authorization code string.
    * @throws If the code is not found or expired.
@@ -347,11 +402,15 @@ export class NeventOAuthProvider implements OAuthServerProvider {
    * The SDK router validates the PKCE `code_verifier` before calling this
    * method, so we only need to perform business-level validation here.
    *
+   * The access token is generated with nev-api-compatible claims: `sub`,
+   * `email`, `role`, `tenantId`, and `type: 'mcp_access_token'` with
+   * `iss: 'https://nevent.es'`.
+   *
    * Steps:
    * 1. Look up code document in MongoDB.
    * 2. Verify client matches.
    * 3. Consume (delete) the code (single-use).
-   * 4. Generate JWT access token.
+   * 4. Generate JWT access token with user claims.
    * 5. Generate and store opaque refresh token.
    * 6. Return `OAuthTokens`.
    *
@@ -384,9 +443,12 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     const scopes = codeDoc.scopes;
     const resourceUrl = resource ?? (codeDoc.resource ? new URL(codeDoc.resource) : undefined);
 
-    // Generate JWT access token
+    // Generate JWT access token with nev-api-compatible claims
     const { accessToken, expiresAt, expiresIn } = this.tokenService.generateAccessToken({
       userId: codeDoc.userId,
+      email: codeDoc.email,
+      role: codeDoc.role,
+      tenantId: codeDoc.tenantId,
       clientId: client.client_id,
       scopes,
       resource: resourceUrl,
@@ -400,6 +462,9 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       clientId: client.client_id,
       scopes,
       userId: codeDoc.userId,
+      email: codeDoc.email,
+      role: codeDoc.role,
+      tenantId: codeDoc.tenantId,
       resource: resourceUrl?.toString(),
       createdAt: new Date(),
     };
@@ -429,10 +494,15 @@ export class NeventOAuthProvider implements OAuthServerProvider {
    * Implements token rotation: the old refresh token is consumed and a new
    * one is issued alongside the new access token.
    *
+   * Scope validation: if `scopes` is provided, it must be a subset of the
+   * original grant's scopes. A client cannot request additional scopes via
+   * a refresh token exchange.
+   *
    * @param client       - The OAuth client performing the exchange.
    * @param refreshToken - The refresh token to exchange.
    * @param scopes       - Optional scope downgrade (must be subset of original).
    * @param resource     - Optional RFC 8707 resource indicator.
+   * @throws If scopes are not a subset of the original grant's scopes.
    */
   async exchangeRefreshToken(
     client: OAuthClientInformationFull,
@@ -450,15 +520,31 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       throw new Error('Refresh token was not issued to this client');
     }
 
+    // Validate that the requested scopes are a subset of the original grant.
+    // A client can only downgrade scopes, never upgrade them.
+    if (scopes && scopes.length > 0) {
+      const originalScopes = new Set(refreshDoc.scopes);
+      const invalidScopes = scopes.filter((s) => !originalScopes.has(s));
+      if (invalidScopes.length > 0) {
+        throw new Error(
+          `Requested scopes [${invalidScopes.join(', ')}] are not a subset of the ` +
+          `original grant's scopes [${refreshDoc.scopes.join(', ')}]`
+        );
+      }
+    }
+
     // Consume old refresh token (token rotation)
     await this.stores.refreshTokens.consume(refreshToken);
 
-    const grantedScopes = scopes ?? refreshDoc.scopes;
+    const grantedScopes = scopes && scopes.length > 0 ? scopes : refreshDoc.scopes;
     const resourceUrl = resource ?? (refreshDoc.resource ? new URL(refreshDoc.resource) : undefined);
 
-    // Issue new access token
+    // Issue new access token with nev-api-compatible claims
     const { accessToken, expiresAt, expiresIn } = this.tokenService.generateAccessToken({
       userId: refreshDoc.userId,
+      email: refreshDoc.email,
+      role: refreshDoc.role,
+      tenantId: refreshDoc.tenantId,
       clientId: client.client_id,
       scopes: grantedScopes,
       resource: resourceUrl,
@@ -472,6 +558,9 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       clientId: client.client_id,
       scopes: grantedScopes,
       userId: refreshDoc.userId,
+      email: refreshDoc.email,
+      role: refreshDoc.role,
+      tenantId: refreshDoc.tenantId,
       resource: resourceUrl?.toString(),
       createdAt: new Date(),
     };
@@ -522,10 +611,23 @@ export class NeventOAuthProvider implements OAuthServerProvider {
   // -------------------------------------------------------------------------
 
   /**
-   * Revokes an access or refresh token.
+   * Revokes a refresh or access token.
    *
-   * For access tokens: marks as revoked in `oauth_access_tokens`.
-   * For refresh tokens: deletes from `oauth_refresh_tokens`.
+   * ## Refresh tokens
+   * Refresh tokens are stored in MongoDB and can be immediately and
+   * permanently revoked by deleting the document.
+   *
+   * ## Access tokens (stateless JWTs)
+   * Access tokens are stateless JWTs and cannot be immediately invalidated.
+   * They will expire naturally after at most 1 hour. This is a deliberate
+   * architectural decision (Option A — stateless JWTs) accepted because:
+   *   - The 1-hour window is acceptable for interactive MCP usage.
+   *   - Avoiding a token denylist reduces infrastructure complexity.
+   *   - Revoking the associated refresh token prevents new access tokens
+   *     from being issued, which is sufficient for most revocation scenarios.
+   *
+   * A warning is logged when access token revocation is requested so that
+   * administrators are aware of the limitation.
    *
    * @param _client - The requesting client (verified by SDK before this call).
    * @param request - Revocation request with `token` and optional `token_type_hint`.
@@ -538,16 +640,26 @@ export class NeventOAuthProvider implements OAuthServerProvider {
 
     if (token_type_hint === 'refresh_token') {
       await this.stores.refreshTokens.consume(token);
+      console.error(`[nevent-mcp] Refresh token revoked`);
     } else if (token_type_hint === 'access_token') {
-      await this.stores.accessTokens.revoke(token);
+      // Access tokens are stateless JWTs — immediate revocation is not supported.
+      // The token will expire naturally within 1 hour.
+      console.error(
+        '[nevent-mcp] WARNING: Access token revocation requested but stateless JWTs ' +
+        'cannot be revoked before expiry. The token will expire in at most 1 hour. ' +
+        'To prevent new access tokens from being issued, revoke the associated refresh token.'
+      );
     } else {
-      // Try both (hint is optional per RFC 7009)
-      await Promise.allSettled([
-        this.stores.refreshTokens.consume(token),
-        this.stores.accessTokens.revoke(token),
-      ]);
+      // Hint not provided — try to revoke as refresh token (most common case).
+      // Log a warning for access tokens since we cannot immediately revoke them.
+      await this.stores.refreshTokens.consume(token).catch(() => {
+        // Not a refresh token — may be an access token
+        console.error(
+          '[nevent-mcp] WARNING: Token not found in refresh token store. ' +
+          'If this was an access token, it cannot be immediately revoked (stateless JWT). ' +
+          'It will expire in at most 1 hour.'
+        );
+      });
     }
-
-    console.error(`[nevent-mcp] Token revoked | hint=${token_type_hint ?? 'unknown'}`);
   }
 }

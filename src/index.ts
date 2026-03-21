@@ -41,6 +41,7 @@
  * | MCP_JWT_SECRET         | Yes (http)    | —                          | JWT signing key |
  * | MONGODB_URI            | Yes (http)    | —                          | MongoDB connection URI |
  * | NEVENT_API_URL         | No (http)     | https://api.nevent.es      | nev-api URL for auth |
+ * | MCP_ALLOWED_ORIGINS    | No (http)     | * (all)                    | Comma-separated allowed CORS origins |
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -141,7 +142,7 @@ if (transportArg === 'http') {
   // Dynamically import to avoid loading Express/MongoDB in stdio mode
   const { createHttpApp } = await import('./transports/http.js');
 
-  const app = await createHttpApp({
+  const { app, shutdown } = await createHttpApp({
     port: HTTP_PORT,
     mcpServerUrl: new URL(MCP_SERVER_URL),
     jwtSecret: MCP_JWT_SECRET,
@@ -149,6 +150,12 @@ if (transportArg === 'http') {
     neventApiUrl: NEVENT_API_URL,
     dataClient,
   });
+
+  // Register signal handlers here (NOT inside createHttpApp) to avoid
+  // registering duplicate handlers when the module is imported multiple times
+  // (e.g., in tests or when using dynamic imports).
+  process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
+  process.on('SIGINT', () => void shutdown().then(() => process.exit(0)));
 
   app.listen(HTTP_PORT, () => {
     console.error(`[nevent-mcp] HTTP server listening on port ${HTTP_PORT}`);
