@@ -19,10 +19,30 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DataClient } from './clients/data-client.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
+import { registerTenantTools } from './tools/tenants.js';
 
 // ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
+
+/**
+ * Options for `createNeventServer`.
+ */
+export interface CreateNeventServerOptions {
+  /**
+   * Configured client for nev-data-api (data.nevent.es).
+   * In HTTP mode this is a per-session client authenticated with the user's
+   * own JWT token; in stdio mode it is a shared instance.
+   */
+  dataClient: DataClient;
+  /**
+   * Base URL of nev-api (e.g. `https://api.nevent.es`).
+   * When provided, multi-tenant tools (`nevent_list_tenants`,
+   * `nevent_switch_tenant`) are registered on the server.
+   * When omitted, tenant tools are not registered (backwards-compatible).
+   */
+  neventApiUrl?: string;
+}
 
 /**
  * Creates a new McpServer instance and registers all Nevent tools against
@@ -31,23 +51,44 @@ import { registerAnalyticsTools } from './tools/analytics.js';
  * Each call to this function returns a fresh McpServer — callers are
  * responsible for connecting it to a transport.
  *
- * @param dataClient - Configured client for nev-data-api (data.nevent.es).
+ * ## Registered tool sets
+ *
+ * - **Analytics + Segmentation** (8 tools): Always registered. These are the
+ *   Sprint 1 tools for querying BigQuery analytics and building audience
+ *   segments via nev-data-api.
+ *
+ * - **Multi-tenant** (2 tools): Registered when `neventApiUrl` is provided.
+ *   Enables listing accessible tenants and switching the active tenant for
+ *   the session.
+ *
+ * @param options - Server creation options (dataClient + optional neventApiUrl).
  * @returns A ready-to-connect McpServer with all tools registered.
  *
  * @example
  * ```ts
- * const server = createNeventServer(dataClient);
+ * // stdio mode (no tenant tools)
+ * const server = createNeventServer({ dataClient });
  * const transport = new StdioServerTransport();
  * await server.connect(transport);
+ *
+ * // HTTP mode (with tenant tools)
+ * const server = createNeventServer({ dataClient, neventApiUrl: 'https://api.nevent.es' });
+ * await server.connect(httpTransport);
  * ```
  */
-export function createNeventServer(dataClient: DataClient): McpServer {
+export function createNeventServer(options: CreateNeventServerOptions): McpServer {
+  const { dataClient, neventApiUrl } = options;
+
   const server = new McpServer({
     name: 'nevent-mcp',
     version: '1.0.0',
   });
 
   registerAnalyticsTools(server, dataClient);
+
+  if (neventApiUrl) {
+    registerTenantTools(server, dataClient, neventApiUrl);
+  }
 
   return server;
 }

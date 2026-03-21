@@ -71,6 +71,7 @@ import { DataClient } from '../clients/data-client.js';
 import { TokenService } from '../auth/token-service.js';
 import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
+import { OPERATION_MODE } from '../config/operation-mode.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -88,10 +89,10 @@ export interface HttpTransportConfig {
   jwtSecret: string;
   /** MongoDB connection URI for OAuth stores. */
   mongoUri: string;
-  /** nev-api base URL for credential validation. */
+  /** nev-api base URL for credential validation and tenant endpoints. */
   neventApiUrl: string;
-  /** DataClient used to create per-session MCP servers. */
-  dataClient: DataClient;
+  /** Base URL of nev-data-api (data.nevent.es). */
+  dataApiUrl: string;
 }
 
 /** Result of `createHttpApp()` — app plus a shutdown function. */
@@ -109,8 +110,17 @@ export interface HttpAppResult {
 // Transport registry
 // ---------------------------------------------------------------------------
 
-/** Active MCP transport sessions, keyed by session ID. */
-const activeSessions: Record<string, { transport: StreamableHTTPServerTransport; createdAt: Date }> = {};
+/**
+ * Active MCP transport sessions, keyed by session ID.
+ *
+ * Each entry holds the transport, the session's DataClient (authenticated
+ * with the user's own nev-api JWT), and the creation timestamp for cleanup.
+ */
+const activeSessions: Record<string, {
+  transport: StreamableHTTPServerTransport;
+  dataClient: DataClient;
+  createdAt: Date;
+}> = {};
 
 // ---------------------------------------------------------------------------
 // Rate limiters
@@ -260,11 +270,65 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
       // New initialization request — must not have a session ID
       if (!sessionId && isInitializeRequest(req.body)) {
+        // ------------------------------------------------------------------
+        // Per-session DataClient: authenticate as the logged-in user.
+        //
+        // The MCP bearer token contains the user's `sub` (userId) claim.
+        // We look up the nev-api access_token stored during the OAuth flow
+        // for that userId and create a DataClient with it. This means all
+        // data-api calls in this session use the user's own credentials
+        // instead of a shared service account token.
+        //
+        // Fallback: if the nev-api token is not found (e.g. the refresh
+        // token has expired or was revoked), we use the MCP access token
+        // itself as a best-effort fallback. The MCP access token shares the
+        // same JWT claims as the nev-api token (same secret + same issuer),
+        // so data-api can validate it.
+        // ------------------------------------------------------------------
+        let sessionDataClient: DataClient;
+
+        try {
+          const authHeader = req.headers['authorization'] ?? '';
+          const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
+          const claims = tokenService.verifyAccessToken(bearerToken);
+          const userId = claims.sub;
+
+          // Look up the user's stored nev-api access_token from the OAuth stores.
+          const neventToken = await provider.getNeventAccessToken(userId);
+
+          // Use the nev-api token if available; otherwise fall back to the MCP access token.
+          const effectiveToken = neventToken ?? bearerToken;
+
+          sessionDataClient = new DataClient({
+            baseUrl: config.dataApiUrl,
+            jwtToken: effectiveToken,
+          });
+
+          console.error(
+            `[nevent-mcp] Session DataClient created | userId=${userId} ` +
+            `usingNeventToken=${!!neventToken} mode=${OPERATION_MODE}`
+          );
+        } catch (tokenErr) {
+          // If token verification fails at this point, the bearerAuth middleware
+          // already validated it, so this should not happen in practice.
+          // Fall back to creating a DataClient without a valid token — the
+          // first tool call will return a 401 from data-api.
+          console.error('[nevent-mcp] Warning: Could not extract userId from bearer token:', tokenErr);
+          sessionDataClient = new DataClient({
+            baseUrl: config.dataApiUrl,
+            jwtToken: '',
+          });
+        }
+
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
             console.error(`[nevent-mcp] Session initialized: ${newSessionId}`);
-            activeSessions[newSessionId] = { transport, createdAt: new Date() };
+            activeSessions[newSessionId] = {
+              transport,
+              dataClient: sessionDataClient,
+              createdAt: new Date(),
+            };
           },
         });
 
@@ -277,8 +341,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           }
         };
 
-        // Create a fresh MCP server for this session and connect it
-        const mcpServer = createNeventServer(config.dataClient);
+        // Create a fresh MCP server for this session using the per-session DataClient
+        const mcpServer = createNeventServer({
+          dataClient: sessionDataClient,
+          neventApiUrl: config.neventApiUrl,
+        });
         await mcpServer.connect(transport);
 
         // Handle the initialization request

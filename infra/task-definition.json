@@ -50,10 +50,6 @@
       ],
       "secrets": [
         {
-          "name": "NEVENT_JWT_TOKEN",
-          "valueFrom": "arn:aws:secretsmanager:eu-west-1:ACCOUNT_ID:secret:mcp-nevent/jwt-token-nPNBug"
-        },
-        {
           "name": "MCP_JWT_SECRET",
           "valueFrom": "arn:aws:secretsmanager:eu-west-1:ACCOUNT_ID:secret:mcp-nevent/mcp-jwt-secret-1uVcFy"
         },

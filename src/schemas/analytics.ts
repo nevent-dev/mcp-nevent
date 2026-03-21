@@ -195,6 +195,21 @@ export const AnalyticsQuerySchema = {
   compareDimensions: CompareDimensionsSchema.optional().describe(
     'Comparative dimension analysis configuration'
   ),
+  /**
+   * Optional tenant ID override for multi-tenant queries.
+   *
+   * When provided, overrides the active tenant set via nevent_switch_tenant.
+   * Requires hierarchical access — SUPERADMIN can query any tenant, OWNER
+   * can query their tenant and children. If omitted, uses the active tenant
+   * from the session (or the authenticated user's default tenant).
+   */
+  tenant_id: z
+    .string()
+    .optional()
+    .describe(
+      'Optional tenant ID for multi-tenant queries. Requires SUPERADMIN or OWNER role with ' +
+      'access to the target tenant. Omit to use the session active tenant.'
+    ),
 };
 
 // ---------------------------------------------------------------------------

@@ -82,6 +82,12 @@ export interface AuthCodeDocument {
   role: string;
   /** Tenant ID from nev-api login response. */
   tenantId: string;
+  /**
+   * The raw nev-api access_token received during login.
+   * Stored here so it can be propagated to the refresh token document during
+   * the code exchange, and later used to create per-session DataClients.
+   */
+  neventAccessToken?: string;
   /** Creation timestamp — used for TTL index (5-minute expiry). */
   createdAt: Date;
 }
@@ -106,6 +112,13 @@ export interface RefreshTokenDocument {
   tenantId: string;
   /** Optional RFC 8707 resource indicator. */
   resource?: string;
+  /**
+   * The raw nev-api access_token for this user, carried forward from the
+   * authorization code. Used to create per-session DataClients in HTTP mode
+   * so that each session authenticates with the user's own token rather than
+   * a shared service account token.
+   */
+  neventAccessToken?: string;
   /** Creation timestamp — used for TTL index (30-day expiry). */
   createdAt: Date;
 }
@@ -298,6 +311,24 @@ export class MongoRefreshTokenStore {
    */
   async consume(token: string): Promise<void> {
     await this.collection.deleteOne({ token });
+  }
+
+  /**
+   * Returns the nev-api access_token stored alongside the most recently
+   * issued refresh token for a given userId.
+   *
+   * Used by the HTTP transport to resolve the per-user DataClient token
+   * when initializing a new MCP session.
+   *
+   * @param userId - The Nevent user identifier (JWT `sub` claim).
+   * @returns The `neventAccessToken` string, or `undefined` if not found.
+   */
+  async findNeventAccessTokenByUserId(userId: string): Promise<string | undefined> {
+    const doc = await this.collection.findOne(
+      { userId, neventAccessToken: { $exists: true } },
+      { sort: { createdAt: -1 } } // Most recently issued token wins
+    );
+    return doc?.neventAccessToken ?? undefined;
   }
 }
 

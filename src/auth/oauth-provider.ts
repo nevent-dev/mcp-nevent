@@ -65,6 +65,13 @@ interface NeventAuthResult {
   role: string;
   /** Tenant ID. */
   tenantId: string;
+  /**
+   * The raw nev-api access_token returned by POST /auth/admin/login.
+   * This token is valid for calling data.nevent.es (nev-data-api) on behalf
+   * of the authenticated user. Stored so each MCP session can use the user's
+   * own token instead of a shared service account token.
+   */
+  neventAccessToken: string;
 }
 
 /**
@@ -124,6 +131,7 @@ async function validateNeventCredentials(
       email: userEmail ?? email,       // Fall back to form email if claim missing
       role: userRole ?? 'ADMIN',        // Default to ADMIN (login endpoint is /admin/login)
       tenantId: userTenantId ?? '',
+      neventAccessToken: accessTokenStr,
     };
   } catch (err) {
     // AbortError is thrown by AbortSignal.timeout — treat as transient failure
@@ -355,6 +363,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       email: authResult.email,
       role: authResult.role,
       tenantId: authResult.tenantId,
+      neventAccessToken: authResult.neventAccessToken,
       createdAt: new Date(),
     };
 
@@ -466,6 +475,9 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       role: codeDoc.role,
       tenantId: codeDoc.tenantId,
       resource: resourceUrl?.toString(),
+      // Carry the user's nev-api access_token forward so HTTP sessions can
+      // look it up by userId and create a per-user DataClient.
+      neventAccessToken: codeDoc.neventAccessToken,
       createdAt: new Date(),
     };
     await this.stores.refreshTokens.save(refreshDoc);
@@ -562,6 +574,8 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       role: refreshDoc.role,
       tenantId: refreshDoc.tenantId,
       resource: resourceUrl?.toString(),
+      // Carry the nev-api access_token forward through refresh token rotation.
+      neventAccessToken: refreshDoc.neventAccessToken,
       createdAt: new Date(),
     };
     await this.stores.refreshTokens.save(newRefreshDoc);
@@ -604,6 +618,28 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       expiresAt: claims.exp,
       ...(claims.aud && { resource: new URL(claims.aud) }),
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // getNeventAccessToken() — Lookup nev-api token by userId
+  // -------------------------------------------------------------------------
+
+  /**
+   * Looks up the most recently stored nev-api access_token for a given userId.
+   *
+   * This is used by the HTTP transport to create per-session DataClients that
+   * authenticate as the logged-in user rather than using a shared service
+   * account token. The token is stored in the refresh token document, so it
+   * persists across MCP sessions until the refresh token expires.
+   *
+   * Returns `undefined` when no refresh token is found for the user (e.g.
+   * before the user has completed a full OAuth flow, or after token expiry).
+   *
+   * @param userId - The Nevent user identifier (JWT `sub` claim).
+   * @returns The nev-api access_token string, or `undefined` if not found.
+   */
+  async getNeventAccessToken(userId: string): Promise<string | undefined> {
+    return this.stores.refreshTokens.findNeventAccessTokenByUserId(userId);
   }
 
   // -------------------------------------------------------------------------
