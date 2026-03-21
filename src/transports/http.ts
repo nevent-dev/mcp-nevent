@@ -133,6 +133,10 @@ const authRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many authentication attempts. Please try again in 15 minutes.' },
+  // Suppress validation warnings for X-Forwarded-For when behind AWS ALB.
+  // Trust proxy is set on the app (`app.set('trust proxy', 1)`), so the
+  // forwarded IP is expected and safe to use for rate-limiting.
+  validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
 /** Moderate rate limiter for MCP JSON-RPC endpoints. */
@@ -142,6 +146,10 @@ const mcpRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded. Please slow down your requests.' },
+  // Suppress validation warnings for X-Forwarded-For when behind AWS ALB.
+  // Trust proxy is set on the app (`app.set('trust proxy', 1)`), so the
+  // forwarded IP is expected and safe to use for rate-limiting.
+  validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
 // ---------------------------------------------------------------------------
@@ -168,6 +176,16 @@ const mcpRateLimiter = rateLimit({
  */
 export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAppResult> {
   const app = express();
+
+  // -------------------------------------------------------------------------
+  // Proxy trust (must be set before any middleware that reads IP addresses)
+  // -------------------------------------------------------------------------
+
+  // The app runs behind an AWS Application Load Balancer which sets the
+  // X-Forwarded-For header. Without this setting, express-rate-limit throws
+  // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR because Express does not trust the
+  // forwarded IP by default. Value `1` means trust the first proxy hop (ALB).
+  app.set('trust proxy', 1);
 
   // -------------------------------------------------------------------------
   // Global middleware
