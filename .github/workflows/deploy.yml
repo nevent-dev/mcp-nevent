@@ -1,0 +1,106 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPOSITORY: mcp-nevent
+  ECS_CLUSTER: production
+  ECS_SERVICE: mcp-nevent
+  TASK_FAMILY: mcp-nevent
+  CONTAINER_NAME: mcp-nevent
+
+jobs:
+  deploy:
+    name: Build, Push and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG=$(date +'%Y-%m-%d-%H-%M')-$(git rev-parse --short HEAD)
+          IMAGE=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+          docker build -t $IMAGE .
+          docker push $IMAGE
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          echo "Built and pushed: $IMAGE"
+
+      - name: Get current task definition and update image
+        id: register-task-def
+        run: |
+          # Fetch the current task definition JSON
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_FAMILY }} \
+            --query 'taskDefinition' \
+            > task-def.json
+
+          # Update the image for our container
+          jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+             --arg CONTAINER "${{ env.CONTAINER_NAME }}" \
+             '.containerDefinitions = [.containerDefinitions[] | if .name == $CONTAINER then .image = $IMAGE else . end]' \
+             task-def.json > updated-task-def.json
+
+          # Strip read-only fields that cannot be present in a register request
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+             updated-task-def.json > register-task-def.json
+
+          # Register the new revision
+          NEW_TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file://register-task-def.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "new-task-def=$NEW_TASK_DEF" >> $GITHUB_OUTPUT
+          echo "Registered new task definition: $NEW_TASK_DEF"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition ${{ steps.register-task-def.outputs.new-task-def }} \
+            --force-new-deployment
+          echo "ECS service update initiated"
+
+      - name: Wait for deployment to stabilize
+        run: |
+          echo "Waiting for ECS service to stabilize (timeout: 10 min)..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+          echo "Deployment complete — service is stable"
