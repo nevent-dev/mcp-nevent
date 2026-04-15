@@ -363,6 +363,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         const mcpServer = createNeventServer({
           dataClient: sessionDataClient,
           neventApiUrl: config.neventApiUrl,
+          mongoUri: config.mongoUri,
         });
         await mcpServer.connect(transport);
 
