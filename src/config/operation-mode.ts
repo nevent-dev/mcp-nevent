@@ -10,7 +10,8 @@
  * Set via environment variable: NEVENT_OPERATION_MODE=READ_ONLY|STANDARD|FULL
  *
  * Sprint 1 tools are all READ operations and are therefore permitted in every mode.
- * This infrastructure is in place so Sprint 2+ write tools can be gated correctly.
+ * Sprint 2 adds WRITE (create/update) and DELETE-equivalent (schedule) operations
+ * that are gated by operation mode.
  */
 
 export type OperationMode = 'READ_ONLY' | 'STANDARD' | 'FULL';
@@ -56,8 +57,7 @@ if (rawMode && !VALID_MODES.has(rawMode as OperationMode)) {
 
 /**
  * Maps each tool name to its operation type.
- * Sprint 1 analytics and segmentation tools are all READ.
- * Extend this map as Sprint 2+ tools are added.
+ * All tools must be listed here. Unknown tools are fail-open (logged as warnings).
  */
 const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 1: Analytics
@@ -71,6 +71,37 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_segment_preview: 'READ',
   nevent_segment_execute: 'READ',
   nevent_dimension_values: 'READ',
+
+  // Sprint 1: Multi-tenant
+  nevent_list_tenants: 'READ',
+  nevent_switch_tenant: 'READ',
+
+  // Sprint 2: Segment management
+  nevent_list_segments: 'READ',
+  nevent_create_segment: 'WRITE',
+  nevent_update_segment: 'WRITE',
+
+  // Sprint 2: Campaign read tools
+  nevent_list_campaigns: 'READ',
+  nevent_get_campaign: 'READ',
+  nevent_get_campaign_insights: 'READ',
+
+  // Sprint 2: Template tools
+  nevent_list_templates: 'READ',
+  nevent_get_template: 'READ',
+
+  // Sprint 2: Deliverability tools
+  nevent_get_sending_profile: 'READ',
+  nevent_get_suppressions_summary: 'READ',
+
+  // Sprint 2: Campaign actions
+  // nevent_create_campaign: WRITE — requires STANDARD or FULL mode.
+  // Creating campaigns in DRAFT is a write side-effect but not destructive.
+  nevent_create_campaign: 'WRITE',
+  // nevent_schedule_campaign: DELETE-equivalent — requires FULL mode.
+  // Scheduling triggers a real send (irreversible once the window passes),
+  // so we treat it with the same caution as a destructive operation.
+  nevent_schedule_campaign: 'DELETE',
 };
 
 // ---------------------------------------------------------------------------
