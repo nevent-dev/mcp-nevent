@@ -168,7 +168,12 @@ export class TokenService {
       scopes: params.scopes,
       type: 'mcp_access_token',
       iss: TokenService.ISSUER,
-      ...(params.resource && { aud: params.resource.toString() }),
+      // NOTE: `aud` intentionally omitted. The SDK passes `resource` as a
+      // URL object which always includes a trailing slash (e.g. "https://mcp.nevent.ai/").
+      // Claude.ai compares this against the server URL without trailing slash and
+      // rejects the token on mismatch. Since the MCP server validates tokens via
+      // its own JWT secret (not via `aud`), omitting `aud` is safe and fixes
+      // Claude.ai compatibility.
     };
 
     const accessToken = jwt.sign(payload, this.secret, {
