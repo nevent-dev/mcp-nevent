@@ -2,9 +2,9 @@
  * Nevent MCP Server Factory
  *
  * Provides a shared factory function `createNeventServer` that creates and
- * configures a McpServer instance with all Sprint 1 analytics + segmentation
- * tools registered. This factory is transport-agnostic: the same server
- * instance can be connected to a StdioServerTransport (CLI) or to a
+ * configures a McpServer instance with all Sprint 2 tools registered.
+ * This factory is transport-agnostic: the same server instance can be
+ * connected to a StdioServerTransport (CLI) or to a
  * StreamableHTTPServerTransport (HTTP mode).
  *
  * ## Why a factory?
@@ -20,6 +20,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DataClient } from './clients/data-client.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
 import { registerTenantTools } from './tools/tenants.js';
+import { registerSegmentTools } from './tools/segments.js';
+import { registerCampaignTools } from './tools/campaigns.js';
+import { registerTemplateTools } from './tools/templates.js';
+import { registerDeliverabilityTools } from './tools/deliverability.js';
+import { registerCampaignActionTools } from './tools/campaign-actions.js';
 
 // ---------------------------------------------------------------------------
 // Server factory
@@ -37,11 +42,18 @@ export interface CreateNeventServerOptions {
   dataClient: DataClient;
   /**
    * Base URL of nev-api (e.g. `https://api.nevent.es`).
-   * When provided, multi-tenant tools (`nevent_list_tenants`,
-   * `nevent_switch_tenant`) are registered on the server.
-   * When omitted, tenant tools are not registered (backwards-compatible).
+   * When provided, multi-tenant tools and Sprint 2 segment/campaign-action
+   * tools are registered on the server.
+   * When omitted, these tools are not registered (backwards-compatible).
    */
   neventApiUrl?: string;
+  /**
+   * MongoDB connection URI (e.g. `mongodb://host:27017` or Atlas connection string).
+   * When provided, Sprint 2 MongoDB-backed tools (campaigns, templates,
+   * deliverability) are registered on the server.
+   * When omitted, these tools are not registered (backwards-compatible).
+   */
+  mongoUri?: string;
 }
 
 /**
@@ -53,41 +65,50 @@ export interface CreateNeventServerOptions {
  *
  * ## Registered tool sets
  *
- * - **Analytics + Segmentation** (8 tools): Always registered. These are the
- *   Sprint 1 tools for querying BigQuery analytics and building audience
- *   segments via nev-data-api.
+ * - Analytics + Segmentation (8 tools): Always registered.
+ * - Multi-tenant (2 tools): Registered when neventApiUrl is provided.
+ * - Segment management (3 tools): Registered when neventApiUrl is provided.
+ * - Campaign read tools (3 tools): Registered when mongoUri is provided.
+ * - Template tools (2 tools): Registered when mongoUri is provided.
+ * - Deliverability tools (2 tools): Registered when mongoUri is provided.
+ * - Campaign actions (2 tools): Registered when neventApiUrl is provided.
  *
- * - **Multi-tenant** (2 tools): Registered when `neventApiUrl` is provided.
- *   Enables listing accessible tenants and switching the active tenant for
- *   the session.
- *
- * @param options - Server creation options (dataClient + optional neventApiUrl).
- * @returns A ready-to-connect McpServer with all tools registered.
- *
- * @example
- * ```ts
- * // stdio mode (no tenant tools)
- * const server = createNeventServer({ dataClient });
- * const transport = new StdioServerTransport();
- * await server.connect(transport);
- *
- * // HTTP mode (with tenant tools)
- * const server = createNeventServer({ dataClient, neventApiUrl: 'https://api.nevent.es' });
- * await server.connect(httpTransport);
- * ```
+ * @param options - Server creation options.
+ * @returns A ready-to-connect McpServer with all applicable tools registered.
  */
 export function createNeventServer(options: CreateNeventServerOptions): McpServer {
-  const { dataClient, neventApiUrl } = options;
+  const { dataClient, neventApiUrl, mongoUri } = options;
 
   const server = new McpServer({
     name: 'nevent-mcp',
     version: '1.0.0',
   });
 
+  // Sprint 1: Analytics + Segmentation — always registered
   registerAnalyticsTools(server, dataClient);
 
+  // Multi-tenant + nev-api tools — registered when neventApiUrl is provided
   if (neventApiUrl) {
+    // Tenant management (list/switch)
     registerTenantTools(server, dataClient, neventApiUrl);
+
+    // Sprint 2: Segment management (list/create/update via nev-api)
+    registerSegmentTools(server, dataClient, neventApiUrl);
+
+    // Sprint 2: Campaign actions (create/schedule via nev-api)
+    registerCampaignActionTools(server, dataClient, neventApiUrl);
+  }
+
+  // Sprint 2: MongoDB-backed tools — registered when mongoUri is provided
+  if (mongoUri) {
+    // Campaign read tools (list/get/insights from MongoDB)
+    registerCampaignTools(server, mongoUri, dataClient);
+
+    // Email template tools (list/get from MongoDB)
+    registerTemplateTools(server, mongoUri, dataClient);
+
+    // Deliverability tools (sending profile + suppressions from MongoDB)
+    registerDeliverabilityTools(server, mongoUri, dataClient);
   }
 
   return server;
