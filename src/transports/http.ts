@@ -234,21 +234,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // OAuth 2.1 router (SDK-managed endpoints)
-  // -------------------------------------------------------------------------
-
-  app.use(
-    authRateLimiter,
-    mcpAuthRouter({
-      provider,
-      issuerUrl: config.mcpServerUrl,
-      scopesSupported: ['mcp:tools'],
-      resourceName: 'Nevent MCP Server',
-    })
-  );
-
-  // -------------------------------------------------------------------------
   // POST /authorize — custom handler for HTML form submission
+  //
+  // IMPORTANT: This MUST be registered BEFORE the mcpAuthRouter because the
+  // SDK's authorization handler uses `router.all('/')` on `/authorize`, which
+  // intercepts both GET and POST. If the SDK handler runs first on a POST,
+  // it calls `provider.authorize()` which re-renders the login page instead
+  // of processing the submitted credentials via `handleLoginPost()`.
   // -------------------------------------------------------------------------
 
   app.post('/authorize', authRateLimiter, async (req: Request, res: Response): Promise<void> => {
@@ -261,6 +253,20 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       }
     }
   });
+
+  // -------------------------------------------------------------------------
+  // OAuth 2.1 router (SDK-managed endpoints)
+  // -------------------------------------------------------------------------
+
+  app.use(
+    authRateLimiter,
+    mcpAuthRouter({
+      provider,
+      issuerUrl: config.mcpServerUrl,
+      scopesSupported: ['mcp:tools'],
+      resourceName: 'Nevent MCP Server',
+    })
+  );
 
   // -------------------------------------------------------------------------
   // Bearer auth middleware for MCP endpoints
