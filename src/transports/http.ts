@@ -244,6 +244,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
 
   app.post('/authorize', authRateLimiter, async (req: Request, res: Response): Promise<void> => {
+    console.error(`[nevent-mcp] POST /authorize | email=${req.body?.email ?? 'missing'} client_id=${req.body?.client_id ?? 'missing'} redirect_uri=${req.body?.redirect_uri ?? 'missing'}`);
     try {
       await provider.handleLoginPost(req.body as Parameters<typeof provider.handleLoginPost>[0], res);
     } catch (err) {
@@ -282,7 +283,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // POST /mcp — Handle MCP JSON-RPC messages
   // -------------------------------------------------------------------------
 
-  app.post('/mcp', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.post('/mcp', mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+    console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
+    next();
+  }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {

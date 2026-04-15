@@ -439,9 +439,11 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     _redirectUri?: string,
     resource?: URL
   ): Promise<OAuthTokens> {
+    console.error(`[nevent-mcp] Token exchange | client=${client.client_id} code=${authorizationCode.slice(0, 8)}... resource=${resource?.toString() ?? 'none'}`);
     const codeDoc = await this.stores.authCodes.find(authorizationCode);
 
     if (!codeDoc) {
+      console.error(`[nevent-mcp] Token exchange FAILED | code not found or expired`);
       throw new Error('Invalid or expired authorization code');
     }
 
@@ -612,15 +614,20 @@ export class NeventOAuthProvider implements OAuthServerProvider {
    * @throws If the token signature is invalid or the token has expired.
    */
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const claims = this.tokenService.verifyAccessToken(token);
-
-    return {
-      token,
-      clientId: claims.clientId,
-      scopes: claims.scopes,
-      expiresAt: claims.exp,
-      ...(claims.aud && { resource: new URL(claims.aud) }),
-    };
+    try {
+      const claims = this.tokenService.verifyAccessToken(token);
+      console.error(`[nevent-mcp] Token verified | sub=${claims.sub} role=${claims.role} tenant=${claims.tenantId}`);
+      return {
+        token,
+        clientId: claims.clientId,
+        scopes: claims.scopes,
+        expiresAt: claims.exp,
+        ...(claims.aud && { resource: new URL(claims.aud) }),
+      };
+    } catch (verifyErr) {
+      console.error(`[nevent-mcp] Token verification FAILED |`, verifyErr);
+      throw verifyErr;
+    }
   }
 
   // -------------------------------------------------------------------------
