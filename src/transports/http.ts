@@ -191,6 +191,15 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // Global middleware
   // -------------------------------------------------------------------------
 
+  // Global request logger — captures every request before any other middleware
+  app.use((req: Request, res: Response, next: () => void) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      console.error(`[nevent-mcp] ${req.method} ${req.path} | status=${res.statusCode} | ${Date.now() - start}ms | auth=${req.headers['authorization'] ? 'yes' : 'no'} | origin=${req.headers['origin'] ?? '-'}`);
+    });
+    next();
+  });
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
