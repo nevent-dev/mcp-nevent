@@ -25,6 +25,7 @@ import { registerCampaignTools } from './tools/campaigns.js';
 import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
+import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
 
 // ---------------------------------------------------------------------------
 // Server factory
@@ -54,6 +55,20 @@ export interface CreateNeventServerOptions {
    * When omitted, these tools are not registered (backwards-compatible).
    */
   mongoUri?: string;
+  /**
+   * User identifier from the JWT `sub` claim.
+   * When provided, stored in `mcp_tool_calls` documents for attribution.
+   * When omitted, `user_id` is recorded as `null`.
+   */
+  userId?: string;
+  /**
+   * Lazy getter for the MCP session ID.
+   * Called at each tool invocation time (not at server creation time) so
+   * that the session ID can be resolved after the transport's first
+   * `initialize` handshake assigns it.
+   * When omitted, `session_id` is recorded as `null`.
+   */
+  getSessionId?: () => string | null;
 }
 
 /**
@@ -77,12 +92,28 @@ export interface CreateNeventServerOptions {
  * @returns A ready-to-connect McpServer with all applicable tools registered.
  */
 export function createNeventServer(options: CreateNeventServerOptions): McpServer {
-  const { dataClient, neventApiUrl, mongoUri } = options;
+  const { dataClient, neventApiUrl, mongoUri, userId = null, getSessionId } = options;
 
   const server = new McpServer({
     name: 'nevent-mcp',
     version: '1.0.0',
   });
+
+  // ---------------------------------------------------------------------------
+  // Tool call logging
+  //
+  // When mongoUri is provided, patch server.tool() BEFORE any tools are
+  // registered so that every handler is transparently wrapped with latency
+  // measurement and fire-and-forget MongoDB logging.
+  //
+  // `getSessionId` is a lazy getter that resolves the session ID at invocation
+  // time (the session ID is not available until after the first `initialize`
+  // request is processed by the transport).
+  // ---------------------------------------------------------------------------
+  if (mongoUri) {
+    const logger = createToolCallLogger(mongoUri);
+    applyLoggingToServer(server, logger, dataClient, userId, getSessionId ?? null);
+  }
 
   // Sprint 1: Analytics + Segmentation — always registered
   registerAnalyticsTools(server, dataClient);
