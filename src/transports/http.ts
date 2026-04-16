@@ -308,7 +308,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // POST /mcp — Handle MCP JSON-RPC messages
   // -------------------------------------------------------------------------
 
+
   app.post('/', mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+
+  // replaced below mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+
     console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
     next();
   }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
