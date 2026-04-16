@@ -273,23 +273,53 @@ export function registerTenantTools(
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       try {
-        // Update the session's DataClient to send this tenant_id in future requests.
-        // Since DataClient is per-session in HTTP mode, this only affects the
-        // current user's session.
+        const jwtToken = (client as unknown as { jwtToken: string }).jwtToken;
+
+        // Call POST /users/tenant to get a NEW JWT for the target tenant.
+        // This is the same endpoint the admin panel uses when switching tenants.
+        // nev-api returns a fresh access_token + refresh_token scoped to the new tenant.
+        const response = await fetch(`${neventApiUrl}/users/tenant`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`,
+          },
+          body: JSON.stringify({ tenantId: params.tenant_id }),
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          console.error(`[nevent-mcp] Tenant switch failed | status=${response.status} | body=${body.slice(0, 200)}`);
+          return err({
+            error: {
+              type: response.status === 403 ? 'authentication_error' : 'api_error',
+              message: `Failed to switch tenant: HTTP ${response.status}. You may not have access to this tenant.`,
+              code: response.status === 403 ? 'forbidden' : 'api_error',
+            },
+          });
+        }
+
+        const data = await response.json() as Record<string, unknown>;
+        const newAccessToken = (data['access_token'] ?? data['accessToken']) as string | undefined;
+
+        if (newAccessToken) {
+          // Update the DataClient's JWT to the new tenant-scoped token.
+          // This is a protected field, so we use the same cast pattern as extractJwt.
+          (client as unknown as { jwtToken: string }).jwtToken = newAccessToken;
+        }
+
+        // Also update the activeTenantId for MongoDB-backed tools
         client.setActiveTenant(params.tenant_id);
 
         console.error(
-          `[nevent-mcp] Tenant switched | activeTenantId=${params.tenant_id}`
+          `[nevent-mcp] Tenant switched | activeTenantId=${params.tenant_id} | newToken=${!!newAccessToken}`
         );
 
         return ok({
           success: true,
           active_tenant_id: params.tenant_id,
-          message:
-            `Active tenant set to "${params.tenant_id}". ` +
-            'All subsequent analytics and segmentation queries will use this tenant\'s data. ' +
-            'Call nevent_switch_tenant again with a different tenant_id to change, ' +
-            'or use the tenant_id parameter on individual nevent_analytics_query calls for a one-off override.',
+          message: `Switched to tenant "${params.tenant_id}". All subsequent queries will use this tenant's data.`,
         });
       } catch (caught) {
         return err(toErrorEnvelope(caught));
