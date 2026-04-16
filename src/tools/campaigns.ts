@@ -240,7 +240,7 @@ export function registerCampaignTools(
           return err({
             error: {
               type: 'invalid_request',
-              message: `Invalid campaign_id: "${params.campaign_id}" is not a valid MongoDB ObjectId.`,
+              message: `Invalid campaign_id: "${params.campaign_id}" is not a valid identifier.`,
               code: 'invalid_id',
             },
           });
@@ -370,7 +370,7 @@ export function registerCampaignTools(
           return err({
             error: {
               type: 'invalid_request',
-              message: `Invalid campaign_id: "${params.campaign_id}" is not a valid MongoDB ObjectId.`,
+              message: `Invalid campaign_id: "${params.campaign_id}" is not a valid identifier.`,
               code: 'invalid_id',
             },
           });
