@@ -309,9 +309,9 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
 
 
-  app.post('/', mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+  app.post('/', (req: Request, _res: Response, next: () => void) => {
 
-  // replaced below mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+  // replaced below (req: Request, _res: Response, next: () => void) => {
 
     console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
     next();
@@ -436,7 +436,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // GET /mcp — SSE stream for server-initiated messages
   // -------------------------------------------------------------------------
 
-  app.get('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
@@ -463,7 +463,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // DELETE /mcp — Session termination
   // -------------------------------------------------------------------------
 
-  app.delete('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
