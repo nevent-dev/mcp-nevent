@@ -88,18 +88,32 @@ function clientIconColor(nameLower: string): string {
 }
 
 /**
+ * Returns the logo URL for a known OAuth client, or null for unknown clients.
+ */
+function clientLogoUrl(nameLower: string): string | null {
+  if (nameLower.includes('claude')) return 'https://avatars.slack-edge.com/2025-05-14/8891273522918_30c38bf627ac73075db6_512.png';
+  if (nameLower.includes('chatgpt') || nameLower.includes('openai')) return 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/ChatGPT_logo.svg/3840px-ChatGPT_logo.svg.png';
+  return null;
+}
+
+/**
  * Renders a small rounded-square icon for the OAuth client.
  *
- * Displays the first character of the client name centred on a coloured
- * background. The colour is derived from known client mappings.
+ * Uses the official logo for known clients (Claude, ChatGPT).
+ * Falls back to the first character on a coloured background for unknown clients.
  *
  * @param clientName - Human-readable client name, already XSS-escaped.
  * @returns HTML string for the client icon element.
  */
 function renderClientIcon(clientName: string): string {
   const nameLower = clientName.toLowerCase();
+  const logoUrl = clientLogoUrl(nameLower);
+
+  if (logoUrl) {
+    return `<div class="client-icon" style="background:#fff; padding:6px;"><img src="${logoUrl}" alt="${clientName}" style="width:100%; height:100%; object-fit:contain; border-radius:4px;" /></div>`;
+  }
+
   const color = clientIconColor(nameLower);
-  // Use first character of the display name (already escaped by caller)
   const letter = clientName.charAt(0).toUpperCase();
   return `<div class="client-icon" style="background:${color};">${letter}</div>`;
 }
