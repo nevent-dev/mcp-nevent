@@ -164,7 +164,9 @@ export function registerTenantTools(
         // same bearer token (the user's nev-api JWT).
         const jwtToken = (client as unknown as { jwtToken: string }).jwtToken;
 
-        const response = await fetch(`${neventApiUrl}/platform/tenants`, {
+        // Try /platform/tenants first (SUPERADMIN — returns all tenants).
+        // If 403, fall back to /users/accessible-tenants (ADMIN/OWNER — returns hierarchy).
+        let response = await fetch(`${neventApiUrl}/platform/tenants`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -172,6 +174,18 @@ export function registerTenantTools(
           },
           signal: AbortSignal.timeout(15_000),
         });
+
+        if (response.status === 403) {
+          // Not SUPERADMIN — fall back to accessible tenants
+          response = await fetch(`${neventApiUrl}/users/accessible-tenants`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${jwtToken}`,
+            },
+            signal: AbortSignal.timeout(15_000),
+          });
+        }
 
         if (!response.ok) {
           const body = await response.text();
@@ -189,12 +203,25 @@ export function registerTenantTools(
 
         const data = await response.json() as unknown;
 
-        // nev-api GET /tenants returns different shapes depending on the user's role:
-        // - SUPERADMIN/OWNER: returns the user's current tenant as a SINGLE object (not an array)
-        // - Some roles: may return an array or a Spring Page wrapper
+        // Response shapes:
+        // - /platform/tenants (SUPERADMIN): plain array of tenant objects
+        // - /users/accessible-tenants (ADMIN/OWNER): { root, children, flatList, totalTenants }
+        // - Single tenant object: { id, name, ... }
         let tenants: TenantRecord[];
         if (Array.isArray(data)) {
           tenants = data as TenantRecord[];
+        } else if (
+          data !== null &&
+          typeof data === 'object' &&
+          'flatList' in data &&
+          Array.isArray((data as Record<string, unknown>)['flatList'])
+        ) {
+          // /users/accessible-tenants response — use flatList + root
+          const accessible = data as { root?: TenantRecord; flatList: TenantRecord[] };
+          tenants = accessible.flatList;
+          if (accessible.root) {
+            tenants = [accessible.root, ...tenants];
+          }
         } else if (
           data !== null &&
           typeof data === 'object' &&
@@ -208,7 +235,6 @@ export function registerTenantTools(
           'content' in data &&
           Array.isArray((data as Record<string, unknown>)['content'])
         ) {
-          // Spring Page wrapper: { content: [], totalElements, ... }
           tenants = (data as { content: TenantRecord[] }).content;
         } else if (
           data !== null &&
@@ -227,7 +253,10 @@ export function registerTenantTools(
           tenants.push({ id: activeTenantId, name: `Tenant ${activeTenantId}` });
         }
 
-        return ok({ tenants, count: tenants.length });
+        // Slim response: only id + name to avoid huge payloads (328 tenants × full objects)
+        const slim = tenants.map(t => ({ id: t.id, name: t.name }));
+
+        return ok({ tenants: slim, count: slim.length, active_tenant_id: activeTenantId ?? null });
       } catch (caught) {
         return err(toErrorEnvelope(caught));
       }
