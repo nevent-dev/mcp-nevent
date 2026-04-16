@@ -149,7 +149,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_query',
-    'Query event marketing analytics from BigQuery. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. IMPORTANT: Call nevent_analytics_capabilities first to discover available tables and columns — do not guess field names.',
+    'Query event marketing analytics. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. IMPORTANT: Call nevent_analytics_capabilities first to discover available tables and columns — do not guess field names.',
     AnalyticsQuerySchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {

@@ -214,7 +214,7 @@ export function registerTemplateTools(
           return err({
             error: {
               type: 'invalid_request',
-              message: `Invalid template_id "${params.template_id}". Must be a valid MongoDB ObjectId.`,
+              message: `Invalid template_id "${params.template_id}". Must be a valid 24-character hex identifier.`,
               code: 'invalid_template_id',
               param: 'template_id',
             },
