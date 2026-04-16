@@ -188,6 +188,22 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   app.set('trust proxy', 1);
 
   // -------------------------------------------------------------------------
+  // Health check — MUST be before any rate limiter or logger middleware
+  // ALB sends health checks every 30s; mixing them into the rate limiter
+  // pool can cause 429s that mark the target as unhealthy.
+  // -------------------------------------------------------------------------
+
+  app.get('/health', (_req: Request, res: Response): void => {
+    res.json({
+      status: 'ok',
+      service: 'nevent-mcp',
+      transport: 'http',
+      activeSessions: Object.keys(activeSessions).length,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Global middleware
   // -------------------------------------------------------------------------
 
@@ -292,7 +308,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // POST /mcp — Handle MCP JSON-RPC messages
   // -------------------------------------------------------------------------
 
-  app.post('/mcp', mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
+  app.post('/', mcpRateLimiter, (req: Request, _res: Response, next: () => void) => {
     console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
     next();
   }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
@@ -416,7 +432,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // GET /mcp — SSE stream for server-initiated messages
   // -------------------------------------------------------------------------
 
-  app.get('/mcp', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
@@ -443,7 +459,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // DELETE /mcp — Session termination
   // -------------------------------------------------------------------------
 
-  app.delete('/mcp', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
@@ -463,19 +479,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     }
   });
 
-  // -------------------------------------------------------------------------
-  // GET /health — Health check (no auth required)
-  // -------------------------------------------------------------------------
-
-  app.get('/health', (_req: Request, res: Response): void => {
-    res.json({
-      status: 'ok',
-      service: 'nevent-mcp',
-      transport: 'http',
-      activeSessions: Object.keys(activeSessions).length,
-      timestamp: new Date().toISOString(),
-    });
-  });
+  // Health check is registered at the top of the middleware stack (before rate limiters).
 
   // -------------------------------------------------------------------------
   // Orphaned session cleanup (every 30 minutes)
