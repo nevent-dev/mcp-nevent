@@ -7,7 +7,7 @@
  * ## Token design — aligned with nev-api conventions
  *
  * - **Access tokens**: HS256-signed JWTs, 1-hour expiry.
- *   Payload: `{ sub, email, role, tenantId, clientId, scopes, aud?, type: 'mcp_access_token', iss: 'https://nevent.es' }`.
+ *   Payload: `{ sub, email, role, tenantId, clientId, scopes, aud?, type: 'access_token', iss: 'https://nevent.es' }`.
  *   The `iss`, `type`, `sub`, `email`, `role`, and `tenantId` claims mirror
  *   nev-api's `TokenUtils.java` so that nev-api's `CustomAuthenticationFilter`
  *   can validate these tokens. The `type` value `mcp_access_token` is a new
@@ -57,7 +57,7 @@ export interface AccessTokenClaims {
    * `refresh_token` types. nev-api's `CustomAuthenticationFilter` checks
    * this field when validating tokens.
    */
-  type: 'mcp_access_token';
+  type: 'access_token';
   /**
    * Issuer. Must be `https://nevent.es` to match nev-api's expected issuer
    * in `CustomAuthenticationFilter`.
@@ -166,7 +166,7 @@ export class TokenService {
       tenantId: params.tenantId,
       clientId: params.clientId,
       scopes: params.scopes,
-      type: 'mcp_access_token',
+      type: 'access_token',
       iss: TokenService.ISSUER,
       // NOTE: `aud` intentionally omitted. The SDK passes `resource` as a
       // URL object which always includes a trailing slash (e.g. "https://mcp.nevent.ai/").
@@ -199,8 +199,8 @@ export class TokenService {
       algorithms: ['HS256'],
     }) as AccessTokenClaims;
 
-    if (decoded.type !== 'mcp_access_token') {
-      throw new Error('Invalid token type — expected mcp_access_token');
+    if (decoded.type !== 'access_token') {
+      throw new Error('Invalid token type — expected access_token');
     }
 
     return decoded;
