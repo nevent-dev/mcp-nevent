@@ -285,7 +285,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
 
   app.use(
-    authRateLimiter,
     mcpAuthRouter({
       provider,
       issuerUrl: config.mcpServerUrl,
