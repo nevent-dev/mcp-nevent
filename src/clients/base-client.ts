@@ -236,6 +236,9 @@ export class BaseClient {
     body: unknown,
     path: string
   ): NeventApiError {
+    // Log the error for debugging — this is the only place where upstream API errors surface
+    console.error(`[nevent-mcp] API error | ${this.baseUrl}${path} | status=${status} | body=${JSON.stringify(body)?.slice(0, 500)}`);
+
     // Extract any message the API provided in the body
     const apiMessage =
       typeof body === 'object' && body !== null && 'message' in body
