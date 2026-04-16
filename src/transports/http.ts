@@ -342,12 +342,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         // so data-api can validate it.
         // ------------------------------------------------------------------
         let sessionDataClient: DataClient;
+        let sessionUserId: string | null = null;
 
         try {
           const authHeader = req.headers['authorization'] ?? '';
           const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
           const claims = tokenService.verifyAccessToken(bearerToken);
-          const userId = claims.sub;
+          sessionUserId = claims.sub;
 
           // Use the MCP bearer token directly for data-api calls.
           // The MCP token shares the same JWT secret as nev-api and has a 24h TTL,
@@ -368,7 +369,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           }
 
           console.error(
-            `[nevent-mcp] Session DataClient created | userId=${userId} ` +
+            `[nevent-mcp] Session DataClient created | userId=${sessionUserId} ` +
             `tenant=${claims.tenantId ?? 'none'} ` +
             `tokenType=mcp_bearer mode=${OPERATION_MODE}`
           );
@@ -405,11 +406,17 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           }
         };
 
-        // Create a fresh MCP server for this session using the per-session DataClient
+        // Create a fresh MCP server for this session using the per-session DataClient.
+        // Pass userId and a lazy getSessionId getter so the tool call logger can
+        // attribute logs to the correct user and session.
+        // getSessionId is lazy because transport.sessionId is only assigned after
+        // the first initialize request is processed.
         const mcpServer = createNeventServer({
           dataClient: sessionDataClient,
           neventApiUrl: config.neventApiUrl,
           mongoUri: config.mongoUri,
+          userId: sessionUserId ?? undefined,
+          getSessionId: () => transport.sessionId ?? null,
         });
         await mcpServer.connect(transport);
 
