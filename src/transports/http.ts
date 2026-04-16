@@ -350,11 +350,12 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           const claims = tokenService.verifyAccessToken(bearerToken);
           const userId = claims.sub;
 
-          // Look up the user's stored nev-api access_token from the OAuth stores.
-          const neventToken = await provider.getNeventAccessToken(userId);
-
-          // Use the nev-api token if available; otherwise fall back to the MCP access token.
-          const effectiveToken = neventToken ?? bearerToken;
+          // Use the MCP bearer token directly for data-api calls.
+          // The MCP token shares the same JWT secret as nev-api and has a 24h TTL,
+          // while the nev-api access_token stored during OAuth login expires in only
+          // 10 minutes (jwt.access-token-expiration=600000 in production).
+          // data.nevent.es accepts both token types via CustomAuthenticationFilter.
+          const effectiveToken = bearerToken;
 
           sessionDataClient = new DataClient({
             baseUrl: config.dataApiUrl,
@@ -363,7 +364,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
           console.error(
             `[nevent-mcp] Session DataClient created | userId=${userId} ` +
-            `usingNeventToken=${!!neventToken} mode=${OPERATION_MODE}`
+            `tokenType=mcp_bearer mode=${OPERATION_MODE}`
           );
         } catch (tokenErr) {
           // If token verification fails at this point, the bearerAuth middleware
