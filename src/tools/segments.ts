@@ -151,13 +151,9 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_list_segments',
-    'List saved audience segments for the active tenant. No parameters required. ' +
-    'Returns: { segments: [{ id, name, estimatedCount?, status?, lastExecutedAt?, createdAt?, createdBy?, isLegacy? }], count }. ' +
-    'Segments are ordered by createdAt descending (most recent first). ' +
-    'Soft-deleted segments are excluded. ' +
-    'Use nevent_switch_tenant first to target a specific tenant. ' +
-    'Use segment ids returned here with nevent_update_segment or when referencing segments in campaigns.',
+    'List audience segments for the active tenant with names, sizes, and last execution dates.',
     ListSegmentsSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_list_segments');
       if (denied) return err(denied);
@@ -216,14 +212,9 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_create_segment',
-    'Create and persist a new audience segment for the active tenant. ' +
-    'Params: name (required), definition (required — same DSL as nevent_segment_preview), description (optional). ' +
-    'The definition must have at least one stanza with at least one criterion. ' +
-    'Returns: { segment: { id, name, estimatedCount?, status, createdAt, createdBy } }. ' +
-    'Requires STANDARD or FULL operation mode (blocked in READ_ONLY). ' +
-    'Use nevent_segment_preview first to validate the definition before persisting. ' +
-    'Use nevent_list_segments to browse existing segments before creating duplicates.',
+    'Create a new audience segment with a name and filter definition. The segment is saved and can be used in campaigns.',
     CreateSegmentSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_create_segment');
       if (denied) return err(denied);
@@ -308,14 +299,9 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_update_segment',
-    'Update an existing audience segment. ' +
-    'Params: segment_id (required — get from nevent_list_segments), name (optional), definition (optional). ' +
-    'At least one of name or definition must be provided. ' +
-    'The full definition is replaced when provided (partial stanza updates are not supported). ' +
-    'Returns: { segment: { id, name, estimatedCount?, status, createdAt, createdBy } }. ' +
-    'Requires STANDARD or FULL operation mode (blocked in READ_ONLY). ' +
-    'The segment must belong to the active tenant — cross-tenant updates are not allowed.',
+    'Update an existing segment\'s name or filter definition.',
     UpdateSegmentSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_update_segment');
       if (denied) return err(denied);

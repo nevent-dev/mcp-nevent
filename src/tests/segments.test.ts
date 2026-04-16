@@ -57,8 +57,10 @@ type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 function makeMockServer() {
   const tools: Record<string, ToolHandler> = {};
   return {
-    tool(name: string, _description: string, _schema: unknown, handler: ToolHandler) {
-      tools[name] = handler;
+    // Accept both 4-arg (name, description, schema, handler) and
+    // 5-arg (name, description, schema, annotations, handler) signatures.
+    tool(name: string, _description: string, _schema: unknown, annotationsOrHandler: unknown, maybeHandler?: ToolHandler) {
+      tools[name] = maybeHandler ?? (annotationsOrHandler as ToolHandler);
     },
     /** Invoke a registered tool handler by name. */
     async invoke(name: string, params: Record<string, unknown> = {}) {
