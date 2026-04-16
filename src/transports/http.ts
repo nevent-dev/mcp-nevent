@@ -142,7 +142,7 @@ const authRateLimiter = rateLimit({
 /** Moderate rate limiter for MCP JSON-RPC endpoints. */
 const mcpRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 120, // 120 requests per minute per IP
+  max: 600, // 600 requests per minute per IP (Claude.ai sends many requests per tool call)
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded. Please slow down your requests.' },
