@@ -149,15 +149,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_query',
-    'Query BigQuery analytics. Params: collection (required, e.g. purchases|tickets|campaigns), ' +
-    'dimensions [{field, alias?}], metrics [{field, operation: sum|count|avg|min|max, alias?}], ' +
-    'timeRange {start: ISO date, end: ISO date, granularity?: day|week|month}, ' +
-    'filters [{field, operator: eq|neq|gt|gte|lt|lte|in|not_in|like, value}], ' +
-    'having [{field, operator, value}], sort {field, order: asc|desc}, ' +
-    'limit (max 1000, default 100), compareDimensions. ' +
-    'Returns: {data: rows[], metadata: {totalRows, executionTime, query}}. ' +
-    'Call nevent_analytics_capabilities first if unsure which collections exist.',
+    'Query event marketing analytics from BigQuery. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. IMPORTANT: Call nevent_analytics_capabilities first to discover available tables and columns — do not guess field names.',
     AnalyticsQuerySchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_analytics_query');
       if (denied) return err(denied);
@@ -189,10 +183,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_capabilities',
-    'Discover available BigQuery analytics tables and their columns/types. ' +
-    'No params required. Returns: {tables: [{name, columns: [{name, type}]}], count}. ' +
-    'Call this first when unsure what data exists or before building an analytics query.',
+    'Discover all available analytics tables and their columns. Call this before nevent_analytics_query to learn valid table and field names.',
     AnalyticsCapabilitiesSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_analytics_capabilities');
       if (denied) return err(denied);
@@ -211,11 +204,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_table_schema',
-    'Get full column definitions for a BigQuery table. ' +
-    'Params: table (required, e.g. "purchases", "tickets"). ' +
-    'Returns: {table, columns: [{name, type, description?}], column_count}. ' +
-    'Requires ADMIN role. Use to understand available fields before querying.',
+    'Get the full column schema for a specific analytics table including column names, types, and descriptions.',
     AnalyticsTableSchemaInputSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_analytics_table_schema');
       if (denied) return err(denied);
@@ -234,11 +225,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_filter_values',
-    'Get distinct values available for analytics filters on a collection. ' +
-    'Params: collection (required), filters [{field, operator?, value?}]. ' +
-    'Returns: [{collection, results: Record<field, string[]>}]. ' +
-    'Use to build valid filter values before calling nevent_analytics_query.',
+    'Get distinct values available for a field in an analytics table. Useful for building valid filter values before querying.',
     AnalyticsFilterValuesSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_analytics_filter_values');
       if (denied) return err(denied);
@@ -257,12 +246,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segmentation_criteria',
-    'List all available audience segmentation criteria. No params required. ' +
-    'Returns: {criteria: [{id, type, label, operators, valueType}]}. ' +
-    'Types: profile_property | behavior | communication_interaction | ' +
-    'app_interaction | acquisition_source | predictive. ' +
-    'Call this first to discover valid criterion_ids and operators for segment definitions.',
+    'List all available audience segmentation criteria including their IDs, operators, and value types.',
     SegmentationCriteriaSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_segmentation_criteria');
       if (denied) return err(denied);
@@ -281,12 +267,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_preview',
-    'Preview estimated audience size for a segment definition without saving it. ' +
-    'Params: definition {stanzas: [{criteria: [{type, criterion_id, operator, value, ...}]}]}. ' +
-    'Stanzas are OR-combined; criteria within a stanza are AND-combined. ' +
-    'Returns: {estimated_fan_count, sample_fans: [{fan_id, first_name, last_name, email}]}. ' +
-    'Always call this before nevent_segment_execute to validate the definition.',
+    'Preview estimated audience size for a segment definition without saving it. Returns fan count and sample contacts.',
     SegmentPreviewSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_segment_preview');
       if (denied) return err(denied);
@@ -305,11 +288,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_execute',
-    'Execute a segment definition and retrieve matching contacts with pagination. ' +
-    'Params: definition (same DSL as nevent_segment_preview), page (default 0), page_size (max 100, default 20). ' +
-    'Returns: {total_fans, fans: [{fan_id, first_name, last_name, email, phone}], current_page, total_pages, has_more}. ' +
-    'Call nevent_segment_preview first to validate the definition before executing.',
+    'Execute a segment definition and retrieve matching contacts with pagination.',
     SegmentExecuteSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_segment_execute');
       if (denied) return err(denied);
@@ -332,11 +313,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_dimension_values',
-    'Autocomplete values for a segmentation criterion. ' +
-    'Params: criterion_id (required, from nevent_segmentation_criteria), search (optional filter string). ' +
-    'Returns: {values: string[] | [{id, label}]}. ' +
-    'Use to discover valid values before setting criterion value in a segment definition.',
+    'Autocomplete values for a segmentation criterion. Useful for discovering valid values when building segment definitions.',
     DimensionValuesSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_dimension_values');
       if (denied) return err(denied);

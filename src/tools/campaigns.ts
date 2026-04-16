@@ -96,20 +96,9 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_list_campaigns',
-    'List campaigns for the active tenant from MongoDB. ' +
-    'All params optional. Params: ' +
-    'status (EXECUTED|DRAFT|PAUSED|STOPPED|SCHEDULED), ' +
-    'channel (EMAIL|SMS|WHATSAPP), ' +
-    'date_from (ISO 8601 datetime — campaigns created on/after), ' +
-    'date_to (ISO 8601 datetime — campaigns created on/before), ' +
-    'limit (default 50, max 200), ' +
-    'sort (createdAt|executedAt|name, default createdAt), ' +
-    'sort_order (asc|desc, default desc). ' +
-    'Returns: { campaigns: [{ id, name, status, channel, emailSubject, fromName, ' +
-    'totalRecipients, createdAt, executedAt, metrics: { email_sent, email_delivered, ' +
-    'opens, clicks, bounces, unsubscribes, email_complaints, purchases, revenue } }], count }. ' +
-    'Requires active tenant (call nevent_switch_tenant first).',
+    'List marketing campaigns for the active tenant with engagement metrics. Supports filtering by status, channel, and date range.',
     ListCampaignsSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_list_campaigns');
       if (denied) return err(denied);
@@ -220,13 +209,9 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_campaign',
-    'Get complete details of a single campaign by ID from MongoDB. ' +
-    'Params: campaign_id (required — MongoDB ObjectId string). ' +
-    'Returns all campaign fields including full emailBody HTML, all delivery metrics, ' +
-    'tracked_links, scheduling info, and audit fields. ' +
-    'Verifies that the campaign belongs to the active tenant. ' +
-    'Requires active tenant (call nevent_switch_tenant first).',
+    'Get full details of a specific campaign including email content, delivery metrics, and tracked links.',
     GetCampaignSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_campaign');
       if (denied) return err(denied);
@@ -355,16 +340,9 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_campaign_insights',
-    'Get AI-generated insights and anomaly detections for a campaign. ' +
-    'Params: campaign_id (required — MongoDB ObjectId string). ' +
-    'Queries two MongoDB collections: ' +
-    '  campaign_insights: insights, recommendations, performanceSummary, benchmarkComparison; ' +
-    '  campaign_anomalies: list of detected anomalies with anomalyType, metric, severity, ' +
-    'expectedValue, actualValue, deviationPercent. ' +
-    'Returns: { campaign_id, insights: {...} | null, anomalies: [...] }. ' +
-    'If no insights or anomalies exist yet, the respective field will be null/empty. ' +
-    'Requires active tenant (call nevent_switch_tenant first).',
+    'Get AI-generated performance insights and detected anomalies for a specific campaign.',
     GetCampaignInsightsSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_campaign_insights');
       if (denied) return err(denied);

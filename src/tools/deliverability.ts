@@ -89,17 +89,9 @@ export function registerDeliverabilityTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_sending_profile',
-    'Get the email sending profile for the active tenant. ' +
-    'Returns warm-up state, throttle settings and validated sending domains ' +
-    'by combining data from three MongoDB collections: ' +
-    'tenantSendingProfiles (warm-up day, health, configuredRate), ' +
-    'email_throttle_settings (currentSendRate, batchSize, warmupMode), ' +
-    'and validated_domains (domain list with validation status). ' +
-    'No parameters required — uses the active tenant from nevent_switch_tenant. ' +
-    'Returns: { tenantId, configuredRate, warmupDay, warmupStartDate, timezone, health, ' +
-    'healthModifier, throttle: { currentSendRate, batchSize, delayBetweenBatches, ' +
-    'maxSendRate, minSendRate, warmupMode }, domains: [{ domain, valid, validatedAt, lastCheckedAt }] }.',
+    'Get the email sending configuration for the active tenant including warm-up status, send rate, throttle settings, and validated domains.',
     GetSendingProfileSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_get_sending_profile');
       if (denied) return err(denied);
@@ -190,15 +182,9 @@ export function registerDeliverabilityTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_suppressions_summary',
-    'Get a summary of email suppressions and unsubscriptions for the active tenant. ' +
-    'Counts suppressions from the email_suppressions collection (active=true) and ' +
-    'unsubscriptions from the email_unsubscriptions collection. ' +
-    'Both include 30-day rolling window counts and breakdowns by reason. ' +
-    'Note: by_reason counts are lifetime totals; last_30d is the windowed count. ' +
-    'No parameters required — uses the active tenant from nevent_switch_tenant. ' +
-    'Returns: { suppressions: { total, last_30d, by_reason: Record<string, number> }, ' +
-    'unsubscriptions: { total, last_30d, by_reason: Record<string, number> } }.',
+    'Get a summary of email suppressions (hard bounces) and unsubscriptions for the active tenant with 30-day trends and reason breakdowns.',
     GetSuppressionsSummarySchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_get_suppressions_summary');
       if (denied) return err(denied);
