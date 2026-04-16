@@ -191,8 +191,29 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
       if (denied) return err(denied);
 
       try {
-        const result = await client.getCapabilities();
-        return ok(result);
+        const fullResult = await client.getCapabilities();
+
+        // Slim down the response — the full payload is ~865KB (19 tables × 200 fields)
+        // which is too large for LLM tool responses. Return table summaries only.
+        // Use nevent_analytics_table_schema for field details of a specific table.
+        const raw = fullResult as unknown as Record<string, unknown>;
+        const dataObj = (raw['data'] ?? raw) as Record<string, unknown>;
+        const rawTables = dataObj['tables'];
+        const tables = Array.isArray(rawTables) ? rawTables : [];
+
+        const summary = tables.map((t: Record<string, unknown>) => ({
+          name: t['name'],
+          description: t['description'] ?? null,
+          timeField: t['timeField'] ?? null,
+          tenantField: t['tenantField'] ?? null,
+          fieldCount: Array.isArray(t['fields']) ? (t['fields'] as unknown[]).length : 0,
+        }));
+
+        return ok({
+          tables: summary,
+          count: summary.length,
+          hint: 'Use nevent_analytics_table_schema with a specific table name to get the full list of fields.',
+        });
       } catch (caught) {
         return err(toErrorEnvelope(caught));
       }
