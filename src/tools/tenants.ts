@@ -153,12 +153,9 @@ export function registerTenantTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_list_tenants',
-    'List all Nevent tenants accessible to the authenticated user. ' +
-    'SUPERADMIN sees all tenants; OWNER sees their tenant and children; ADMIN sees only their own tenant. ' +
-    'No parameters required. ' +
-    'Returns: { tenants: [{ id, name, domain?, level?, parentId? }], count }. ' +
-    'Use tenant IDs returned here with nevent_switch_tenant to query a specific tenant\'s data.',
+    'List all Nevent tenants (clients) accessible to the authenticated user.',
     ListTenantsSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       try {
         // Call nev-api GET /tenants using the DataClient's JWT token.
@@ -227,13 +224,9 @@ export function registerTenantTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_switch_tenant',
-    'Switch the active tenant for the current MCP session. ' +
-    'All subsequent analytics and segmentation queries will use the specified tenant\'s data. ' +
-    'Params: tenant_id (required — get valid IDs from nevent_list_tenants). ' +
-    'Returns: { success: true, active_tenant_id: string, message: string }. ' +
-    'Requires SUPERADMIN or OWNER role with access to the target tenant. ' +
-    'ADMIN users can call this but subsequent queries may fail if the target differs from their own tenant.',
+    'Switch the active tenant for this session. All subsequent queries will use the specified tenant\'s data.',
     SwitchTenantSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       try {
         // Update the session's DataClient to send this tenant_id in future requests.
