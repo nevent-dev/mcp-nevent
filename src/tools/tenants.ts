@@ -172,7 +172,7 @@ export function registerTenantTools(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${jwtToken}`,
           },
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(30_000),
         });
 
         if (response.status === 403) {
@@ -183,7 +183,7 @@ export function registerTenantTools(
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${jwtToken}`,
             },
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(30_000),
           });
         }
 
@@ -285,7 +285,7 @@ export function registerTenantTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify({ tenantId: params.tenant_id }),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(30_000),
         });
 
         if (!response.ok) {
