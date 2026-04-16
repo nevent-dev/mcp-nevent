@@ -164,7 +164,7 @@ export function registerTenantTools(
         // same bearer token (the user's nev-api JWT).
         const jwtToken = (client as unknown as { jwtToken: string }).jwtToken;
 
-        const response = await fetch(`${neventApiUrl}/tenants`, {
+        const response = await fetch(`${neventApiUrl}/platform/tenants`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
