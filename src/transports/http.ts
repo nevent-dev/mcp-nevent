@@ -361,8 +361,15 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
             jwtToken: effectiveToken,
           });
 
+          // Auto-set the active tenant from the JWT claims so tools work
+          // immediately without requiring a manual nevent_switch_tenant call.
+          if (claims.tenantId) {
+            sessionDataClient.setActiveTenant(claims.tenantId);
+          }
+
           console.error(
             `[nevent-mcp] Session DataClient created | userId=${userId} ` +
+            `tenant=${claims.tenantId ?? 'none'} ` +
             `usingNeventToken=${!!neventToken} mode=${OPERATION_MODE}`
           );
         } catch (tokenErr) {
