@@ -89,18 +89,9 @@ export function registerTemplateTools(
 
   server.tool(
     'nevent_list_templates',
-    'List email templates for the active tenant. ' +
-    'Reads from MongoDB collection email_templates (DB nevent). ' +
-    'Params (all optional): tags (array of strings — filter by tag, all must match), ' +
-    'content_nature (string — AI classification, e.g. "promotional", "transactional"), ' +
-    'limit (max 200, default 50), sort ("createdAt" | "modifiedAt" | "name", default "modifiedAt"), ' +
-    'sort_order ("asc" | "desc", default "desc"). ' +
-    'Returns: { templates: [{ id, name, format, tags, content_nature, content_nature_confidence, ' +
-    'createdAt, createdBy, modifiedAt, modifiedBy }], count }. ' +
-    'htmlBody and mjmlBody are excluded from list results — use nevent_get_template for full content. ' +
-    'Soft-deleted templates are excluded. ' +
-    'Use nevent_switch_tenant first to target a specific tenant.',
+    'List email templates for the active tenant with names, tags, and content classification.',
     ListTemplatesSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_list_templates');
       if (denied) return err(denied);
@@ -191,16 +182,9 @@ export function registerTemplateTools(
 
   server.tool(
     'nevent_get_template',
-    'Get full detail of a single email template including HTML and MJML source. ' +
-    'Params: template_id (required — get from nevent_list_templates). ' +
-    'Returns: { template: { id, name, format, tags, htmlBody, mjmlBody, ' +
-    'content_nature, content_nature_confidence, content_nature_reasoning, ' +
-    'processedImages, createdAt, createdBy, modifiedAt, modifiedBy, ' +
-    'performance?: { performanceScore, metrics: { openRate, clickRate, conversionRate } } } }. ' +
-    'The template must belong to the active tenant — cross-tenant access is rejected. ' +
-    'Performance metrics are included when available in template_performance_index. ' +
-    'htmlBody contains the compiled HTML; mjmlBody contains the MJML source used to generate it.',
+    'Get full details of an email template including MJML source, rendered HTML, and performance metrics.',
     GetTemplateSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_template');
       if (denied) return err(denied);

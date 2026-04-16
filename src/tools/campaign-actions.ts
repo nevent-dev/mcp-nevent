@@ -146,16 +146,9 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_create_campaign',
-    'Create a new marketing campaign in DRAFT state via nev-api. ' +
-    'The campaign will always be created as DRAFT — it cannot be sent directly from this tool. ' +
-    'Params: name (required), channel (required: EMAIL|SMS|WHATSAPP), ' +
-    'email_subject (required if channel=EMAIL), email_body (optional HTML), ' +
-    'preview_text (optional), from_name (optional), message (required if channel=SMS|WHATSAPP), ' +
-    'segment_ids (optional array), template_id (optional). ' +
-    'Returns: { campaign: { id, name, status: "DRAFT", channel, ... }, message }. ' +
-    'Rate limit: 5 campaigns per hour per tenant. ' +
-    'Requires NEVENT_OPERATION_MODE=STANDARD or FULL.',
+    'Create a new email, SMS, or WhatsApp campaign draft. The campaign is always created in DRAFT status and must be manually sent or scheduled.',
     CreateCampaignSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       // --- Operation mode guard ---
       const denied = checkMode('nevent_create_campaign');
@@ -306,14 +299,9 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_schedule_campaign',
-    'Schedule an existing DRAFT campaign for delivery at a specific future date/time. ' +
-    'The campaign must be in DRAFT status. ' +
-    'Params: campaign_id (required), scheduled_time (required ISO 8601 datetime, must be future), ' +
-    'confirmed (required, MUST be the literal true — explicit confirmation gate). ' +
-    'Returns: { campaign: { id, status: "SCHEDULED", scheduledTime, ... }, message }. ' +
-    'IMPORTANT: Set confirmed=true to confirm you understand this will schedule a real send. ' +
-    'Requires NEVENT_OPERATION_MODE=FULL.',
+    'Schedule an existing draft campaign for sending at a specified date and time. Requires explicit confirmation.',
     ScheduleCampaignSchema,
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async (params) => {
       // --- Operation mode guard ---
       const denied = checkMode('nevent_schedule_campaign');
