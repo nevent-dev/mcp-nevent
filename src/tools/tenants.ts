@@ -189,7 +189,9 @@ export function registerTenantTools(
 
         const data = await response.json() as unknown;
 
-        // nev-api may return the list as an array or wrapped in an envelope.
+        // nev-api GET /tenants returns different shapes depending on the user's role:
+        // - SUPERADMIN/OWNER: returns the user's current tenant as a SINGLE object (not an array)
+        // - Some roles: may return an array or a Spring Page wrapper
         let tenants: TenantRecord[];
         if (Array.isArray(data)) {
           tenants = data as TenantRecord[];
@@ -208,8 +210,21 @@ export function registerTenantTools(
         ) {
           // Spring Page wrapper: { content: [], totalElements, ... }
           tenants = (data as { content: TenantRecord[] }).content;
+        } else if (
+          data !== null &&
+          typeof data === 'object' &&
+          'id' in data
+        ) {
+          // Single tenant object — wrap in array
+          tenants = [data as TenantRecord];
         } else {
           tenants = [];
+        }
+
+        // Also include the active tenant from the DataClient if set and not already in the list
+        const activeTenantId = client.activeTenantId;
+        if (activeTenantId && !tenants.some(t => t.id === activeTenantId)) {
+          tenants.push({ id: activeTenantId, name: `Tenant ${activeTenantId}` });
         }
 
         return ok({ tenants, count: tenants.length });
