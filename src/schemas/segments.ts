@@ -33,6 +33,24 @@ export { SegmentDefinitionSchema };
 export const ListSegmentsSchema = {};
 
 // ---------------------------------------------------------------------------
+// Tool 1b: nevent_get_segment
+// ---------------------------------------------------------------------------
+
+/**
+ * Input schema for `nevent_get_segment`.
+ */
+export const GetSegmentSchema = {
+  segment_id: z
+    .string()
+    .min(1)
+    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character hex identifier')
+    .describe(
+      'Identifier of the segment to retrieve. ' +
+      'Get valid IDs from nevent_list_segments.'
+    ),
+};
+
+// ---------------------------------------------------------------------------
 // Tool 2: nevent_create_segment
 // ---------------------------------------------------------------------------
 
