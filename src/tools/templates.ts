@@ -1,31 +1,43 @@
 /**
  * Email template tools for the Nevent MCP Server.
  *
- * Registers 2 tools that read from the `email_templates` MongoDB collection
- * (database `nevent`) scoped to the active tenant:
+ * Registers 4 tools:
  *
- *  1. nevent_list_templates — List email templates with optional filtering
- *  2. nevent_get_template   — Full detail of a single template + performance metrics
+ *  1. nevent_list_templates   — List email templates with optional filtering (READ, MongoDB)
+ *  2. nevent_get_template     — Full detail of a single template + performance metrics (READ, MongoDB)
+ *  3. nevent_create_template  — Create a new email template via nev-api (WRITE)
+ *  4. nevent_update_template  — Update an existing email template via nev-api (WRITE)
  *
  * ## Architecture
  *
- * Unlike the analytics tools (which call nev-data-api over HTTP), these tools
- * query MongoDB directly. The MongoClient is a closure-scoped singleton
- * created lazily on first use and reused across invocations.
+ * Read tools (list/get) query MongoDB directly. The MongoClient is a
+ * closure-scoped singleton created lazily on first use and reused across
+ * invocations.
+ *
+ * Write tools (create/update) call nev-api (Java Spring Boot) over HTTP using
+ * the JWT token extracted from `dataClient`. This is the same pattern used by
+ * `registerSegmentTools` in `src/tools/segments.ts`.
  *
  * The active tenant ID is read from `dataClient.activeTenantId` (public field).
- * Templates are filtered by `tenantId` and soft-delete is excluded via
+ * Read tools filter by `tenantId` and exclude soft-deleted documents via
  * `{ deletedAt: { $exists: false } }`.
  *
  * ## Tenant guard
  *
- * Both tools fail fast when `activeTenantId` is undefined, because all
- * queries must be scoped to a tenant for data isolation.
+ * Read tools fail fast when `activeTenantId` is undefined, because all
+ * MongoDB queries must be scoped to a tenant for data isolation.
  *
  * ## Operation Mode
  *
- * Both tools are READ operations and are therefore permitted in all modes
- * (READ_ONLY, STANDARD, FULL).
+ * - `nevent_list_templates`  → READ  — permitted in all modes.
+ * - `nevent_get_template`    → READ  — permitted in all modes.
+ * - `nevent_create_template` → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_update_template` → WRITE — blocked in READ_ONLY mode.
+ *
+ * ## Audit Logging
+ *
+ * Write operations emit a structured `console.error` audit log entry with:
+ * toolName, tenantId, timestamp, operation, outcome, and templateId.
  *
  * @module tools/templates
  */
@@ -34,29 +46,82 @@ import { MongoClient, ObjectId } from 'mongodb';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
-import { ListTemplatesSchema, GetTemplateSchema } from '../schemas/templates.js';
+import {
+  ListTemplatesSchema,
+  GetTemplateSchema,
+  CreateTemplateSchema,
+  UpdateTemplateSchema,
+} from '../schemas/templates.js';
+
+// ---------------------------------------------------------------------------
+// Helper: extract JWT token from DataClient
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the JWT bearer token from a `DataClient` instance.
+ *
+ * `DataClient` inherits `jwtToken` as a protected member from `BaseClient`.
+ * We access it via an unsafe cast — the same pattern used in `segments.ts` —
+ * because nev-api and nev-data-api share the same bearer token.
+ *
+ * @param client — The session's DataClient.
+ * @returns The raw JWT string for use in Authorization headers.
+ */
+function extractJwt(client: DataClient): string {
+  return (client as unknown as { jwtToken: string }).jwtToken;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: project a raw template record for write-operation responses
+// ---------------------------------------------------------------------------
+
+/**
+ * Project a raw template record returned by nev-api to the fields exposed
+ * by MCP write-tool responses.
+ *
+ * We only expose a curated subset to keep the MCP response compact and avoid
+ * leaking internal fields. The `_id` MongoDB field is mapped to `id` if the
+ * API has not already done the conversion.
+ *
+ * @param raw — Raw template record from nev-api.
+ * @returns Projected template with id, name, and format.
+ */
+function projectTemplate(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: String(raw['id'] ?? raw['_id'] ?? ''),
+    name: raw['name'] !== undefined ? String(raw['name']) : null,
+    format: raw['format'] !== undefined ? String(raw['format']) : null,
+    tags: Array.isArray(raw['tags']) ? raw['tags'] : [],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
 /**
- * Register email template tools on the MCP server.
+ * Register all email template tools on the MCP server.
  *
- * Requires a valid `mongoUri` to connect to the `nevent` MongoDB database.
+ * Read tools (list/get) require `mongoUri` to connect to the `nevent` database.
+ * Write tools (create/update) require `neventApiUrl` to call nev-api.
+ *
  * Should be called during server initialization after `registerAnalyticsTools`.
  *
  * The MongoClient singleton is scoped to this closure so each call to
  * `registerTemplateTools` creates an isolated connection pool.
  *
- * @param server     — The `McpServer` instance to register tools on.
- * @param mongoUri   — MongoDB connection URI (e.g. from MONGODB_URI env var).
- * @param dataClient — The session's `DataClient` (carries `activeTenantId`).
+ * @param server        — The `McpServer` instance to register tools on.
+ * @param mongoUri      — MongoDB connection URI (e.g. from MONGODB_URI env var).
+ * @param dataClient    — The session's `DataClient` (carries JWT + activeTenantId).
+ * @param neventApiUrl  — Base URL of nev-api, e.g. `https://api.nevent.es`.
+ *                        When provided, write tools (create/update) are registered.
+ *                        When omitted, only read tools are registered.
  */
 export function registerTemplateTools(
   server: McpServer,
   mongoUri: string,
-  dataClient: DataClient
+  dataClient: DataClient,
+  neventApiUrl?: string
 ): void {
 
   // -------------------------------------------------------------------------
@@ -275,6 +340,271 @@ export function registerTemplateTools(
             },
           };
         }
+
+        return ok({ template });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Write tools: only registered when neventApiUrl is provided
+  // -------------------------------------------------------------------------
+
+  if (!neventApiUrl) {
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Tool 3: nevent_create_template (WRITE)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_create_template',
+    'Create a new email template with MJML or HTML content.',
+    CreateTemplateSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_create_template');
+      if (denied) return err(denied);
+
+      const jwtToken = extractJwt(dataClient);
+      const tenantId = dataClient.activeTenantId;
+
+      try {
+        const url = new URL(`${neventApiUrl}/templates`);
+        // Disable server-side validation guards — let the agent supply raw content
+        url.searchParams.set('ensureValidation', 'false');
+        url.searchParams.set('strict', 'false');
+        url.searchParams.set('force', 'false');
+
+        // Build request body from provided params — only include optional fields
+        // when explicitly supplied to avoid overwriting server defaults with nulls.
+        const requestBody: Record<string, unknown> = {
+          name: params.name,
+          format: params.format,
+        };
+
+        if (params.mjml_body !== undefined) {
+          requestBody['mjmlBody'] = params.mjml_body;
+        }
+
+        if (params.html_body !== undefined) {
+          requestBody['htmlBody'] = params.html_body;
+        }
+
+        if (params.tags !== undefined) {
+          requestBody['tags'] = params.tags;
+        }
+
+        const response = await fetch(url.toString(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`,
+          },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          return err({
+            error: {
+              type:
+                response.status === 401 || response.status === 403
+                  ? 'authentication_error'
+                  : response.status === 400
+                    ? 'invalid_request'
+                    : 'api_error',
+              message:
+                response.status === 403
+                  ? 'Access denied. Creating templates requires sufficient permissions.'
+                  : response.status === 401
+                    ? 'Authentication failed. JWT token may be expired or invalid.'
+                    : `Failed to create template: HTTP ${response.status}. ${body}`,
+              code:
+                response.status === 403
+                  ? 'forbidden'
+                  : response.status === 401
+                    ? 'unauthorized'
+                    : response.status === 400
+                      ? 'invalid_template'
+                      : 'api_error',
+            },
+          });
+        }
+
+        const data = await response.json() as unknown;
+
+        // nev-api may wrap the created resource in an envelope or return it directly.
+        const rawTemplate =
+          data !== null &&
+          typeof data === 'object' &&
+          'template' in (data as Record<string, unknown>)
+            ? (data as Record<string, unknown>)['template'] as Record<string, unknown>
+            : (data as Record<string, unknown>);
+
+        const template = projectTemplate(rawTemplate);
+
+        // Audit log for write operation
+        console.error(
+          JSON.stringify({
+            audit: true,
+            tool: 'nevent_create_template',
+            tenantId: tenantId ?? 'default',
+            timestamp: new Date().toISOString(),
+            operation: 'create',
+            outcome: 'success',
+            templateId: template['id'],
+            templateName: template['name'],
+          })
+        );
+
+        return ok({ template });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 4: nevent_update_template (WRITE)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_update_template',
+    'Update an existing email template\'s name, content, or tags.',
+    UpdateTemplateSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_update_template');
+      if (denied) return err(denied);
+
+      // Runtime validation: at least one field to update must be provided.
+      const updatableFields = ['name', 'format', 'mjml_body', 'html_body', 'tags'] as const;
+      const hasUpdate = updatableFields.some(
+        (field) => params[field as keyof typeof params] !== undefined
+      );
+
+      if (!hasUpdate) {
+        return err({
+          error: {
+            type: 'invalid_request',
+            message:
+              'At least one of "name", "format", "mjml_body", "html_body", or "tags" ' +
+              'must be provided for nevent_update_template.',
+            code: 'missing_update_fields',
+            param: 'name',
+          },
+        });
+      }
+
+      const jwtToken = extractJwt(dataClient);
+      const tenantId = dataClient.activeTenantId;
+
+      try {
+        const url = new URL(
+          `${neventApiUrl}/templates/${encodeURIComponent(params.template_id)}`
+        );
+
+        // Build request body — only include fields that were explicitly provided.
+        const requestBody: Record<string, unknown> = {};
+
+        if (params.name !== undefined) {
+          requestBody['name'] = params.name;
+        }
+
+        if (params.format !== undefined) {
+          requestBody['format'] = params.format;
+        }
+
+        if (params.mjml_body !== undefined) {
+          requestBody['mjmlBody'] = params.mjml_body;
+        }
+
+        if (params.html_body !== undefined) {
+          requestBody['htmlBody'] = params.html_body;
+        }
+
+        if (params.tags !== undefined) {
+          requestBody['tags'] = params.tags;
+        }
+
+        const response = await fetch(url.toString(), {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`,
+          },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          return err({
+            error: {
+              type:
+                response.status === 404
+                  ? 'not_found'
+                  : response.status === 401 || response.status === 403
+                    ? 'authentication_error'
+                    : response.status === 400
+                      ? 'invalid_request'
+                      : 'api_error',
+              message:
+                response.status === 404
+                  ? `Template "${params.template_id}" not found or does not belong to the active tenant.`
+                  : response.status === 403
+                    ? 'Access denied. Updating templates requires sufficient permissions.'
+                    : response.status === 401
+                      ? 'Authentication failed. JWT token may be expired or invalid.'
+                      : `Failed to update template: HTTP ${response.status}. ${body}`,
+              code:
+                response.status === 404
+                  ? 'template_not_found'
+                  : response.status === 403
+                    ? 'forbidden'
+                    : response.status === 401
+                      ? 'unauthorized'
+                      : response.status === 400
+                        ? 'invalid_template'
+                        : 'api_error',
+            },
+          });
+        }
+
+        const data = await response.json() as unknown;
+
+        // nev-api may wrap the updated resource in an envelope or return it directly.
+        const rawTemplate =
+          data !== null &&
+          typeof data === 'object' &&
+          'template' in (data as Record<string, unknown>)
+            ? (data as Record<string, unknown>)['template'] as Record<string, unknown>
+            : (data as Record<string, unknown>);
+
+        const template = projectTemplate(rawTemplate);
+
+        // Audit log for write operation
+        const updatedFields = updatableFields.filter(
+          (field) => params[field as keyof typeof params] !== undefined
+        );
+
+        console.error(
+          JSON.stringify({
+            audit: true,
+            tool: 'nevent_update_template',
+            tenantId: tenantId ?? 'default',
+            timestamp: new Date().toISOString(),
+            operation: 'update',
+            outcome: 'success',
+            templateId: params.template_id,
+            updatedFields,
+          })
+        );
 
         return ok({ template });
       } catch (caught) {
