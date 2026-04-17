@@ -102,16 +102,16 @@ export const CreateSegmentSchema = {
  */
 export const UpdateSegmentSchema = {
   /**
-   * MongoDB ObjectId string of the segment to update.
+   * Identifier of the segment to update.
    * Use `nevent_list_segments` to discover valid segment IDs.
    * Must be a 24-character hex string.
    */
   segment_id: z
     .string()
     .min(1)
-    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character MongoDB ObjectId (hex string)')
+    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character hex identifier')
     .describe(
-      'MongoDB ObjectId of the segment to update. ' +
+      'Identifier of the segment to update. ' +
       'Use nevent_list_segments to get valid segment IDs.'
     ),
 

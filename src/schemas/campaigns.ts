@@ -105,7 +105,7 @@ export const GetCampaignSchema = {
   campaign_id: z
     .string()
     .describe(
-      'The campaign MongoDB ObjectId (as a string). ' +
+      'The campaign Identifier. ' +
         'Use nevent_list_campaigns to discover valid campaign IDs.'
     ),
 };
@@ -120,7 +120,7 @@ export const GetCampaignInsightsSchema = {
   campaign_id: z
     .string()
     .describe(
-      'The campaign MongoDB ObjectId (as a string). ' +
+      'The campaign Identifier. ' +
         'Use nevent_list_campaigns to discover valid campaign IDs.'
     ),
 };

@@ -85,14 +85,14 @@ export const ListTemplatesSchema = {
  */
 export const GetTemplateSchema = {
   /**
-   * MongoDB ObjectId of the template to retrieve.
+   * Identifier of the template to retrieve.
    * Must be a 24-character hex string.
    */
   template_id: z
     .string()
-    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character MongoDB ObjectId (hex string)')
+    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character hex identifier')
     .describe(
-      'The MongoDB ObjectId of the template to retrieve. ' +
+      'The Identifier of the template to retrieve. ' +
       'Get valid IDs from nevent_list_templates.'
     ),
 };
@@ -196,15 +196,15 @@ export const CreateTemplateSchema = {
  */
 export const UpdateTemplateSchema = {
   /**
-   * MongoDB ObjectId string of the template to update.
+   * Identifier of the template to update.
    * Use `nevent_list_templates` to discover valid template IDs.
    * Must be a 24-character hex string.
    */
   template_id: z
     .string()
-    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character MongoDB ObjectId (hex string)')
+    .regex(/^[a-f0-9]{24}$/i, 'Must be a valid 24-character hex identifier')
     .describe(
-      'MongoDB ObjectId of the template to update. ' +
+      'Identifier of the template to update. ' +
       'Use nevent_list_templates to get valid template IDs.'
     ),
 

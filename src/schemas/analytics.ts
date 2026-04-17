@@ -20,16 +20,16 @@ import { z } from 'zod';
 
 /** A single dimension field with optional alias. */
 export const DimensionSchema = z.object({
-  /** BigQuery field name, e.g. "event_id", "purchase_date". */
-  field: z.string().describe('BigQuery field name'),
+  /** Field name, e.g. "event_id", "purchase_date". */
+  field: z.string().describe('Field name'),
   /** Optional alias for the column in result rows. */
   alias: z.string().optional().describe('Alias for the column in results'),
 });
 
 /** A single metric field with aggregation operation and optional alias. */
 export const MetricSchema = z.object({
-  /** BigQuery field name to aggregate. */
-  field: z.string().describe('BigQuery field name to aggregate'),
+  /** Field name to aggregate. */
+  field: z.string().describe('Field name to aggregate'),
   /** Aggregation function to apply. */
   operation: z
     .enum(['sum', 'count', 'avg', 'min', 'max'])
@@ -166,7 +166,7 @@ export const AnalyticsQuerySchema = {
   /** Target BigQuery collection (table name). Call nevent_analytics_capabilities first if unsure. */
   collection: z
     .string()
-    .describe('Target BigQuery collection name, e.g. "purchases", "tickets", "campaigns"'),
+    .describe('Collection name, e.g. "purchases", "tickets", "campaigns"'),
   dimensions: z
     .array(DimensionSchema)
     .optional()
@@ -233,7 +233,7 @@ export const AnalyticsTableSchemaInputSchema = {
   /** Table name to inspect, e.g. "purchases". */
   table: z
     .string()
-    .describe('BigQuery table name to inspect, e.g. "purchases", "tickets"'),
+    .describe('Table name to inspect, e.g. "purchases", "tickets"'),
 };
 
 // ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ export const AnalyticsTableSchemaInputSchema = {
  */
 export const AnalyticsFilterValuesSchema = {
   /** Target collection to discover filter values in. */
-  collection: z.string().describe('BigQuery collection name to get filter values for'),
+  collection: z.string().describe('Collection name to get filter values for'),
   /** Fields to get distinct values for, with optional seed filters. */
   filters: z
     .array(
