@@ -89,6 +89,8 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 2: Template tools
   nevent_list_templates: 'READ',
   nevent_get_template: 'READ',
+  nevent_create_template: 'WRITE',
+  nevent_update_template: 'WRITE',
 
   // Sprint 2: Deliverability tools
   nevent_get_sending_profile: 'READ',

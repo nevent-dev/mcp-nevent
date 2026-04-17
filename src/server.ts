@@ -84,7 +84,8 @@ export interface CreateNeventServerOptions {
  * - Multi-tenant (2 tools): Registered when neventApiUrl is provided.
  * - Segment management (3 tools): Registered when neventApiUrl is provided.
  * - Campaign read tools (3 tools): Registered when mongoUri is provided.
- * - Template tools (2 tools): Registered when mongoUri is provided.
+ * - Template tools (2-4 tools): Registered when mongoUri is provided.
+ *   create/update tools additionally require neventApiUrl.
  * - Deliverability tools (2 tools): Registered when mongoUri is provided.
  * - Campaign actions (2 tools): Registered when neventApiUrl is provided.
  *
@@ -135,8 +136,8 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     // Campaign read tools (list/get/insights from MongoDB)
     registerCampaignTools(server, mongoUri, dataClient);
 
-    // Email template tools (list/get from MongoDB)
-    registerTemplateTools(server, mongoUri, dataClient);
+    // Email template tools (list/get from MongoDB; create/update via nev-api when available)
+    registerTemplateTools(server, mongoUri, dataClient, neventApiUrl);
 
     // Deliverability tools (sending profile + suppressions from MongoDB)
     registerDeliverabilityTools(server, mongoUri, dataClient);
