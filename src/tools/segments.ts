@@ -37,6 +37,7 @@ import type { SegmentRecord, ListSegmentsResponse } from '../types/segments.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import {
   ListSegmentsSchema,
+  GetSegmentSchema,
   CreateSegmentSchema,
   UpdateSegmentSchema,
 } from '../schemas/segments.js';
@@ -200,6 +201,69 @@ export function registerSegmentTools(
         };
 
         return ok(result);
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 1b: nevent_get_segment (READ)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_get_segment',
+    'Get full details of a segment including its filter definition, estimated size, and metadata.',
+    GetSegmentSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_get_segment');
+      if (denied) return err(denied);
+
+      const jwtToken = extractJwt(dataClient);
+
+      try {
+        const url = `${neventApiUrl}/segments/${encodeURIComponent(params.segment_id)}`;
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`,
+          },
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          return err({
+            error: {
+              type: response.status === 404 ? 'not_found' :
+                    response.status === 401 || response.status === 403 ? 'authentication_error' : 'api_error',
+              message: response.status === 404
+                ? `Segment "${params.segment_id}" not found or does not belong to the active tenant.`
+                : `Failed to get segment: HTTP ${response.status}. ${body.slice(0, 200)}`,
+              code: response.status === 404 ? 'not_found' : response.status === 403 ? 'forbidden' : 'api_error',
+            },
+          });
+        }
+
+        const data = await response.json() as Record<string, unknown>;
+
+        return ok({
+          id: data['id'] ?? data['_id'],
+          name: data['name'],
+          description: data['description'] ?? null,
+          status: data['status'] ?? null,
+          definition: data['definition'] ?? null,
+          estimatedCount: data['estimatedCount'] ?? null,
+          lastExecutedAt: data['lastExecutedAt'] ?? null,
+          tags: data['tags'] ?? [],
+          createdAt: data['createdAt'] ?? null,
+          createdBy: data['createdBy'] ?? null,
+          modifiedAt: data['modifiedAt'] ?? null,
+          modifiedBy: data['modifiedBy'] ?? null,
+        });
       } catch (caught) {
         return err(toErrorEnvelope(caught));
       }

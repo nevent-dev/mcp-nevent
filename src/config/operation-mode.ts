@@ -78,6 +78,7 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
 
   // Sprint 2: Segment management
   nevent_list_segments: 'READ',
+  nevent_get_segment: 'READ',
   nevent_create_segment: 'WRITE',
   nevent_update_segment: 'WRITE',
 
