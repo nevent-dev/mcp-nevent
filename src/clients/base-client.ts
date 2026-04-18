@@ -185,6 +185,23 @@ export class BaseClient {
     return response.data;
   }
 
+  /**
+   * Perform a POST request with both a JSON body and query parameters.
+   * Used when an endpoint accepts body fields plus query params (e.g. ?dryRun=true).
+   *
+   * @param path   — Endpoint path
+   * @param body   — Request payload (will be JSON-serialized)
+   * @param params — Optional query parameters appended to the URL
+   */
+  async postWithParams<T>(
+    path: string,
+    body?: unknown,
+    params?: Record<string, QueryParamValue>
+  ): Promise<T> {
+    const response = await this.request<T>('POST', path, { body, params });
+    return response.data;
+  }
+
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
