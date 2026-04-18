@@ -187,12 +187,28 @@ if (transportArg === 'http') {
     `mode=${OPERATION_MODE}`
   );
 
+  const NEVENT_API_URL = process.env['NEVENT_API_URL'] ?? 'https://api.nevent.es';
+  const MONGODB_URI = process.env['MONGODB_URI'];
+
   const dataClient = new DataClient({
     baseUrl: DATA_API_URL,
     jwtToken: JWT_TOKEN,
   });
 
-  const server = createNeventServer({ dataClient });
+  // Auto-set tenant from JWT if available
+  try {
+    const jwt = await import('jsonwebtoken');
+    const decoded = jwt.default.decode(JWT_TOKEN) as Record<string, unknown> | null;
+    if (decoded?.['tenantId']) {
+      dataClient.setActiveTenant(decoded['tenantId'] as string);
+    }
+  } catch { /* ignore */ }
+
+  const server = createNeventServer({
+    dataClient,
+    neventApiUrl: NEVENT_API_URL,
+    mongoUri: MONGODB_URI,
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
