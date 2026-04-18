@@ -9,7 +9,20 @@
  * - Required fields throw clear errors (no optional ambiguity on critical params)
  * - Optional fields use `.optional()` rather than `.nullable()` for clean JSON
  * - Numeric limits enforce API rate limits and server constraints
- * - Enum schemas document all valid string values explicitly
+ * - String fields for operator/operation/granularity enums are intentionally
+ *   open (not closed enums) so the MCP remains resilient to API-side additions.
+ *   Known valid values are documented in the field descriptions.
+ *
+ * Updated for nev-data-api v3.19.0:
+ * - distinct, dryRun boolean flags
+ * - Multi-sort (sort accepts object OR array of objects)
+ * - Expanded operator values for filters
+ * - Expanded operation values for metrics
+ * - timeGranularity as top-level field
+ * - groupBy array with calendar fields
+ * - comparePeriods (YoY/MoM comparison)
+ * - ctes array + sourceTable for CTE queries
+ * - New nevent_campaign_report tool schema
  */
 
 import { z } from 'zod';
@@ -26,14 +39,28 @@ export const DimensionSchema = z.object({
   alias: z.string().optional().describe('Alias for the column in results'),
 });
 
-/** A single metric field with aggregation operation and optional alias. */
+/**
+ * A single metric field with aggregation operation and optional alias.
+ *
+ * The `operation` field accepts any string that the API recognises. Known
+ * valid values (v3.19.0):
+ *   Basic: sum | count | avg | min | max
+ *   Extended: count_distinct | median | percentile | stddev | variance | date_diff
+ */
 export const MetricSchema = z.object({
   /** Field name to aggregate. */
   field: z.string().describe('Field name to aggregate'),
-  /** Aggregation function to apply. */
+  /**
+   * Aggregation function to apply.
+   * Known values: sum | count | avg | min | max |
+   *   count_distinct | median | percentile | stddev | variance | date_diff
+   */
   operation: z
-    .enum(['sum', 'count', 'avg', 'min', 'max'])
-    .describe('Aggregation function: sum | count | avg | min | max'),
+    .string()
+    .describe(
+      'Aggregation function. Known values: sum | count | avg | min | max | ' +
+      'count_distinct | median | percentile | stddev | variance | date_diff'
+    ),
   /** Optional alias for the column in result rows. */
   alias: z.string().optional().describe('Alias for the aggregated column in results'),
 });
@@ -44,21 +71,42 @@ export const TimeRangeSchema = z.object({
   start: z.string().describe('Start date in ISO 8601 format, e.g. "2024-01-01"'),
   /** End date in ISO 8601 format, e.g. "2024-12-31". */
   end: z.string().describe('End date in ISO 8601 format, e.g. "2024-12-31"'),
-  /** Optional time bucket granularity for trend queries. */
+  /**
+   * Optional time bucket granularity for trend queries (inside timeRange).
+   * Prefer the top-level `timeGranularity` field introduced in v3.19.0.
+   */
   granularity: z
-    .enum(['day', 'week', 'month'])
+    .string()
     .optional()
-    .describe('Time bucket granularity: day | week | month'),
+    .describe('Time bucket granularity (deprecated: use top-level timeGranularity)'),
 });
 
-/** A single WHERE filter predicate. */
+/**
+ * A single WHERE filter predicate.
+ *
+ * The `operator` field accepts any string recognised by the API. Known valid
+ * values (v3.19.0):
+ *   eq | neq | gt | gte | lt | lte | in | not_in | like |
+ *   contains | not_contains | starts_with | ends_with | regex | between |
+ *   is_null | is_not_null | is_true | is_false | array_contains | array_contains_any
+ */
 export const FilterSchema = z.object({
   field: z.string().describe('Field name to filter on'),
+  /**
+   * Comparison operator.
+   * Known values: eq | neq | gt | gte | lt | lte | in | not_in | like |
+   *   contains | not_contains | starts_with | ends_with | regex | between |
+   *   is_null | is_not_null | is_true | is_false | array_contains | array_contains_any
+   */
   operator: z
-    .enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'like'])
-    .describe('Comparison operator'),
-  /** The filter value. For "in" / "not_in" operators, provide an array. */
-  value: z.unknown().describe('Filter value; use array for "in" / "not_in" operators'),
+    .string()
+    .describe(
+      'Comparison operator. Known values: eq | neq | gt | gte | lt | lte | in | not_in | like | ' +
+      'contains | not_contains | starts_with | ends_with | regex | between | ' +
+      'is_null | is_not_null | is_true | is_false | array_contains | array_contains_any'
+    ),
+  /** The filter value. For "in" / "not_in" operators, provide an array. For "between", provide [min, max]. */
+  value: z.unknown().describe('Filter value; use array for "in" / "not_in" / "between" operators'),
 });
 
 /** A single HAVING predicate (applied after aggregation). */
@@ -68,11 +116,26 @@ export const HavingSchema = z.object({
   value: z.unknown().describe('HAVING threshold value'),
 });
 
-/** Sort specification. */
+/** Sort specification for a single field. */
 export const SortSchema = z.object({
   field: z.string().describe('Field to sort by'),
   order: z.enum(['asc', 'desc']).describe('Sort direction: asc | desc'),
 });
+
+/**
+ * Multi-sort input: accepts a single sort object OR an array of sort objects.
+ * Introduced in v3.19.0 to support ordering by multiple fields simultaneously.
+ *
+ * Examples:
+ *   Single: { "field": "purchase_date", "order": "desc" }
+ *   Multi:  [{ "field": "status", "order": "asc" }, { "field": "created_at", "order": "desc" }]
+ */
+export const SortInputSchema = z.union([
+  SortSchema,
+  z.array(SortSchema).min(1),
+]).describe(
+  'Sort order. Accepts a single { field, order } object or an array of sort objects for multi-sort.'
+);
 
 /** Comparative dimension configuration. */
 export const CompareDimensionsSchema = z.object({
@@ -84,6 +147,48 @@ export const CompareDimensionsSchema = z.object({
       name: z.string().describe('Display name for the comparison group'),
     })
   ).describe('Dimension values to compare against each other'),
+});
+
+/**
+ * Period definition used in comparePeriods.
+ * Each period is a { start, end } date range in ISO 8601 format.
+ */
+export const TimePeriodSchema = z.object({
+  start: z.string().describe('ISO 8601 start date, e.g. "2024-01-01"'),
+  end: z.string().describe('ISO 8601 end date, e.g. "2024-12-31"'),
+});
+
+/**
+ * Period-over-period comparison configuration (YoY, MoM, custom).
+ * Introduced in v3.19.0.
+ *
+ * Example (YoY):
+ * {
+ *   active: true,
+ *   current:  { start: "2024-01-01", end: "2024-12-31" },
+ *   previous: { start: "2023-01-01", end: "2023-12-31" }
+ * }
+ */
+export const ComparePeriodsSchema = z.object({
+  active: z.boolean().describe('Enable period-over-period comparison'),
+  current: TimePeriodSchema.describe('The reference (current) time period'),
+  previous: TimePeriodSchema.describe('The baseline (previous) time period to compare against'),
+});
+
+/**
+ * CTE (Common Table Expression) sub-query definition.
+ * Introduced in v3.19.0. Each CTE can define a pre-computed sub-query that
+ * the main query can reference via `sourceTable`.
+ */
+export const CteSchema = z.object({
+  name: z.string().describe('Name used to reference this CTE via the sourceTable field'),
+  collection: z.string().describe('Source collection for this CTE'),
+  dimensions: z.array(DimensionSchema).optional().describe('Dimensions to select in the CTE'),
+  metrics: z.array(MetricSchema).optional().describe('Metrics to compute in the CTE'),
+  filters: z.array(FilterSchema).optional().describe('Filters to apply in the CTE'),
+  timeRange: TimeRangeSchema.optional().describe('Time range filter for the CTE'),
+  sort: SortInputSchema.optional().describe('Sort order for the CTE'),
+  limit: z.number().max(10000).optional().describe('Row limit for the CTE'),
 });
 
 // ---------------------------------------------------------------------------
@@ -161,6 +266,9 @@ export const SegmentDefinitionSchema = z.object({
 /**
  * Input schema for `nevent_analytics_query`.
  * Queries a BigQuery collection with flexible dimension/metric/filter DSL.
+ *
+ * Updated for v3.19.0: distinct, dryRun, multi-sort, timeGranularity,
+ * groupBy, comparePeriods, ctes, sourceTable.
  */
 export const AnalyticsQuerySchema = {
   /** Target BigQuery collection (table name). Call nevent_analytics_capabilities first if unsure. */
@@ -186,7 +294,10 @@ export const AnalyticsQuerySchema = {
     .array(HavingSchema)
     .optional()
     .describe('HAVING clause filters to apply after aggregation'),
-  sort: SortSchema.optional().describe('Sort the result rows'),
+  /** v3.19.0: Accepts a single sort object or an array for multi-field sorting. */
+  sort: SortInputSchema.optional().describe(
+    'Sort the result rows. Accepts a single { field, order } object or an array for multi-field sorting.'
+  ),
   limit: z
     .number()
     .max(1000)
@@ -195,6 +306,69 @@ export const AnalyticsQuerySchema = {
   compareDimensions: CompareDimensionsSchema.optional().describe(
     'Comparative dimension analysis configuration'
   ),
+  /**
+   * v3.19.0: Add SELECT DISTINCT to deduplicate result rows.
+   */
+  distinct: z
+    .boolean()
+    .optional()
+    .describe('Add SELECT DISTINCT to deduplicate result rows (v3.19.0+)'),
+  /**
+   * v3.19.0: Dry-run mode — estimates query cost in bytes without executing.
+   * When true, the request is sent with `?dryRun=true` as a query parameter.
+   * The response metadata will include `estimatedBytes` instead of actual data.
+   */
+  dryRun: z
+    .boolean()
+    .optional()
+    .describe(
+      'Dry-run mode: estimate query cost without executing (v3.19.0+). ' +
+      'Response includes estimatedBytes in metadata.'
+    ),
+  /**
+   * v3.19.0: Top-level time granularity for bucketing time-series data.
+   * Known values: day | week | month | quarter | year | hour | minute | fiscalQuarter | fiscalYear
+   */
+  timeGranularity: z
+    .string()
+    .optional()
+    .describe(
+      'Time granularity for bucketing (v3.19.0+). ' +
+      'Known values: day | week | month | quarter | year | hour | minute | fiscalQuarter | fiscalYear'
+    ),
+  /**
+   * v3.19.0: Calendar-based group-by fields.
+   * Known values: dayOfWeek | weekOfYear | hourOfDay | minuteOfHour | month | quarter | year
+   */
+  groupBy: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Calendar-based group-by fields (v3.19.0+). ' +
+      'Known values: dayOfWeek | weekOfYear | hourOfDay | minuteOfHour | month | quarter | year'
+    ),
+  /**
+   * v3.19.0: Period-over-period comparison (YoY, MoM, custom periods).
+   */
+  comparePeriods: ComparePeriodsSchema.optional().describe(
+    'Period-over-period comparison (YoY, MoM, etc.) — v3.19.0+'
+  ),
+  /**
+   * v3.19.0: CTE sub-query definitions. Each CTE can be referenced in
+   * the main query via the `sourceTable` field.
+   */
+  ctes: z
+    .array(CteSchema)
+    .optional()
+    .describe('CTE (Common Table Expression) sub-queries — v3.19.0+'),
+  /**
+   * v3.19.0: Use a CTE name (from the `ctes` array) as the main query source
+   * instead of a raw collection. Requires at least one entry in `ctes`.
+   */
+  sourceTable: z
+    .string()
+    .optional()
+    .describe('CTE name to use as source instead of a raw collection — v3.19.0+'),
   /**
    * Optional tenant ID override for multi-tenant queries.
    *
@@ -332,4 +506,42 @@ export const DimensionValuesSchema = {
     .string()
     .optional()
     .describe('Optional search string to filter matching values'),
+};
+
+// ---------------------------------------------------------------------------
+// Tool 9: nevent_campaign_report (v3.19.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Input schema for `nevent_campaign_report`.
+ *
+ * Introduced in v3.19.0: POST /analytics/campaign-report executes 13 parallel
+ * analytics queries for a single campaign in one API call, returning a
+ * comprehensive performance report (opens, clicks, bounces, unsubscribes,
+ * conversions, revenue, etc.).
+ */
+export const CampaignReportSchema = {
+  /**
+   * Campaign ID to generate the report for.
+   * Use nevent_list_campaigns to get valid campaign IDs.
+   */
+  campaignId: z
+    .string()
+    .describe('Campaign ID to generate the analytics report for'),
+  /**
+   * Optional time range to restrict the report data.
+   * When omitted, the full campaign lifetime is used.
+   */
+  timeRange: TimeRangeSchema.optional().describe(
+    'Optional time range to restrict report data. Defaults to full campaign lifetime.'
+  ),
+  /**
+   * Optional tenant ID override for multi-tenant queries.
+   */
+  tenant_id: z
+    .string()
+    .optional()
+    .describe(
+      'Optional tenant ID for multi-tenant queries. Requires SUPERADMIN or OWNER role.'
+    ),
 };

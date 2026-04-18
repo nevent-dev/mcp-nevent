@@ -6,6 +6,10 @@
  *  - Segmentation criteria, segment preview, segment execute
  *  - Dimension values autocomplete
  *
+ * Updated for v3.19.0:
+ *  - queryAnalytics passes all new v3.19.0 fields (distinct, dryRun, timeGranularity, etc.)
+ *  - New getCampaignReport method for POST /analytics/campaign-report
+ *
  * All methods are thin wrappers over `BaseClient.request()` — they handle
  * URL construction and casting but not error handling (let errors propagate).
  */
@@ -18,6 +22,7 @@ import type {
   AnalyticsCapabilitiesResponse,
   AnalyticsTableSchemaResponse,
   AnalyticsFilterValuesResponse,
+  CampaignReportResponse,
 } from '../types/analytics.js';
 import type {
   SegmentationCriteriaResponse,
@@ -93,16 +98,28 @@ export class DataClient extends BaseClient {
    * When `tenantId` is explicitly provided it overrides `activeTenantId`.
    * When neither is set, data-api uses the tenant from the bearer token.
    *
+   * v3.19.0: When `dryRun` is true, sends `?dryRun=true` as a query param instead
+   * of including it in the body. The API returns an estimated cost (bytes) without
+   * actually executing the query.
+   *
    * @param request  — Full query DSL including collection, dimensions, metrics, filters, etc.
    * @param tenantId — Optional per-call tenant override (takes precedence over activeTenantId).
+   * @param dryRun   — Optional dry-run flag. When true, estimates cost without executing.
    * @returns        Transformed response with `data` rows and `metadata`.
    */
-  async queryAnalytics(request: AnalyticsQueryRequest, tenantId?: string): Promise<AnalyticsQueryResponse> {
+  async queryAnalytics(
+    request: AnalyticsQueryRequest,
+    tenantId?: string,
+    dryRun?: boolean
+  ): Promise<AnalyticsQueryResponse> {
     const effectiveTenantId = tenantId ?? this.activeTenantId;
     const body = effectiveTenantId
       ? { ...request, tenant_id: effectiveTenantId }
       : request;
-    const raw = await this.post<Record<string, unknown>>('/analytics/query', body);
+
+    // dryRun is passed as a query parameter, not in the body
+    const params = dryRun ? { dryRun: 'true' } : undefined;
+    const raw = await this.postWithParams<Record<string, unknown>>('/analytics/query', body, params);
     return this.transformQueryResponse(raw);
   }
 
@@ -152,6 +169,35 @@ export class DataClient extends BaseClient {
       ? { collection, filters, tenant_id: effectiveTenantId }
       : { collection, filters };
     return this.post<AnalyticsFilterValuesResponse>('/analytics/filters', body);
+  }
+
+  /**
+   * Generate a comprehensive campaign analytics report.
+   * Maps to POST /analytics/campaign-report.
+   *
+   * Introduced in v3.19.0: executes 13 parallel analytics queries for a single
+   * campaign in one API call, returning opens, clicks, bounces, unsubscribes,
+   * conversions, revenue, and other performance metrics.
+   *
+   * @param campaignId — The campaign ID to report on.
+   * @param timeRange  — Optional time range to restrict the report data.
+   * @param tenantId   — Optional per-call tenant override.
+   * @returns          Structured campaign performance report.
+   */
+  async getCampaignReport(
+    campaignId: string,
+    timeRange?: { start: string; end: string; granularity?: string },
+    tenantId?: string
+  ): Promise<CampaignReportResponse> {
+    const effectiveTenantId = tenantId ?? this.activeTenantId;
+    const body: Record<string, unknown> = { campaignId };
+    if (timeRange) {
+      body['timeRange'] = timeRange;
+    }
+    if (effectiveTenantId) {
+      body['tenant_id'] = effectiveTenantId;
+    }
+    return this.post<CampaignReportResponse>('/analytics/campaign-report', body);
   }
 
   // -------------------------------------------------------------------------
