@@ -1,25 +1,31 @@
 /**
  * Sprint 1: Analytics + Segmentation tools for the Nevent MCP Server.
  *
- * Registers 8 tools against the nev-data-api (data.nevent.es):
+ * Registers 9 tools against the nev-data-api (data.nevent.es):
  *
- *  Analytics (4 tools):
+ *  Analytics (5 tools):
  *   1. nevent_analytics_query         — Execute BigQuery analytics query
  *   2. nevent_analytics_capabilities  — Discover available tables
  *   3. nevent_analytics_table_schema  — Get column schema for a table
  *   4. nevent_analytics_filter_values — Discover distinct field values
+ *   5. nevent_campaign_report         — Comprehensive campaign report (v3.19.0)
  *
  *  Segmentation (4 tools):
- *   5. nevent_segmentation_criteria   — List all segment criteria
- *   6. nevent_segment_preview         — Preview audience size (non-persisting)
- *   7. nevent_segment_execute         — Execute segment, get paginated contacts
- *   8. nevent_dimension_values        — Autocomplete values for a criterion
+ *   6. nevent_segmentation_criteria   — List all segment criteria
+ *   7. nevent_segment_preview         — Preview audience size (non-persisting)
+ *   8. nevent_segment_execute         — Execute segment, get paginated contacts
+ *   9. nevent_dimension_values        — Autocomplete values for a criterion
  *
  * Each tool handler:
  *  1. Checks operation mode (all Sprint 1 tools are READ — always allowed)
  *  2. Calls the DataClient method
  *  3. Returns `{ content: [{ type: "text", text: JSON.stringify(result) }] }`
  *  4. On error: returns `{ content: [...], isError: true }` with structured error
+ *
+ * Updated for nev-data-api v3.19.0:
+ *  - nevent_analytics_query passes all new optional fields to the API
+ *  - dryRun parameter is forwarded as a query param (?dryRun=true)
+ *  - nevent_campaign_report tool added
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -36,6 +42,7 @@ import {
   SegmentPreviewSchema,
   SegmentExecuteSchema,
   DimensionValuesSchema,
+  CampaignReportSchema,
 } from '../schemas/analytics.js';
 
 // ---------------------------------------------------------------------------
@@ -168,8 +175,17 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
             sort: params.sort,
             limit: params.limit,
             compareDimensions: params.compareDimensions,
+            // v3.19.0 new fields — all optional, only included when provided
+            distinct: params.distinct,
+            timeGranularity: params.timeGranularity,
+            groupBy: params.groupBy,
+            comparePeriods: params.comparePeriods,
+            ctes: params.ctes,
+            sourceTable: params.sourceTable,
           },
-          params.tenant_id
+          params.tenant_id,
+          // dryRun is forwarded as a query param, not in the body
+          params.dryRun
         );
         return ok(result);
       } catch (caught) {
@@ -263,7 +279,32 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   );
 
   // -------------------------------------------------------------------------
-  // Tool 5: nevent_segmentation_criteria
+  // Tool 5: nevent_campaign_report (v3.19.0)
+  // -------------------------------------------------------------------------
+  server.tool(
+    'nevent_campaign_report',
+    'Generate a comprehensive analytics report for a single campaign. Executes 13 parallel queries in one call returning opens, clicks, bounces, unsubscribes, conversions, revenue, and other key performance metrics. Use nevent_list_campaigns to get valid campaign IDs.',
+    CampaignReportSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_campaign_report');
+      if (denied) return err(denied);
+
+      try {
+        const result = await client.getCampaignReport(
+          params.campaignId,
+          params.timeRange,
+          params.tenant_id
+        );
+        return ok(result);
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 6 (was 5): nevent_segmentation_criteria
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segmentation_criteria',
@@ -284,7 +325,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   );
 
   // -------------------------------------------------------------------------
-  // Tool 6: nevent_segment_preview
+  // Tool 7 (was 6): nevent_segment_preview
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_preview',
@@ -305,7 +346,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   );
 
   // -------------------------------------------------------------------------
-  // Tool 7: nevent_segment_execute
+  // Tool 8 (was 7): nevent_segment_execute
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_execute',
@@ -330,7 +371,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   );
 
   // -------------------------------------------------------------------------
-  // Tool 8: nevent_dimension_values
+  // Tool 9 (was 8): nevent_dimension_values
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_dimension_values',
