@@ -65,9 +65,11 @@ describe('MetricSchema', () => {
     }
   });
 
-  it('rejects invalid operation', () => {
+  it('accepts any string operation (open type for API resilience)', () => {
+    // operation is z.string() — not a closed enum — so unknown values like
+    // "median" are intentionally accepted (the API decides if it is valid).
     const result = MetricSchema.safeParse({ field: 'revenue', operation: 'median' });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('rejects missing field', () => {
@@ -88,9 +90,11 @@ describe('FilterSchema', () => {
     }
   });
 
-  it('rejects invalid operator', () => {
+  it('accepts any string operator (open type for API resilience)', () => {
+    // operator is z.string() — not a closed enum — so extended operators like
+    // "contains" are intentionally accepted (the API decides if it is valid).
     const result = FilterSchema.safeParse({ field: 'status', operator: 'contains', value: 'x' });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('accepts array value for "in" operator', () => {
@@ -124,13 +128,15 @@ describe('TimeRangeSchema', () => {
     }
   });
 
-  it('rejects invalid granularity', () => {
+  it('accepts any string granularity (open type for API resilience)', () => {
+    // granularity is z.string() — not a closed enum — so extended values like
+    // "hour" are intentionally accepted (the API decides if it is valid).
     const result = TimeRangeSchema.safeParse({
       start: '2024-01-01',
       end: '2024-12-31',
       granularity: 'hour',
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('rejects missing start', () => {
