@@ -41,7 +41,7 @@
         },
         {
           "name": "NEVENT_OPERATION_MODE",
-          "value": "STANDARD"
+          "value": "FULL"
         },
         {
           "name": "NODE_ENV",
