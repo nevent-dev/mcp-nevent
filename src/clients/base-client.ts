@@ -257,10 +257,16 @@ export class BaseClient {
     console.error(`[nevent-mcp] API error | ${this.baseUrl}${path} | status=${status} | body=${JSON.stringify(body)?.slice(0, 500)}`);
 
     // Extract any message the API provided in the body
+    // The API returns errors in two formats:
+    //   { message: "..." }                                          — simple
+    //   { error: { message: "...", details: "...", code: "..." } }  — structured
+    const b = body as Record<string, unknown> | null;
+    const nestedError = b?.error as Record<string, unknown> | undefined;
+    const apiDetails = nestedError?.details ? String(nestedError.details) : undefined;
     const apiMessage =
-      typeof body === 'object' && body !== null && 'message' in body
-        ? String((body as { message: unknown }).message)
-        : undefined;
+      apiDetails ??
+      (nestedError?.message ? String(nestedError.message) : undefined) ??
+      (b?.message ? String(b.message) : undefined);
 
     switch (status) {
       case 401:
