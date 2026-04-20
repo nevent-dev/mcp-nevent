@@ -278,12 +278,12 @@ export function registerSegmentTools(
     'nevent_create_segment',
     'Create a new audience segment. Requires name + definition DSL. ' +
     'MANDATORY RULES: ' +
-    '(1) ENTITY operators (is, is_not) accept ONLY a single string value, NOT arrays. For multiple values, create separate stanzas (OR logic). ' +
+    '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings (e.g. value: "EVENT_ID" or value: ["EVENT_1","EVENT_2"]). ' +
     '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
     '(3) Only include criterion_id, operator, value in criteria — omit id, timeframe, type fields. ' +
     'Call nevent_segmentation_criteria first to discover valid criterion_ids. ' +
-    'Example single event: { name: "VIPs", definition: { stanzas: [{ criteria: [{ criterion_id: "total_spent", operator: "gt", value: 100 }] }] } }. ' +
-    'Example multiple events (use 2 stanzas, NOT array value): { name: "Either event", definition: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_1" }] }, { criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_2" }] }] } }.',
+    'KNOWN LIMITATION: Do NOT combine attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the SAME stanza. Put them in SEPARATE stanzas. ' +
+    'Example: { name: "VIPs at event", definition: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] } }.',
     CreateSegmentSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
