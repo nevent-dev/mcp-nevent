@@ -430,23 +430,23 @@ describe('Segment Zod schemas', () => {
     const { z } = await import('zod');
     const schema = z.object(CreateSegmentSchema);
 
-    // Valid input
+    // Valid input (without type — type is optional now)
     const validResult = schema.safeParse({
       name: 'My segment',
-      definition: { stanzas: [{ criteria: [{ type: 'behavior', criterion_id: 'x', operator: 'eq', value: 'v' }] }] },
+      definition: { stanzas: [{ criteria: [{ criterion_id: 'x', operator: 'eq', value: 'v' }] }] },
     });
     expect(validResult.success).toBe(true);
 
-    // Missing name
+    // Missing name (stanzas min 1)
     const noNameResult = schema.safeParse({
-      definition: { stanzas: [] },
+      definition: { stanzas: [{ criteria: [{ criterion_id: 'x', operator: 'eq', value: 'v' }] }] },
     });
     expect(noNameResult.success).toBe(false);
 
     // Empty name string rejected by min(1)
     const emptyNameResult = schema.safeParse({
       name: '',
-      definition: { stanzas: [] },
+      definition: { stanzas: [{ criteria: [{ criterion_id: 'x', operator: 'eq', value: 'v' }] }] },
     });
     expect(emptyNameResult.success).toBe(false);
 
@@ -457,7 +457,7 @@ describe('Segment Zod schemas', () => {
     // With optional description
     const withDesc = schema.safeParse({
       name: 'My segment',
-      definition: { stanzas: [] },
+      definition: { stanzas: [{ criteria: [{ criterion_id: 'x', operator: 'eq', value: 'v' }] }] },
       description: 'Optional description',
     });
     expect(withDesc.success).toBe(true);

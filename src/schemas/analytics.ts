@@ -195,67 +195,85 @@ export const CteSchema = z.object({
 // Segmentation DSL sub-schemas (shared by preview + execute)
 // ---------------------------------------------------------------------------
 
-/** The type of a segmentation criterion. */
-const CriterionTypeSchema = z.enum([
-  'profile_property',
-  'behavior',
-  'communication_interaction',
-  'app_interaction',
-  'acquisition_source',
-  'predictive',
-]);
-
-/** Time-frame window for behavioral criteria. */
-const CriterionTimeframeSchema = z.object({
-  type: z.string().describe('Timeframe type (e.g. "relative", "absolute")'),
-  unit: z.string().optional().describe('Time unit (e.g. "days", "weeks")'),
-  value_start: z.number().optional().describe('Start offset for relative timeframe'),
-  value_end: z.number().optional().describe('End offset for relative timeframe'),
-});
-
-/** Modifiers that refine criterion matching semantics. */
-const CriterionModifiersSchema = z.object({
-  frequency: z
-    .object({
-      count: z.number().describe('Minimum occurrence count'),
-      operator: z.string().describe('Comparison operator (e.g. "gte")'),
-    })
-    .optional()
-    .describe('Frequency modifier — how many times the criterion must be true'),
-  time_range: z
-    .object({
-      value: z.number().describe('Time range window size'),
-      unit: z.string().describe('Time range window unit (e.g. "days")'),
-    })
-    .optional()
-    .describe('Time range modifier — sliding window for the criterion'),
-});
-
-/** A single criterion within a stanza. */
+/**
+ * A single criterion within a stanza.
+ *
+ * IMPORTANT: Only `criterion_id`, `operator`, and `value` are required.
+ * Call nevent_segmentation_criteria first to discover valid criterion_ids and operators.
+ *
+ * Examples:
+ *   { "criterion_id": "total_spent", "operator": "gt", "value": 100 }
+ *   { "criterion_id": "attended_event", "operator": "is", "value": "EVENT_ID" }
+ *   { "criterion_id": "user_gender", "operator": "is", "value": "female" }
+ *   { "criterion_id": "user_custom_field", "operator": "eq", "value": "Rock", "filters": { "property_name": "preferred_genre" } }
+ */
 const SegmentCriterionSchema = z.object({
-  id: z.string().optional().describe('Optional stable identifier for UI correlation'),
-  type: CriterionTypeSchema.describe('Criterion category'),
-  criterion_id: z.string().describe('Criterion identifier from GET /segmentation/criteria'),
-  operator: z.string().describe('Comparison operator (depends on criterion type)'),
-  value: z.unknown().describe('Criterion value to match against'),
-  timeframe: CriterionTimeframeSchema.optional().describe('Optional timeframe window'),
-  filters: z.record(z.unknown()).optional().describe('Additional field filters for the criterion'),
-  modifiers: CriterionModifiersSchema.optional().describe('Optional frequency / time-range modifiers'),
+  id: z.string().optional().describe('Optional stable ID for UI correlation. Auto-generated if omitted.'),
+  criterion_id: z.string().describe(
+    'Criterion identifier from nevent_segmentation_criteria. ' +
+    'Examples: total_spent, attended_event, user_gender, user_age, campaign_opened, nevent_temperature'
+  ),
+  operator: z.string().describe(
+    'Comparison operator. Depends on criterion data type: ' +
+    'TEXT: eq, neq, contains, starts_with, ends_with, is_set, is_not_set. ' +
+    'NUMBER/CURRENCY: eq, neq, gt, gte, lt, lte, is_set, is_not_set. ' +
+    'BOOLEAN: is_true, is_false. ' +
+    'DATE: before, after, between, eq. ' +
+    'ENTITY: is, is_not, is_set, is_not_set.'
+  ),
+  value: z.unknown().describe(
+    'Value to match. Type depends on criterion: string for TEXT/ENTITY, number for NUMBER/CURRENCY, ' +
+    'boolean for BOOLEAN, ISO date string for DATE, [start, end] array for "between" operator.'
+  ),
+  filters: z.record(z.unknown()).optional().describe(
+    'Only needed for user_custom_field criterion. Pass { "property_name": "field_name" } to specify which custom field.'
+  ),
+  modifiers: z.object({
+    frequency: z.object({
+      count: z.number(),
+      operator: z.string(),
+    }).optional(),
+    time_range: z.object({
+      value: z.number(),
+      unit: z.string(),
+    }).optional(),
+  }).optional().describe(
+    'Advanced modifiers. Usually omit. ' +
+    'frequency: { count: 3, operator: "gte" } = "at least 3 times". ' +
+    'time_range: { value: 30, unit: "day" } = "in the last 30 days".'
+  ),
 });
 
 /** A stanza groups criteria with AND logic; stanzas are OR-combined. */
 const SegmentStanzaSchema = z.object({
-  id: z.string().optional().describe('Optional stable identifier for UI correlation'),
-  criteria: z.array(SegmentCriterionSchema).describe('Criteria combined with AND logic'),
+  id: z.string().optional().describe('Optional stable ID. Auto-generated if omitted.'),
+  criteria: z.array(SegmentCriterionSchema).min(1).describe('Criteria combined with AND logic within this stanza.'),
 });
 
 /**
  * Full segment definition DSL.
- * Stanzas are OR-combined; criteria within a stanza are AND-combined.
+ *
+ * Structure: { stanzas: [ { criteria: [ { criterion_id, operator, value } ] } ] }
+ * - Stanzas are OR-combined (match ANY stanza)
+ * - Criteria within a stanza are AND-combined (match ALL criteria)
+ *
+ * Simple example (users who spent > 100):
+ *   { "stanzas": [{ "criteria": [{ "criterion_id": "total_spent", "operator": "gt", "value": 100 }] }] }
+ *
+ * Combined example (females aged 18-35 who attended an event):
+ *   { "stanzas": [{
+ *       "criteria": [
+ *         { "criterion_id": "user_gender", "operator": "is", "value": "female" },
+ *         { "criterion_id": "user_age", "operator": "gte", "value": 18 },
+ *         { "criterion_id": "user_age", "operator": "lte", "value": 35 },
+ *         { "criterion_id": "attended_event", "operator": "is", "value": "EVENT_ID" }
+ *       ]
+ *   }] }
  */
 export const SegmentDefinitionSchema = z.object({
   stanzas: z
     .array(SegmentStanzaSchema)
+    .min(1)
     .describe('Array of stanzas (OR logic). Each stanza contains criteria (AND logic).'),
 });
 
