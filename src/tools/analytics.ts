@@ -156,7 +156,11 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_query',
-    'Query event marketing analytics. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. IMPORTANT: Call nevent_analytics_capabilities first to discover available tables and columns — do not guess field names.',
+    'Query event marketing analytics. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. ' +
+    'MANDATORY RULES: ' +
+    '(1) ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess field names. ' +
+    '(2) For BOOLEAN fields, use operator "is_true" or "is_false". NEVER use "eq" with string "true"/"false". ' +
+    '(3) For enum fields (state, status), check the field description for valid values. Common values: purchases.state = SUCCEEDED|COMPLETE|PENDING|FAILED; campaigns.status = EXECUTED|DRAFT|PAUSED|STOPPED.',
     AnalyticsQuerySchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -329,7 +333,11 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_preview',
-    'Preview estimated audience size for a segment definition without saving it. Returns fan count and sample contacts.',
+    'Preview estimated audience size for a segment definition without saving it. Returns fan count and sample contacts. ' +
+    'MANDATORY RULES: ' +
+    '(1) ENTITY operators (is, is_not) accept ONLY a single string value, NOT arrays. For multiple values, create separate stanzas (OR logic). ' +
+    '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
+    'Example multiple events (use 2 stanzas, NOT array value): { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_1" }] }, { criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_2" }] }] }.',
     SegmentPreviewSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {

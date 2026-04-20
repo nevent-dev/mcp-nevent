@@ -277,10 +277,13 @@ export function registerSegmentTools(
   server.tool(
     'nevent_create_segment',
     'Create a new audience segment. Requires name + definition DSL. ' +
-    'IMPORTANT: Keep criteria simple — only criterion_id, operator, value are needed. ' +
-    'Do NOT include timeframe or type fields. ' +
-    'Example: { name: "VIPs", definition: { stanzas: [{ criteria: [{ criterion_id: "total_spent", operator: "gt", value: 100 }] }] } }. ' +
-    'Call nevent_segmentation_criteria first to discover valid criterion_ids.',
+    'MANDATORY RULES: ' +
+    '(1) ENTITY operators (is, is_not) accept ONLY a single string value, NOT arrays. For multiple values, create separate stanzas (OR logic). ' +
+    '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
+    '(3) Only include criterion_id, operator, value in criteria — omit id, timeframe, type fields. ' +
+    'Call nevent_segmentation_criteria first to discover valid criterion_ids. ' +
+    'Example single event: { name: "VIPs", definition: { stanzas: [{ criteria: [{ criterion_id: "total_spent", operator: "gt", value: 100 }] }] } }. ' +
+    'Example multiple events (use 2 stanzas, NOT array value): { name: "Either event", definition: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_1" }] }, { criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_2" }] }] } }.',
     CreateSegmentSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
