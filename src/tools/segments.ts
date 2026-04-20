@@ -276,7 +276,11 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_create_segment',
-    'Create a new audience segment with a name and filter definition. The segment is saved and can be used in campaigns.',
+    'Create a new audience segment. Requires name + definition DSL. ' +
+    'IMPORTANT: Keep criteria simple — only criterion_id, operator, value are needed. ' +
+    'Do NOT include timeframe or type fields. ' +
+    'Example: { name: "VIPs", definition: { stanzas: [{ criteria: [{ criterion_id: "total_spent", operator: "gt", value: 100 }] }] } }. ' +
+    'Call nevent_segmentation_criteria first to discover valid criterion_ids.',
     CreateSegmentSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {

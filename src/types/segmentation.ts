@@ -83,7 +83,8 @@ export interface CriterionModifiers {
 export interface SegmentCriterion {
   /** Optional stable identifier for UI correlation. */
   id?: string;
-  type: CriterionType;
+  /** Optional criterion category. Auto-resolved by the API if omitted. */
+  type?: CriterionType;
   criterion_id: string;
   operator: string;
   /** Criterion value to match against. */

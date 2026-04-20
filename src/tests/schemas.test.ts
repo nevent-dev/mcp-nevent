@@ -272,17 +272,17 @@ describe('SegmentDefinitionSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects invalid criterion type', () => {
+  it('accepts criterion without type (type is optional, API resolves it)', () => {
     const result = SegmentDefinitionSchema.safeParse({
       stanzas: [
         {
           criteria: [
-            { type: 'invalid_type', criterion_id: 'country', operator: 'eq', value: 'ES' },
+            { criterion_id: 'country', operator: 'eq', value: 'ES' },
           ],
         },
       ],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('rejects missing stanzas', () => {
