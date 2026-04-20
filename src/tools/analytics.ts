@@ -335,9 +335,10 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_segment_preview',
     'Preview estimated audience size for a segment definition without saving it. Returns fan count and sample contacts. ' +
     'MANDATORY RULES: ' +
-    '(1) ENTITY operators (is, is_not) accept ONLY a single string value, NOT arrays. For multiple values, create separate stanzas (OR logic). ' +
+    '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings (e.g. value: "EVENT_ID" or value: ["EVENT_1","EVENT_2"]). ' +
     '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
-    'Example multiple events (use 2 stanzas, NOT array value): { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_1" }] }, { criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_2" }] }] }.',
+    'KNOWN LIMITATION: Do NOT combine attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the SAME stanza. Put them in SEPARATE stanzas. ' +
+    'Example: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] }.',
     SegmentPreviewSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {

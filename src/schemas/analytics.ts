@@ -215,7 +215,7 @@ const SegmentCriterionSchema = z.object({
   ),
   operator: z.string().describe(
     'Comparison operator. Rules by data type:\n' +
-    '- ENTITY: "is" (single string value), "is_not" (single string value), "is_set", "is_not_set". NEVER pass arrays to "is"/"is_not".\n' +
+    '- ENTITY: "is" and "is_not" accept a single string ID OR an array of string IDs (valueType=array per API). "is_set", "is_not_set" also supported.\n' +
     '- TEXT: "eq", "neq", "contains", "starts_with", "ends_with", "is_set", "is_not_set"\n' +
     '- NUMBER/CURRENCY: "eq", "neq", "gt", "gte", "lt", "lte", "is_set", "is_not_set"\n' +
     '- BOOLEAN: "is_true", "is_false". NEVER use "eq" with "true"/"false" strings.\n' +
@@ -223,11 +223,10 @@ const SegmentCriterionSchema = z.object({
   ),
   value: z.unknown().describe(
     'Value to match. IMPORTANT rules:\n' +
-    '- ENTITY operators (is/is_not): MUST be a single string ID, NEVER an array.\n' +
+    '- ENTITY operators (is/is_not): accepts a single string ID OR an array of string IDs (e.g. "event_123" or ["event_1", "event_2"]).\n' +
     '- NUMBER: must be a number (not string)\n' +
     '- BOOLEAN operators (is_true/is_false): no value needed, omit this field.\n' +
-    '- DATE "between": array of 2 ISO date strings [start, end]\n' +
-    '- For multiple ENTITY matches, use separate stanzas (OR logic) instead of arrays.'
+    '- DATE "between": array of 2 ISO date strings [start, end]'
   ),
   filters: z.record(z.unknown()).optional().describe(
     'Only needed for user_custom_field criterion. Pass { "property_name": "field_name" } to specify which custom field.'
