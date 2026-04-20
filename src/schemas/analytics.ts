@@ -214,16 +214,20 @@ const SegmentCriterionSchema = z.object({
     'Examples: total_spent, attended_event, user_gender, user_age, campaign_opened, nevent_temperature'
   ),
   operator: z.string().describe(
-    'Comparison operator. Depends on criterion data type: ' +
-    'TEXT: eq, neq, contains, starts_with, ends_with, is_set, is_not_set. ' +
-    'NUMBER/CURRENCY: eq, neq, gt, gte, lt, lte, is_set, is_not_set. ' +
-    'BOOLEAN: is_true, is_false. ' +
-    'DATE: before, after, between, eq. ' +
-    'ENTITY: is, is_not, is_set, is_not_set.'
+    'Comparison operator. Rules by data type:\n' +
+    '- ENTITY: "is" (single string value), "is_not" (single string value), "is_set", "is_not_set". NEVER pass arrays to "is"/"is_not".\n' +
+    '- TEXT: "eq", "neq", "contains", "starts_with", "ends_with", "is_set", "is_not_set"\n' +
+    '- NUMBER/CURRENCY: "eq", "neq", "gt", "gte", "lt", "lte", "is_set", "is_not_set"\n' +
+    '- BOOLEAN: "is_true", "is_false". NEVER use "eq" with "true"/"false" strings.\n' +
+    '- DATE: "before", "after", "between", "eq", "is_set", "is_not_set"'
   ),
   value: z.unknown().describe(
-    'Value to match. Type depends on criterion: string for TEXT/ENTITY, number for NUMBER/CURRENCY, ' +
-    'boolean for BOOLEAN, ISO date string for DATE, [start, end] array for "between" operator.'
+    'Value to match. IMPORTANT rules:\n' +
+    '- ENTITY operators (is/is_not): MUST be a single string ID, NEVER an array.\n' +
+    '- NUMBER: must be a number (not string)\n' +
+    '- BOOLEAN operators (is_true/is_false): no value needed, omit this field.\n' +
+    '- DATE "between": array of 2 ISO date strings [start, end]\n' +
+    '- For multiple ENTITY matches, use separate stanzas (OR logic) instead of arrays.'
   ),
   filters: z.record(z.unknown()).optional().describe(
     'Only needed for user_custom_field criterion. Pass { "property_name": "field_name" } to specify which custom field.'
@@ -234,13 +238,14 @@ const SegmentCriterionSchema = z.object({
       operator: z.string(),
     }).optional(),
     time_range: z.object({
-      value: z.number(),
+      value: z.number().min(1),
       unit: z.string(),
     }).optional(),
   }).optional().describe(
-    'Advanced modifiers. Usually omit. ' +
-    'frequency: { count: 3, operator: "gte" } = "at least 3 times". ' +
-    'time_range: { value: 30, unit: "day" } = "in the last 30 days".'
+    'ADVANCED: Usually OMIT this field entirely. Only include when the user explicitly asks for:\n' +
+    '- "at least X times" → { frequency: { count: X, operator: "gte" } }\n' +
+    '- "in the last X days" → { time_range: { value: X, unit: "day" } } (value MUST be > 0)\n' +
+    'If not asked for frequency or recency, DO NOT include modifiers.'
   ),
 });
 
