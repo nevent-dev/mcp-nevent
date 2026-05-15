@@ -25,6 +25,8 @@ import { registerCampaignTools } from './tools/campaigns.js';
 import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
+import { registerPaidMediaTools } from './tools/paid-media.js';
+import { PaidMediaClient } from './clients/paid-media-client.js';
 import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
 
 // ---------------------------------------------------------------------------
@@ -55,6 +57,14 @@ export interface CreateNeventServerOptions {
    * When omitted, these tools are not registered (backwards-compatible).
    */
   mongoUri?: string;
+  /**
+   * Pre-configured paid media client for nev-api `/api/ads/{provider}/...` endpoints.
+   * When provided, all 11 paid media tools are registered on the server.
+   * When omitted, paid media tools are not registered (backwards-compatible).
+   *
+   * Requires roles ADMIN | SUPERADMIN | OWNER and capability MODULE_ATTRIBUTION.
+   */
+  paidMediaClient?: PaidMediaClient;
   /**
    * User identifier from the JWT `sub` claim.
    * When provided, stored in `mcp_tool_calls` documents for attribution.
@@ -88,12 +98,13 @@ export interface CreateNeventServerOptions {
  *   create/update tools additionally require neventApiUrl.
  * - Deliverability tools (2 tools): Registered when mongoUri is provided.
  * - Campaign actions (2 tools): Registered when neventApiUrl is provided.
+ * - Paid media tools (11 tools): Registered when paidMediaClient is provided.
  *
  * @param options - Server creation options.
  * @returns A ready-to-connect McpServer with all applicable tools registered.
  */
 export function createNeventServer(options: CreateNeventServerOptions): McpServer {
-  const { dataClient, neventApiUrl, mongoUri, userId = null, getSessionId } = options;
+  const { dataClient, neventApiUrl, mongoUri, paidMediaClient, userId = null, getSessionId } = options;
 
   const server = new McpServer({
     name: 'nevent-mcp',
@@ -141,6 +152,11 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
 
     // Deliverability tools (sending profile + suppressions from MongoDB)
     registerDeliverabilityTools(server, mongoUri, dataClient);
+  }
+
+  // Paid media tools (11 tools) — registered when paidMediaClient is provided
+  if (paidMediaClient) {
+    registerPaidMediaTools(server, paidMediaClient);
   }
 
   return server;

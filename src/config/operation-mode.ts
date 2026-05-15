@@ -105,6 +105,19 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Scheduling triggers a real send (irreversible once the window passes),
   // so we treat it with the same caution as a destructive operation.
   nevent_schedule_campaign: 'DELETE',
+
+  // Paid Media tools (Tier 1 + Tier 2): all READ operations
+  nevent_paid_ads_status: 'READ',
+  nevent_paid_ads_health: 'READ',
+  nevent_list_paid_campaigns: 'READ',
+  nevent_get_paid_campaign_insights: 'READ',
+  nevent_paid_attribution: 'READ',
+  nevent_list_paid_ad_groups: 'READ',
+  nevent_get_paid_ad_group_insights: 'READ',
+  nevent_get_paid_ad_group_comparative_stats: 'READ',
+  nevent_get_paid_ad_group_targeting: 'READ',
+  nevent_list_paid_ads: 'READ',
+  nevent_get_paid_ad_creative: 'READ',
 };
 
 // ---------------------------------------------------------------------------
