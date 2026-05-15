@@ -178,7 +178,10 @@ export function registerPaidMediaTools(
 
       try {
         const result = await paidMediaClient.getHealth(provider);
-        return ok(result);
+        // Strip internal tenantId — it is an implementation detail that should
+        // not be surfaced to the LLM or logged in conversation context.
+        const { tenantId: _discarded, ...safeResult } = result;
+        return ok(safeResult);
       } catch (caught) {
         if (isFeatureGate404(caught)) {
           return err({
