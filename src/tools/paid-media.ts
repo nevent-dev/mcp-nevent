@@ -202,9 +202,10 @@ export function registerPaidMediaTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_list_paid_campaigns',
-    'List all paid campaigns synced from a provider (meta, google, or tiktok) for this tenant. ' +
+    'List all paid campaigns synced from a provider (meta, google, or tiktok). ' +
+    'Call this to discover campaignId values — you need a campaignId to call insights or ad group tools. ' +
     'Returns campaign IDs, names, statuses, objectives, and budgets. ' +
-    'Use the returned campaign IDs with nevent_get_paid_campaign_insights and nevent_list_paid_ad_groups.',
+    'Use the returned campaignId values with nevent_get_paid_campaign_insights and nevent_list_paid_ad_groups.',
     ListPaidCampaignsSchema,
     READ_ONLY_ANNOTATIONS,
     async (params) => {
@@ -229,6 +230,7 @@ export function registerPaidMediaTools(
     'Use after nevent_list_paid_campaigns to get a valid campaignId. ' +
     'Date range defaults to the last 7 days when from/to are omitted. ' +
     'Returns daily rows with: spend, impressions, reach, frequency, clicks, CTR, CPM, CPC, ROAS, engagement rate, video metrics. ' +
+    'Each row.date is an ISO 8601 UTC timestamp (e.g. "2026-05-10T00:00:00Z"). ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidCampaignInsightsSchema,
     READ_ONLY_ANNOTATIONS,
@@ -325,6 +327,7 @@ export function registerPaidMediaTools(
     'Use after nevent_list_paid_ad_groups to get a valid adGroupId. ' +
     'Date range defaults to the last 7 days when from/to are omitted. ' +
     'Returns daily rows with: spend, impressions, reach, frequency, clicks, CTR, CPM, CPC, ROAS, engagement rate, video metrics. ' +
+    'Each row.date is an ISO 8601 UTC timestamp (e.g. "2026-05-10T00:00:00Z"). ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdGroupInsightsSchema,
     READ_ONLY_ANNOTATIONS,
@@ -364,7 +367,9 @@ export function registerPaidMediaTools(
     'nevent_get_paid_ad_group_comparative_stats',
     'Compare an ad group\'s performance metrics against the mean of its campaign sibling ad groups. ' +
     'Use to detect underperforming ad sets — each metric (costPerResult, CPM, frequency, CTR) is returned ' +
-    'with its campaign sibling mean and ratioVsMean (1.0 = on par, 1.3 = 30% worse, 0.7 = 30% better). ' +
+    'with its campaign sibling mean and ratioVsMean (1.0 = on par). ' +
+    'For cost metrics (costPerResult, CPM, frequency): ratio > 1.0 means WORSE than siblings (higher cost). ' +
+    'For CTR: ratio > 1.0 means BETTER than siblings (higher CTR is better). ' +
     'Use after nevent_list_paid_ad_groups to get a valid adGroupId. ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdGroupComparativeStatsSchema,
