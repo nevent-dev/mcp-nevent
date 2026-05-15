@@ -906,25 +906,61 @@ describe('nevent_get_paid_ad_creative', () => {
 
 // ---------------------------------------------------------------------------
 // GET /api/ads/{provider}/... URL construction (no tenant_id param)
+// Covers all 11 tools — verifies that tenant_id never appears in the URL
+// (neither as a query param nor as a path segment).
 // ---------------------------------------------------------------------------
 
 describe('URL construction — no tenant_id param', () => {
-  it('nevent_paid_ads_status does not include tenant_id in URL', async () => {
-    let capturedUrl = '';
-    const fetchSpy = vi.fn().mockImplementation((url: string) => {
-      capturedUrl = url;
-      return Promise.resolve(mockFetchOk({}));
+  /**
+   * Minimal params required to invoke each of the 11 paid-media tools.
+   * Optional params (campaignId filter, dates) are omitted intentionally
+   * so we only assert the URL shape for the required path params.
+   */
+  const toolInvocations: Array<{ name: string; params: Record<string, unknown> }> = [
+    { name: 'nevent_paid_ads_status',                    params: { provider: 'meta' } },
+    { name: 'nevent_paid_ads_health',                    params: { provider: 'meta' } },
+    { name: 'nevent_list_paid_campaigns',                params: { provider: 'meta' } },
+    { name: 'nevent_get_paid_campaign_insights',         params: { provider: 'meta', campaignId: 'camp_1' } },
+    { name: 'nevent_paid_attribution',                   params: { provider: 'meta' } },
+    { name: 'nevent_list_paid_ad_groups',                params: { provider: 'meta' } },
+    { name: 'nevent_get_paid_ad_group_insights',         params: { provider: 'meta', adGroupId: 'ag_1' } },
+    { name: 'nevent_get_paid_ad_group_comparative_stats',params: { provider: 'meta', adGroupId: 'ag_1' } },
+    { name: 'nevent_get_paid_ad_group_targeting',        params: { provider: 'meta', adGroupId: 'ag_1' } },
+    { name: 'nevent_list_paid_ads',                      params: { provider: 'meta' } },
+    { name: 'nevent_get_paid_ad_creative',               params: { provider: 'meta', adId: 'ad_1' } },
+  ];
+
+  for (const { name, params } of toolInvocations) {
+    it(`${name} — does not include tenant_id in URL or request headers`, async () => {
+      let capturedUrl = '';
+      let capturedInit: RequestInit | undefined;
+
+      const fetchSpy = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        capturedUrl = url;
+        capturedInit = init;
+        // Return a minimal valid body so the tool handler doesn't throw
+        const body = Array.isArray(params) ? [] : {};
+        return Promise.resolve(mockFetchOk(body));
+      });
+
+      await setupAndInvoke(name, fetchSpy as unknown as typeof fetch, params);
+
+      // Assert URL contains no tenant_id as query param or path segment
+      expect(capturedUrl).not.toContain('tenant_id');
+      expect(capturedUrl).not.toMatch(/[?&]tenant_id=/);
+
+      // Assert no tenant info leaks via headers either
+      const headers = capturedInit?.headers as Record<string, string> | undefined;
+      if (headers) {
+        const headerKeys = Object.keys(headers).map((k) => k.toLowerCase());
+        expect(headerKeys).not.toContain('x-tenant-id');
+        const headerValues = Object.values(headers).join(' ');
+        expect(headerValues).not.toContain('tenant_id');
+      }
     });
+  }
 
-    await setupAndInvoke(
-      'nevent_paid_ads_status',
-      fetchSpy as unknown as typeof fetch,
-      { provider: 'meta' }
-    );
-
-    expect(capturedUrl).not.toContain('tenant_id');
-  });
-
+  // Retain the existing specific structural assertions for two representative tools
   it('nevent_list_paid_campaigns URL includes provider in path', async () => {
     let capturedUrl = '';
     const fetchSpy = vi.fn().mockImplementation((url: string) => {
@@ -958,5 +994,33 @@ describe('URL construction — no tenant_id param', () => {
     // The campaignId should be URL-encoded in the path
     expect(capturedUrl).not.toContain('campaign/with spaces');
     expect(capturedUrl).not.toContain('tenant_id');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 429 Rate-limit handling
+// ---------------------------------------------------------------------------
+
+describe('429 rate-limit handling', () => {
+  it('nevent_paid_ads_status maps 429 to rate_limit_error with retryAfter', async () => {
+    // nev-api 429 body includes retryAfter when the header / field is available
+    const body429 = {
+      message: 'Too Many Requests',
+      retryAfter: 30,
+    };
+
+    const result = await setupAndInvoke(
+      'nevent_paid_ads_status',
+      vi.fn().mockResolvedValue(mockFetchError(429, body429)) as unknown as typeof fetch,
+      { provider: 'meta' }
+    ) as { content: Array<{ type: string; text: string }>; isError: boolean };
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.error.type).toBe('rate_limit_error');
+    expect(parsed.error.code).toBe('rate_limit_exceeded');
+    // retryAfter must appear in the message when the server sends it
+    expect(parsed.error.message).toContain('30');
   });
 });
