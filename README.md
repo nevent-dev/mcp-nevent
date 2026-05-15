@@ -21,7 +21,7 @@ npm run dev
 
 ---
 
-## Available Tools (10)
+## Available Tools (21+)
 
 | Tool | Category | Description |
 |------|----------|-------------|
@@ -36,7 +36,71 @@ npm run dev
 | `nevent_list_tenants` | Multi-tenant | List all tenants accessible to the authenticated user. |
 | `nevent_switch_tenant` | Multi-tenant | Set the active tenant for this MCP session. |
 
-All 10 tools are read-only. The last two are only registered in HTTP mode (where per-session auth enables tenant switching).
+All tools listed above are read-only. The last two are only registered in HTTP mode (where per-session auth enables tenant switching).
+
+---
+
+## Paid Media Tools (11 tools)
+
+Expose the nev-api `/api/ads/{provider}/...` endpoints to AI agents for paid advertising analysis.
+
+**Requirements:**
+- Role: `ADMIN` | `SUPERADMIN` | `OWNER`
+- Capability: `MODULE_ATTRIBUTION`
+- Providers: `meta` | `google` | `tiktok`
+- Tenant: resolved from the JWT (no `tenant_id` parameter)
+
+### Tier 1 — Essential queries
+
+| Tool | Endpoint | Description |
+|------|----------|-------------|
+| `nevent_paid_ads_status` | `GET /api/ads/{provider}/status` | Check if a provider account is connected and when data was last synced. Call first to confirm the integration is active. |
+| `nevent_paid_ads_health` | `GET /api/ads/{provider}/health` | Always call before claiming "no data" to the user. Surfaces throttle state, feature gate enrollment (pilot allowlist), stale syncs, and tier. |
+| `nevent_list_paid_campaigns` | `GET /api/ads/{provider}/campaigns` | List all synced campaigns with budget and status. Returns `campaignId` values needed by other tools. |
+| `nevent_get_paid_campaign_insights` | `GET /api/ads/{provider}/campaigns/{id}/insights` | Daily metrics for a campaign: spend, impressions, CTR, CPM, CPC, ROAS, engagement rate. Date range defaults to last 7 days. |
+| `nevent_paid_attribution` | `GET /api/ads/{provider}/attribution` | The most business-focused view — links campaigns to actual ticket sales and revenue via UTM matching. |
+
+### Tier 2 — Drill-down queries
+
+| Tool | Endpoint | Description |
+|------|----------|-------------|
+| `nevent_list_paid_ad_groups` | `GET /api/ads/{provider}/ad-groups` | List ad groups (ad sets), optionally filtered by campaign. Returns `adGroupId` values needed by Tier 2 tools. |
+| `nevent_get_paid_ad_group_insights` | `GET /api/ads/{provider}/ad-groups/{id}/insights` | Daily metrics for an ad group. Same fields as campaign insights, level = ADSET. |
+| `nevent_get_paid_ad_group_comparative_stats` | `GET /api/ads/{provider}/ad-groups/{id}/comparative-stats` | Compare an ad group vs its campaign siblings. Each metric (costPerResult, CPM, frequency, CTR) includes `campaignMean` and `ratioVsMean` (1.0 = on par, 1.3 = 30% worse). Use to detect underperforming ad sets. |
+| `nevent_get_paid_ad_group_targeting` | `GET /api/ads/{provider}/ad-groups/{id}/targeting` | Full audience targeting: age, gender, geo, interests, behaviors, placements, Advantage+ flags, custom audiences, bid strategy. |
+| `nevent_list_paid_ads` | `GET /api/ads/{provider}/ads` | List individual ads with UTM fields. Filter by `campaignId` and/or `adGroupId`. |
+| `nevent_get_paid_ad_creative` | `GET /api/ads/{provider}/ads/{id}/creative` | Ad creative: body, title, CTA, click URL, UTM params, pre-signed S3 image/video URLs (TTL ~1h). For Dynamic Creative Ads, includes all variants. |
+
+### Feature Gate (404 handling)
+
+Several endpoints return HTTP **404** (not 403) when the tenant is not enrolled in the provider's insights pilot. The tools detect this and return a descriptive error:
+
+```json
+{
+  "error": {
+    "type": "not_found",
+    "code": "feature_gate_not_enrolled",
+    "message": "This tenant is not enrolled in the meta campaign insights pilot. Contact admin to enable the feature gate (MODULE_ATTRIBUTION must be active and the tenant must be added to the provider allowlist)."
+  }
+}
+```
+
+Affected tools: `nevent_paid_ads_health`, `nevent_get_paid_campaign_insights`, `nevent_get_paid_ad_group_insights`, `nevent_get_paid_ad_group_comparative_stats`, `nevent_get_paid_ad_group_targeting`, `nevent_get_paid_ad_creative`.
+
+### Suggested Workflow for Paid Media
+
+```
+1. nevent_paid_ads_status   → Confirm provider is connected
+2. nevent_paid_ads_health   → Check for throttle / feature gate issues
+3. nevent_list_paid_campaigns   → Discover campaignIds
+4. nevent_get_paid_campaign_insights   → Daily spend/metrics per campaign
+5. nevent_paid_attribution   → Revenue + tickets sold per campaign
+6. nevent_list_paid_ad_groups   → Drill into a campaign's ad sets
+7. nevent_get_paid_ad_group_comparative_stats   → Find underperforming ad sets
+8. nevent_get_paid_ad_group_targeting   → Review audience configuration
+9. nevent_list_paid_ads   → List individual ads
+10. nevent_get_paid_ad_creative   → Review creative copy + visuals
+```
 
 ---
 
