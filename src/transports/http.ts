@@ -68,6 +68,7 @@ import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelconte
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
+import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { TokenService } from '../auth/token-service.js';
 import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
@@ -342,6 +343,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         // so data-api can validate it.
         // ------------------------------------------------------------------
         let sessionDataClient: DataClient;
+        let sessionPaidMediaClient: PaidMediaClient;
         let sessionUserId: string | null = null;
 
         try {
@@ -359,6 +361,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
           sessionDataClient = new DataClient({
             baseUrl: config.dataApiUrl,
+            jwtToken: effectiveToken,
+          });
+
+          // Paid media client uses the same MCP bearer token to authenticate
+          // against nev-api /api/ads/* endpoints. Tenant is resolved from the JWT.
+          sessionPaidMediaClient = new PaidMediaClient({
+            baseUrl: config.neventApiUrl,
             jwtToken: effectiveToken,
           });
 
@@ -381,6 +390,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           console.error('[nevent-mcp] Warning: Could not extract userId from bearer token:', tokenErr);
           sessionDataClient = new DataClient({
             baseUrl: config.dataApiUrl,
+            jwtToken: '',
+          });
+          sessionPaidMediaClient = new PaidMediaClient({
+            baseUrl: config.neventApiUrl,
             jwtToken: '',
           });
         }
@@ -415,6 +428,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           dataClient: sessionDataClient,
           neventApiUrl: config.neventApiUrl,
           mongoUri: config.mongoUri,
+          paidMediaClient: sessionPaidMediaClient,
           userId: sessionUserId ?? undefined,
           getSessionId: () => transport.sessionId ?? null,
         });
