@@ -74,16 +74,27 @@ const READ_ONLY_ANNOTATIONS = {
  *
  * This is distinct from "resource not found" — the endpoint deliberately
  * returns 404 (not 403) when the tenant is not in the pilot allowlist.
+ * However, the same 404 code is returned when a path-param ID (campaignId,
+ * adGroupId, adId) is incorrect, so we append a hint for enrolled tenants.
  *
- * @param provider  — The ads provider (meta | google | tiktok).
- * @param feature   — Human-readable name of the feature that is gated.
+ * @param provider         — The ads provider (meta | google | tiktok).
+ * @param feature          — Human-readable name of the feature that is gated.
+ * @param resourceIdField  — Optional: name of the ID param (e.g. "campaignId").
+ *                           When provided, appends a wrong-ID hint to the message.
  */
-function featureGateMessage(provider: AdsProvider, feature: string): string {
-  return (
+function featureGateMessage(
+  provider: AdsProvider,
+  feature: string,
+  resourceIdField?: string
+): string {
+  const base =
     `This tenant is not enrolled in the ${provider} ${feature} pilot. ` +
     `Contact admin to enable the feature gate (MODULE_ATTRIBUTION must be active ` +
-    `and the tenant must be added to the provider allowlist).`
-  );
+    `and the tenant must be added to the provider allowlist).`;
+
+  return resourceIdField
+    ? `${base} (If you are already enrolled, verify the ${resourceIdField} is correct.)`
+    : base;
 }
 
 /**
@@ -237,7 +248,7 @@ export function registerPaidMediaTools(
           return err({
             error: {
               type: 'not_found',
-              message: featureGateMessage(provider, 'campaign insights'),
+              message: featureGateMessage(provider, 'campaign insights', 'campaignId'),
               code: 'feature_gate_not_enrolled',
             },
           });
@@ -333,7 +344,7 @@ export function registerPaidMediaTools(
           return err({
             error: {
               type: 'not_found',
-              message: featureGateMessage(provider, 'ad group insights'),
+              message: featureGateMessage(provider, 'ad group insights', 'adGroupId'),
               code: 'feature_gate_not_enrolled',
             },
           });
@@ -374,7 +385,7 @@ export function registerPaidMediaTools(
           return err({
             error: {
               type: 'not_found',
-              message: featureGateMessage(provider, 'comparative stats'),
+              message: featureGateMessage(provider, 'comparative stats', 'adGroupId'),
               code: 'feature_gate_not_enrolled',
             },
           });
@@ -410,7 +421,7 @@ export function registerPaidMediaTools(
           return err({
             error: {
               type: 'not_found',
-              message: featureGateMessage(provider, 'targeting'),
+              message: featureGateMessage(provider, 'targeting', 'adGroupId'),
               code: 'feature_gate_not_enrolled',
             },
           });
@@ -475,7 +486,7 @@ export function registerPaidMediaTools(
           return err({
             error: {
               type: 'not_found',
-              message: featureGateMessage(provider, 'ad creative'),
+              message: featureGateMessage(provider, 'ad creative', 'adId'),
               code: 'feature_gate_not_enrolled',
             },
           });
