@@ -246,9 +246,11 @@ export interface AdsAdvantagePlusFlags {
 }
 
 /**
- * A single custom audience entry within `NormalizedAdGroupTargeting`.
+ * A single custom audience entry (hydrated with metadata) within `NormalizedAdGroupTargeting`.
+ * Note: the Java DTO uses "hidrated" (Spanish spelling) — this TypeScript interface
+ * uses the correct English spelling "hydrated". The wire field names are unchanged.
  */
-export interface AdsHidratedAudience {
+export interface AdsHydratedAudience {
   id: string;
   name: string | null;
   subtype: string | null;
@@ -281,8 +283,8 @@ export interface NormalizedAdGroupTargeting {
   placements: string[];
   automaticPlacements: boolean | null;
   advantagePlus: AdsAdvantagePlusFlags | null;
-  customAudiences: AdsHidratedAudience[];
-  excludedCustomAudiences: AdsHidratedAudience[];
+  customAudiences: AdsHydratedAudience[];
+  excludedCustomAudiences: AdsHydratedAudience[];
   bidStrategy: string | null;
   promotedObject: AdsPromotedObjectSummary | null;
   targetingSyncedAt: string | null;
