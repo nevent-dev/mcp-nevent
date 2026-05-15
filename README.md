@@ -90,16 +90,16 @@ Affected tools: `nevent_paid_ads_health`, `nevent_get_paid_campaign_insights`, `
 ### Suggested Workflow for Paid Media
 
 ```
-1. nevent_paid_ads_status   → Confirm provider is connected
-2. nevent_paid_ads_health   → Check for throttle / feature gate issues
-3. nevent_list_paid_campaigns   → Discover campaignIds
-4. nevent_get_paid_campaign_insights   → Daily spend/metrics per campaign
-5. nevent_paid_attribution   → Revenue + tickets sold per campaign
-6. nevent_list_paid_ad_groups   → Drill into a campaign's ad sets
-7. nevent_get_paid_ad_group_comparative_stats   → Find underperforming ad sets
-8. nevent_get_paid_ad_group_targeting   → Review audience configuration
-9. nevent_list_paid_ads   → List individual ads
-10. nevent_get_paid_ad_creative   → Review creative copy + visuals
+1. nevent_paid_ads_status          → Is the provider connected at all?
+2. nevent_paid_ads_health          → Is the data fresh? Are we throttled / enrolled in the pilot?
+3. nevent_list_paid_campaigns      → Discover campaignId values (required by all drill-down tools)
+4. nevent_get_paid_campaign_insights   → Daily spend/CTR/ROAS per campaign
+5. nevent_paid_attribution         → Revenue + tickets sold per campaign (business view)
+6. nevent_list_paid_ad_groups      → Discover adGroupId values for a campaign
+7. nevent_get_paid_ad_group_comparative_stats   → Detect underperforming ad sets vs siblings
+8. nevent_get_paid_ad_group_targeting   → Review audience configuration of an ad set
+9. nevent_list_paid_ads            → List individual ads (discover adId values)
+10. nevent_get_paid_ad_creative    → Review creative copy + visuals for a specific ad
 ```
 
 ---
