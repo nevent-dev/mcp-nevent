@@ -138,9 +138,11 @@ export class TemplateClient extends BaseClient {
    * @returns The newly created cloned `EmailTemplate`.
    */
   async cloneTemplate(templateId: string): Promise<EmailTemplate> {
+    // nev-api's POST /templates/{id}/clone has no @RequestBody — the template ID
+    // in the path is sufficient. We omit the body entirely (undefined) rather than
+    // sending an empty {} to avoid Content-Type + body mismatch on strict servers.
     return this.post<EmailTemplate>(
-      `/templates/${encodeURIComponent(templateId)}/clone`,
-      {}
+      `/templates/${encodeURIComponent(templateId)}/clone`
     );
   }
 

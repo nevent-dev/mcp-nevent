@@ -646,6 +646,10 @@ export function registerTemplateTools(
   // -------------------------------------------------------------------------
 
   if (!templateClient) {
+    console.warn(
+      '[nevent-mcp] templateClient not available — clone/rename/preview/send_test tools not registered. ' +
+      'Ensure SessionClients is wired in createNeventServer options.'
+    );
     return;
   }
 
@@ -775,7 +779,8 @@ export function registerTemplateTools(
 
         const preview = await templateClient.previewTemplate(params.template_id, body);
 
-        // detectedMergeTags comes as a Set<string> from Java; normalize to array
+        // detectedMergeTags: Java backend uses Set<String>, serialized as JSON array.
+        // Normalize defensively in case a future serializer emits an iterable instead.
         const normalized = {
           ...preview,
           detectedMergeTags: Array.isArray(preview.detectedMergeTags)
