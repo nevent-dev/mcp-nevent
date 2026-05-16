@@ -56,8 +56,9 @@ import {
  * @param result — The result object to serialize.
  */
 function ok(result: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  // No indentation — saves LLM tokens on large responses.
   return {
-    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(result) }],
   };
 }
 
@@ -187,7 +188,6 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
             ctes: params.ctes,
             sourceTable: params.sourceTable,
           },
-          params.tenant_id,
           // dryRun is forwarded as a query param, not in the body
           params.dryRun
         );
@@ -297,8 +297,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
       try {
         const result = await client.getCampaignReport(
           params.campaignId,
-          params.timeRange,
-          params.tenant_id
+          params.timeRange
         );
         return ok(result);
       } catch (caught) {

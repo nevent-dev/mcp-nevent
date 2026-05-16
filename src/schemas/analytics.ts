@@ -391,21 +391,8 @@ export const AnalyticsQuerySchema = {
     .string()
     .optional()
     .describe('CTE name to use as source instead of a raw collection — v3.19.0+'),
-  /**
-   * Optional tenant ID override for multi-tenant queries.
-   *
-   * When provided, overrides the active tenant set via nevent_switch_tenant.
-   * Requires hierarchical access — SUPERADMIN can query any tenant, OWNER
-   * can query their tenant and children. If omitted, uses the active tenant
-   * from the session (or the authenticated user's default tenant).
-   */
-  tenant_id: z
-    .string()
-    .optional()
-    .describe(
-      'Optional tenant ID for multi-tenant queries. Requires SUPERADMIN or OWNER role with ' +
-      'access to the target tenant. Omit to use the session active tenant.'
-    ),
+  // NOTE: tenant_id is NOT accepted here — nev-data-api resolves tenant from
+  // the JWT claim. Use nevent_switch_tenant to change tenant context.
 };
 
 // ---------------------------------------------------------------------------
@@ -557,13 +544,6 @@ export const CampaignReportSchema = {
   timeRange: TimeRangeSchema.optional().describe(
     'Optional time range to restrict report data. Defaults to full campaign lifetime.'
   ),
-  /**
-   * Optional tenant ID override for multi-tenant queries.
-   */
-  tenant_id: z
-    .string()
-    .optional()
-    .describe(
-      'Optional tenant ID for multi-tenant queries. Requires SUPERADMIN or OWNER role.'
-    ),
+  // NOTE: tenant_id is NOT accepted here — nev-data-api resolves tenant from
+  // the JWT claim. Use nevent_switch_tenant to change tenant context.
 };
