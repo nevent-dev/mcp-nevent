@@ -68,6 +68,18 @@ export interface ToolCallDocument {
    * Only shape/count information, never raw values.
    */
   params_summary: Record<string, unknown>;
+  /**
+   * Approximate response payload size in bytes (UTF-8 length of the JSON text).
+   * Null when the response contains no content (e.g. empty content array).
+   * Used to track token-heavy tools and detect unexpectedly large payloads.
+   */
+  response_size_bytes: number | null;
+  /**
+   * The active tenant ID at the time of the call, duplicated here for
+   * convenience in aggregation pipelines that group by tenant (avoids
+   * joining with session documents). Mirrors `tenant_id`.
+   */
+  tenant_id_active: string | null;
   /** UTC timestamp when the tool was called. Used for the TTL index. */
   timestamp: Date;
   /** ISO date string "YYYY-MM-DD" for easy daily aggregation. */
@@ -448,9 +460,11 @@ export function applyLoggingToServer(
         // Handler threw an exception (should be rare — most handlers catch internally)
         const latency = Date.now() - start;
         const message = thrown instanceof Error ? thrown.message.slice(0, 200) : 'unknown';
+        const activeTenantId = dataClient.activeTenantId ?? null;
 
         logger.logToolCall({
-          tenant_id: dataClient.activeTenantId ?? null,
+          tenant_id: activeTenantId,
+          tenant_id_active: activeTenantId,
           user_id: userId,
           tool_name: toolName,
           status: 'error',
@@ -459,6 +473,7 @@ export function applyLoggingToServer(
           latency_ms: latency,
           session_id: getSessionId ? getSessionId() : null,
           params_summary: summarizeParams(toolName, params),
+          response_size_bytes: null,
         });
 
         throw thrown;
@@ -466,6 +481,7 @@ export function applyLoggingToServer(
 
       const latency = Date.now() - start;
       const isError = result.isError === true;
+      const activeTenantId = dataClient.activeTenantId ?? null;
 
       // Try to extract error code from structured error envelope
       let errorCode: string | null = null;
@@ -486,8 +502,19 @@ export function applyLoggingToServer(
         }
       }
 
+      // Measure response payload size for token-economy tracking
+      let responseSizeBytes: number | null = null;
+      if (result.content && result.content.length > 0 && result.content[0].text) {
+        try {
+          responseSizeBytes = Buffer.byteLength(result.content[0].text, 'utf8');
+        } catch {
+          // Ignore — size measurement is best-effort
+        }
+      }
+
       logger.logToolCall({
-        tenant_id: dataClient.activeTenantId ?? null,
+        tenant_id: activeTenantId,
+        tenant_id_active: activeTenantId,
         user_id: userId,
         tool_name: toolName,
         status: isError ? 'error' : 'ok',
@@ -496,6 +523,7 @@ export function applyLoggingToServer(
         latency_ms: latency,
         session_id: getSessionId ? getSessionId() : null,
         params_summary: summarizeParams(toolName, params),
+        response_size_bytes: responseSizeBytes,
       });
 
       return result;

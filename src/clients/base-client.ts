@@ -256,10 +256,15 @@ export class BaseClient {
     // Log the error for debugging — this is the only place where upstream API errors surface
     console.error(`[nevent-mcp] API error | ${this.baseUrl}${path} | status=${status} | body=${JSON.stringify(body)?.slice(0, 500)}`);
 
-    // Extract any message the API provided in the body
-    // The API returns errors in two formats:
-    //   { message: "..." }                                          — simple
-    //   { error: { message: "...", details: "...", code: "..." } }  — structured
+    // Extract any message, code, and type the API provided in the body.
+    //
+    // nev-api returns errors in two formats:
+    //   { message: "..." }                                                 — simple
+    //   { error: { message: "...", details: "...", code: "...", type: "..." } } — structured
+    //
+    // We propagate the API-supplied code and type so that callers get the
+    // original machine-readable error code (e.g. "segment_not_found") rather
+    // than a generic fallback, which improves LLM error recovery.
     const b = body as Record<string, unknown> | null;
     const nestedError = b?.error as Record<string, unknown> | undefined;
     const apiDetails = nestedError?.details ? String(nestedError.details) : undefined;
@@ -268,14 +273,26 @@ export class BaseClient {
       (nestedError?.message ? String(nestedError.message) : undefined) ??
       (b?.message ? String(b.message) : undefined);
 
+    // Propagate machine-readable code from the API when present
+    const apiCode: string | undefined =
+      (nestedError?.code ? String(nestedError.code) : undefined) ??
+      (b?.code ? String(b.code) : undefined) ??
+      (b?.error_code ? String(b.error_code) : undefined);
+
+    // Propagate error type from the API when present (e.g. "validation_error")
+    const apiType: string | undefined =
+      (nestedError?.type ? String(nestedError.type) : undefined) ??
+      (b?.type ? String(b.type) : undefined);
+
     switch (status) {
       case 401:
         return new NeventApiError({
           type: 'authentication_error',
           message:
+            apiMessage ??
             'Authentication failed. Your JWT token is missing, expired, or invalid. ' +
             'Set the NEVENT_JWT_TOKEN environment variable with a valid token.',
-          code: 'invalid_token',
+          code: apiCode ?? 'invalid_token',
         });
 
       case 403:
@@ -284,14 +301,14 @@ export class BaseClient {
           message:
             apiMessage ??
             `Access denied to ${path}. This endpoint may require elevated permissions (e.g. ADMIN role).`,
-          code: 'forbidden',
+          code: apiCode ?? 'forbidden',
         });
 
       case 404:
         return new NeventApiError({
           type: 'not_found',
           message: apiMessage ?? `Resource not found: ${path}`,
-          code: 'not_found',
+          code: apiCode ?? 'not_found',
         });
 
       case 429: {
@@ -303,18 +320,18 @@ export class BaseClient {
         return new NeventApiError({
           type: 'rate_limit_error',
           message: `Rate limit exceeded for ${path}.${retryMsg} Reduce request frequency and try again.`,
-          code: 'rate_limit_exceeded',
+          code: apiCode ?? 'rate_limit_exceeded',
           param: retryAfter !== undefined ? String(retryAfter) : undefined,
         });
       }
 
       default:
         return new NeventApiError({
-          type: status >= 500 ? 'api_error' : 'invalid_request',
+          type: (apiType ?? (status >= 500 ? 'api_error' : 'invalid_request')) as NeventError['type'],
           message:
             apiMessage ??
             `HTTP ${status} error from ${path}. Check your request parameters.`,
-          code: status >= 500 ? 'server_error' : 'request_error',
+          code: apiCode ?? (status >= 500 ? 'server_error' : 'request_error'),
         });
     }
   }

@@ -27,6 +27,7 @@
 
 import { DataClient } from './data-client.js';
 import { PaidMediaClient } from './paid-media-client.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -176,7 +177,7 @@ export class SessionClients {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: this.refreshToken }),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(TIMEOUTS.AUTH_MS),
       });
 
       if (!response.ok) {
