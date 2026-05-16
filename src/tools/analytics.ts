@@ -30,9 +30,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
-import { NeventApiError } from '../clients/base-client.js';
-import { isOperationAllowed, getOperationDeniedMessage } from '../config/operation-mode.js';
-import type { NeventErrorEnvelope } from '../types/common.js';
+import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import {
   AnalyticsQuerySchema,
   AnalyticsCapabilitiesSchema,
@@ -44,98 +42,6 @@ import {
   DimensionValuesSchema,
   CampaignReportSchema,
 } from '../schemas/analytics.js';
-
-// ---------------------------------------------------------------------------
-// Helper: build a success content block
-// ---------------------------------------------------------------------------
-
-/**
- * Wrap a result object as an MCP text content block.
- * Every tool response must be serialized to JSON text.
- *
- * @param result — The result object to serialize.
- */
-function ok(result: unknown): { content: Array<{ type: 'text'; text: string }> } {
-  // No indentation — saves LLM tokens on large responses.
-  return {
-    content: [{ type: 'text', text: JSON.stringify(result) }],
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build an error content block
-// ---------------------------------------------------------------------------
-
-/**
- * Wrap a `NeventErrorEnvelope` as an MCP error content block.
- * Setting `isError: true` signals to the MCP client that this is a failure.
- *
- * @param envelope — The structured error envelope to serialize.
- */
-function err(
-  envelope: NeventErrorEnvelope
-): { content: Array<{ type: 'text'; text: string }>; isError: true } {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
-    isError: true,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helper: convert any thrown value to a NeventErrorEnvelope
-// ---------------------------------------------------------------------------
-
-/**
- * Map any caught error into a `NeventErrorEnvelope` suitable for MCP output.
- *
- * Handles:
- * - `NeventApiError` — already has a structured `NeventError` inside
- * - Generic `Error`  — wrapped as `api_error`
- * - Unknown values   — wrapped as `api_error` with string coercion
- *
- * @param caught — The value thrown from an async tool handler.
- */
-function toErrorEnvelope(caught: unknown): NeventErrorEnvelope {
-  if (caught instanceof NeventApiError) {
-    return { error: caught.neventError };
-  }
-  const message =
-    caught instanceof Error
-      ? caught.message
-      : `Unexpected error: ${String(caught)}`;
-  return {
-    error: {
-      type: 'api_error',
-      message,
-      code: 'unexpected_error',
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helper: guard for operation mode
-// ---------------------------------------------------------------------------
-
-/**
- * Return an error envelope if the tool is not permitted in the current mode.
- * Returns `null` when the operation is allowed.
- *
- * @param toolName — MCP tool name to check.
- */
-function checkMode(
-  toolName: string
-): NeventErrorEnvelope | null {
-  if (!isOperationAllowed(toolName)) {
-    return {
-      error: {
-        type: 'invalid_request',
-        message: getOperationDeniedMessage(toolName),
-        code: 'operation_not_permitted',
-      },
-    };
-  }
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Tool registration
