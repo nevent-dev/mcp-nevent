@@ -817,6 +817,7 @@ export function registerTemplateTools(
           subject?: string;
           sampleUserId?: string;
           sampleUserEmail?: string;
+          parameters?: Record<string, unknown>;
         } = {
           emails: params.emails,
         };
@@ -829,6 +830,9 @@ export function registerTemplateTools(
         }
         if (params.sample_user_email !== undefined) {
           body.sampleUserEmail = params.sample_user_email;
+        }
+        if (params.parameters !== undefined) {
+          body.parameters = params.parameters;
         }
 
         const result = await templateClient.sendTestEmail(params.template_id, body);
