@@ -125,12 +125,12 @@ export class SessionClients {
     this.refreshToken = refreshToken;
 
     // Create the template client sharing the same nev-api URL and JWT as
-    // paidMediaClient. The JWT is extracted from paidMediaClient to avoid
-    // re-reading from the environment (which may be empty in HTTP mode).
-    const initialJwt = (paidMediaClient as unknown as { jwtToken: string }).jwtToken;
+    // paidMediaClient. The JWT is read via getJwtToken() to avoid re-reading
+    // from the environment (which may be empty in HTTP mode) and to eliminate
+    // the `as unknown as { jwtToken }` cast.
     this.templateClient = new TemplateClient({
       baseUrl: neventApiUrl,
-      jwtToken: initialJwt,
+      jwtToken: paidMediaClient.getJwtToken(),
     });
 
     // Wire the token-refresh callback into all clients so that a 401 response

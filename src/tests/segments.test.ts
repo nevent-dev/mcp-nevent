@@ -41,6 +41,9 @@ function makeDataClient(jwtToken = 'test-jwt', activeTenantId?: string) {
     setActiveTenant(id: string | undefined) {
       this.activeTenantId = id;
     },
+    getJwtToken() {
+      return this.jwtToken;
+    },
   } as unknown as import('../clients/data-client.js').DataClient;
 }
 

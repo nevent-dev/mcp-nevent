@@ -50,15 +50,16 @@ import {
 /**
  * Extract the JWT bearer token from a `DataClient` instance.
  *
- * `DataClient` inherits `jwtToken` as a protected member from `BaseClient`.
- * We access it via an unsafe cast — the same pattern used in `tenants.ts` —
- * because nev-api and nev-data-api share the same bearer token.
+ * Delegates to `BaseClient.getJwtToken()` — a public accessor that eliminates
+ * the need for `as unknown as { jwtToken: string }` casts to reach the
+ * otherwise-protected field. Both nev-api and nev-data-api share the same
+ * bearer token, so this works for both client types.
  *
  * @param client — The session's DataClient.
  * @returns The raw JWT string for use in Authorization headers.
  */
 function extractJwt(client: DataClient): string {
-  return (client as unknown as { jwtToken: string }).jwtToken;
+  return client.getJwtToken();
 }
 
 // ---------------------------------------------------------------------------
