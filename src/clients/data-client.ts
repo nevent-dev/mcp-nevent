@@ -339,39 +339,28 @@ export class DataClient extends BaseClient {
    * @param raw - Raw parsed JSON from POST /analytics/query.
    */
   private transformQueryResponse(raw: Record<string, unknown>): AnalyticsQueryResponse {
-    // Try to extract data rows from common envelope patterns
-    let rows: Record<string, unknown>[] = [];
+    // Normalize response envelope: accept { data: [] }, { rows: [] }, or bare array
+    const rows: Record<string, unknown>[] = (
+      (Array.isArray(raw['data']) ? raw['data'] : null) ??
+      (Array.isArray(raw['rows']) ? raw['rows'] : null) ??
+      (Array.isArray(raw) ? (raw as unknown as unknown[]) : null) ??
+      []
+    ) as Record<string, unknown>[];
 
-    if (Array.isArray(raw['data'])) {
-      rows = raw['data'] as Record<string, unknown>[];
-    } else if (Array.isArray(raw['rows'])) {
-      rows = raw['rows'] as Record<string, unknown>[];
-    } else if (Array.isArray(raw)) {
-      rows = raw as unknown as Record<string, unknown>[];
-    }
-
-    // Extract metadata
-    const rawMeta = raw['metadata'] as Record<string, unknown> | undefined;
-    const totalRows =
-      typeof rawMeta?.['totalRows'] === 'number'
-        ? rawMeta['totalRows']
-        : typeof rawMeta?.['total_rows'] === 'number'
-          ? rawMeta['total_rows']
-          : rows.length;
-
-    const executionTime =
-      typeof rawMeta?.['executionTime'] === 'number'
-        ? rawMeta['executionTime']
-        : typeof rawMeta?.['execution_time'] === 'number'
-          ? rawMeta['execution_time']
-          : 0;
-
-    const query =
-      typeof rawMeta?.['query'] === 'string' ? rawMeta['query'] : undefined;
+    const meta = raw['metadata'] as Record<string, unknown> | undefined;
 
     return {
       data: rows,
-      metadata: { totalRows, executionTime, query },
+      metadata: {
+        // Accept both camelCase and snake_case variants from the API
+        totalRows: (meta?.['totalRows'] as number | undefined) ??
+                   (meta?.['total_rows'] as number | undefined) ??
+                   rows.length,
+        executionTime: (meta?.['executionTime'] as number | undefined) ??
+                       (meta?.['execution_time'] as number | undefined) ??
+                       0,
+        query: typeof meta?.['query'] === 'string' ? meta['query'] : undefined,
+      },
     };
   }
 }

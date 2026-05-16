@@ -46,6 +46,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import {
   ListTemplatesSchema,
   GetTemplateSchema,
@@ -405,7 +406,7 @@ export function registerTemplateTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(TIMEOUTS.LONG_MS),
         });
 
         if (!response.ok) {
@@ -539,7 +540,7 @@ export function registerTemplateTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(TIMEOUTS.LONG_MS),
         });
 
         if (!response.ok) {

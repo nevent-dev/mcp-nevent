@@ -42,6 +42,7 @@ import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import { CreateCampaignSchema, ScheduleCampaignSchema } from '../schemas/campaign-actions.js';
 
 // ---------------------------------------------------------------------------
@@ -239,7 +240,7 @@ export function registerCampaignActionTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(TIMEOUTS.LONG_MS),
         });
 
         if (!response.ok) {
@@ -364,7 +365,7 @@ export function registerCampaignActionTools(
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${jwtToken}`,
             },
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.timeout(TIMEOUTS.AUTH_MS),
           }
         );
 
@@ -423,7 +424,7 @@ export function registerCampaignActionTools(
               'Authorization': `Bearer ${jwtToken}`,
             },
             body: JSON.stringify(patchPayload),
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
           }
         );
 

@@ -35,6 +35,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import type { SegmentRecord, ListSegmentsResponse } from '../types/segments.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import {
   ListSegmentsSchema,
   GetSegmentSchema,
@@ -174,7 +175,7 @@ export function registerSegmentTools(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${jwtToken}`,
           },
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
         });
 
         if (!response.ok) {
@@ -231,7 +232,7 @@ export function registerSegmentTools(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${jwtToken}`,
           },
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
         });
 
         if (!response.ok) {
@@ -321,7 +322,7 @@ export function registerSegmentTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
         });
 
         if (!response.ok) {
@@ -419,7 +420,7 @@ export function registerSegmentTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
         });
 
         if (!response.ok) {
