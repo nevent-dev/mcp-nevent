@@ -275,7 +275,6 @@ export function summarizeParams(
         dimensions_count: Array.isArray(params['dimensions']) ? params['dimensions'].length : 0,
         metrics_count: Array.isArray(params['metrics']) ? params['metrics'].length : 0,
         filters_count: Array.isArray(params['filters']) ? params['filters'].length : 0,
-        has_tenant_override: Boolean(params['tenant_id']),
       };
 
     case 'nevent_analytics_table_schema':
