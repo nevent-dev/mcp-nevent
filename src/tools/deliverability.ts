@@ -32,6 +32,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { GetSendingProfileSchema, GetSuppressionsSummarySchema } from '../schemas/deliverability.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
 // Tool registration
@@ -77,7 +78,7 @@ export function registerDeliverabilityTools(
    */
   async function getDb(): Promise<Db> {
     if (!mongoClient) {
-      const client = new MongoClient(mongoUri);
+      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
       await client.connect();
       mongoClient = client;
     }
@@ -89,7 +90,7 @@ export function registerDeliverabilityTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_sending_profile',
-    'Get the email sending configuration for the active tenant including warm-up status, send rate, throttle settings, and validated domains.',
+    'Call this before creating a campaign to verify the tenant is ready to send email. Returns: sender domain(s) and their validation status, warm-up phase (cold/warming/warmed), daily send rate cap, and throttle settings. If the sending profile is not validated or still in warm-up, warn the user before scheduling a large campaign. Combine with nevent_get_suppressions_summary for a full deliverability health check.',
     GetSendingProfileSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
@@ -182,7 +183,7 @@ export function registerDeliverabilityTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_suppressions_summary',
-    'Get a summary of email suppressions (hard bounces) and unsubscriptions for the active tenant with 30-day trends and reason breakdowns.',
+    'Get a deliverability health snapshot for the active tenant: total suppressed emails (hard bounces + complaints + manual unsubscribes), 30-day trend, and breakdown by suppression reason. Call this when the user asks about list health, unsubscribe rates, or bounce issues. A suppression rate above 2% indicates deliverability risk — surface this as a warning before scheduling a large campaign.',
     GetSuppressionsSummarySchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {

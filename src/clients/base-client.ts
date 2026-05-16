@@ -27,6 +27,13 @@ export interface BaseClientConfig {
   jwtToken: string;
   /** Optional request timeout in milliseconds. Default: 30 000. */
   timeoutMs?: number;
+  /**
+   * Optional callback invoked when the server returns HTTP 401.
+   * Should attempt to refresh the access token and return the new token
+   * string, or `null` if refresh failed (expired, no refresh token, etc.).
+   * When `null` is returned the original 401 error is propagated.
+   */
+  onUnauthorized?: () => Promise<string | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,13 +72,42 @@ export class NeventApiError extends Error {
  */
 export class BaseClient {
   protected readonly baseUrl: string;
-  protected readonly jwtToken: string;
+  protected jwtToken: string;
   protected readonly timeoutMs: number;
+  private onUnauthorized?: () => Promise<string | null>;
 
   constructor(config: BaseClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.jwtToken = config.jwtToken;
     this.timeoutMs = config.timeoutMs ?? 30_000;
+    this.onUnauthorized = config.onUnauthorized;
+  }
+
+  /**
+   * Register (or replace) the callback that is invoked when the server
+   * responds with HTTP 401.  Calling this after construction allows
+   * `SessionClients` to wire the refresh callback without a circular
+   * dependency — clients are constructed first, then the callback is
+   * injected once the session holder exists.
+   *
+   * @param cb - Async function that attempts a token refresh and returns the
+   *             new access token string, or `null` on failure.
+   */
+  setOnUnauthorized(cb: () => Promise<string | null>): void {
+    this.onUnauthorized = cb;
+  }
+
+  /**
+   * Update the JWT bearer token on this client.
+   *
+   * Prefer using `SessionClients.rotateJwt()` which keeps both clients in
+   * sync. This public method is exposed so `SessionClients` can rotate the
+   * token without resorting to `as unknown as` casts.
+   *
+   * @param token - The new JWT access token.
+   */
+  public rotateAccessToken(token: string): void {
+    this.jwtToken = token;
   }
 
   // -------------------------------------------------------------------------
@@ -101,6 +137,12 @@ export class BaseClient {
       params?: Record<string, QueryParamValue>;
       /** Skip the Authorization header (for public endpoints). */
       skipAuth?: boolean;
+      /**
+       * Internal flag — set to `true` on the retry after a successful token
+       * refresh to prevent infinite 401 loops.
+       * @internal
+       */
+      _isRetry?: boolean;
     } = {}
   ): Promise<HttpResponse<T>> {
     const url = this.buildUrl(path, options.params);
@@ -138,6 +180,22 @@ export class BaseClient {
 
     // Parse body regardless of status — errors may include useful info
     const rawBody = await this.parseBody(response);
+
+    // -------------------------------------------------------------------------
+    // Auto-refresh on 401
+    //
+    // When the server returns 401 and an onUnauthorized callback is registered,
+    // attempt a token refresh exactly once. A second 401 on the retry means
+    // the refreshed token is also invalid — propagate the error without looping.
+    // -------------------------------------------------------------------------
+    if (response.status === 401 && this.onUnauthorized && !options._isRetry) {
+      const newToken = await this.onUnauthorized();
+      if (newToken) {
+        this.jwtToken = newToken;
+        return this.request<T>(method, path, { ...options, _isRetry: true });
+      }
+      // Refresh failed — fall through and throw the original 401 error
+    }
 
     if (!response.ok) {
       throw this.buildApiError(response.status, rawBody, path);
@@ -256,10 +314,15 @@ export class BaseClient {
     // Log the error for debugging — this is the only place where upstream API errors surface
     console.error(`[nevent-mcp] API error | ${this.baseUrl}${path} | status=${status} | body=${JSON.stringify(body)?.slice(0, 500)}`);
 
-    // Extract any message the API provided in the body
-    // The API returns errors in two formats:
-    //   { message: "..." }                                          — simple
-    //   { error: { message: "...", details: "...", code: "..." } }  — structured
+    // Extract any message, code, and type the API provided in the body.
+    //
+    // nev-api returns errors in two formats:
+    //   { message: "..." }                                                 — simple
+    //   { error: { message: "...", details: "...", code: "...", type: "..." } } — structured
+    //
+    // We propagate the API-supplied code and type so that callers get the
+    // original machine-readable error code (e.g. "segment_not_found") rather
+    // than a generic fallback, which improves LLM error recovery.
     const b = body as Record<string, unknown> | null;
     const nestedError = b?.error as Record<string, unknown> | undefined;
     const apiDetails = nestedError?.details ? String(nestedError.details) : undefined;
@@ -268,14 +331,26 @@ export class BaseClient {
       (nestedError?.message ? String(nestedError.message) : undefined) ??
       (b?.message ? String(b.message) : undefined);
 
+    // Propagate machine-readable code from the API when present
+    const apiCode: string | undefined =
+      (nestedError?.code ? String(nestedError.code) : undefined) ??
+      (b?.code ? String(b.code) : undefined) ??
+      (b?.error_code ? String(b.error_code) : undefined);
+
+    // Propagate error type from the API when present (e.g. "validation_error")
+    const apiType: string | undefined =
+      (nestedError?.type ? String(nestedError.type) : undefined) ??
+      (b?.type ? String(b.type) : undefined);
+
     switch (status) {
       case 401:
         return new NeventApiError({
           type: 'authentication_error',
           message:
+            apiMessage ??
             'Authentication failed. Your JWT token is missing, expired, or invalid. ' +
             'Set the NEVENT_JWT_TOKEN environment variable with a valid token.',
-          code: 'invalid_token',
+          code: apiCode ?? 'invalid_token',
         });
 
       case 403:
@@ -284,14 +359,14 @@ export class BaseClient {
           message:
             apiMessage ??
             `Access denied to ${path}. This endpoint may require elevated permissions (e.g. ADMIN role).`,
-          code: 'forbidden',
+          code: apiCode ?? 'forbidden',
         });
 
       case 404:
         return new NeventApiError({
           type: 'not_found',
           message: apiMessage ?? `Resource not found: ${path}`,
-          code: 'not_found',
+          code: apiCode ?? 'not_found',
         });
 
       case 429: {
@@ -303,18 +378,18 @@ export class BaseClient {
         return new NeventApiError({
           type: 'rate_limit_error',
           message: `Rate limit exceeded for ${path}.${retryMsg} Reduce request frequency and try again.`,
-          code: 'rate_limit_exceeded',
+          code: apiCode ?? 'rate_limit_exceeded',
           param: retryAfter !== undefined ? String(retryAfter) : undefined,
         });
       }
 
       default:
         return new NeventApiError({
-          type: status >= 500 ? 'api_error' : 'invalid_request',
+          type: (apiType ?? (status >= 500 ? 'api_error' : 'invalid_request')) as NeventError['type'],
           message:
             apiMessage ??
             `HTTP ${status} error from ${path}. Check your request parameters.`,
-          code: status >= 500 ? 'server_error' : 'request_error',
+          code: apiCode ?? (status >= 500 ? 'server_error' : 'request_error'),
         });
     }
   }

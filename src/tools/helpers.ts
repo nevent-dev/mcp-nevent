@@ -31,8 +31,10 @@ import type { NeventErrorEnvelope } from '../types/common.js';
  * ```
  */
 export function ok(result: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  // No indentation — saves LLM tokens on large responses.
+  // Errors still use pretty-print (see err()) to aid human debugging.
   return {
-    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(result) }],
   };
 }
 

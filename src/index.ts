@@ -53,6 +53,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { DataClient } from './clients/data-client.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
+import { SessionClients } from './clients/session-clients.js';
 import { OPERATION_MODE } from './config/operation-mode.js';
 import { createNeventServer } from './server.js';
 
@@ -191,19 +192,18 @@ if (transportArg === 'http') {
   const NEVENT_API_URL = process.env['NEVENT_API_URL'] ?? 'https://api.nevent.es';
   const MONGODB_URI = process.env['MONGODB_URI'];
 
-  const dataClient = new DataClient({
-    baseUrl: DATA_API_URL,
-    jwtToken: JWT_TOKEN,
-  });
-
-  // Auto-set tenant from JWT if available
+  // Decode JWT to extract homeTenantId (no verification — we trust our own env var)
+  let homeTenantId: string | undefined;
   try {
     const jwt = await import('jsonwebtoken');
     const decoded = jwt.default.decode(JWT_TOKEN) as Record<string, unknown> | null;
-    if (decoded?.['tenantId']) {
-      dataClient.setActiveTenant(decoded['tenantId'] as string);
-    }
+    homeTenantId = decoded?.['tenantId'] as string | undefined;
   } catch { /* ignore */ }
+
+  const dataClient = new DataClient(
+    { baseUrl: DATA_API_URL, jwtToken: JWT_TOKEN },
+    homeTenantId
+  );
 
   // Paid media client — uses the same JWT and nev-api base URL
   const paidMediaClient = new PaidMediaClient({
@@ -211,11 +211,20 @@ if (transportArg === 'http') {
     jwtToken: JWT_TOKEN,
   });
 
+  // Build SessionClients so both clients share token state
+  const sessionClients = new SessionClients(
+    dataClient,
+    paidMediaClient,
+    NEVENT_API_URL,
+    homeTenantId
+  );
+
   const server = createNeventServer({
     dataClient,
     neventApiUrl: NEVENT_API_URL,
     mongoUri: MONGODB_URI,
     paidMediaClient,
+    sessionClients,
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);

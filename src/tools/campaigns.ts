@@ -36,6 +36,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { MongoClient, ObjectId } from 'mongodb';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import {
   ListCampaignsSchema,
   GetCampaignSchema,
@@ -84,7 +85,7 @@ export function registerCampaignTools(
    */
   async function getDb() {
     if (!mongoClient) {
-      const client = new MongoClient(mongoUri);
+      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
       await client.connect();
       mongoClient = client;
     }
@@ -96,7 +97,7 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_list_campaigns',
-    'List marketing campaigns for the active tenant with engagement metrics. Supports filtering by status, channel, and date range.',
+    'Call this to discover existing campaigns before reporting on performance or scheduling new sends. Returns campaigns for the active tenant with status, channel, send date, and top-level engagement metrics (sent, open rate, click rate). Filter by status (DRAFT/SCHEDULED/SENT/FAILED), channel (EMAIL/SMS), or date range. Use the returned campaign _id to call nevent_get_campaign (full content + metrics) or nevent_get_campaign_insights (AI analysis).',
     ListCampaignsSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -209,7 +210,7 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_campaign',
-    'Get full details of a specific campaign including email content, delivery metrics, and tracked links.',
+    'Retrieve the complete record of a campaign: email subject and body HTML, sending profile, all delivery and engagement metrics (sent, delivered, opens, clicks, unsubscribes, bounces), and tracked links with click counts. Call this after nevent_list_campaigns to drill into a specific campaign. Next step: nevent_get_campaign_insights for AI-generated recommendations, or nevent_campaign_report for a full analytics query.',
     GetCampaignSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -340,7 +341,7 @@ export function registerCampaignTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_campaign_insights',
-    'Get AI-generated performance insights and detected anomalies for a specific campaign.',
+    'Get pre-computed AI analysis for a specific campaign: performance summary, detected anomalies (e.g. unusually high bounce rate), and improvement recommendations. Call this after nevent_get_campaign when the user asks "how did this campaign perform?" or "what could be improved?". Complements raw metrics from nevent_get_campaign with narrative insights.',
     GetCampaignInsightsSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {

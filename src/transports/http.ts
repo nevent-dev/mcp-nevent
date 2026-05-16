@@ -69,6 +69,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
+import { SessionClients } from '../clients/session-clients.js';
 import { TokenService } from '../auth/token-service.js';
 import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
@@ -310,9 +311,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
 
   app.post('/', (req: Request, _res: Response, next: () => void) => {
-
-  // replaced below (req: Request, _res: Response, next: () => void) => {
-
     console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
     next();
   }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
@@ -345,12 +343,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         let sessionDataClient: DataClient;
         let sessionPaidMediaClient: PaidMediaClient;
         let sessionUserId: string | null = null;
+        let sessionHomeTenantId: string | undefined;
 
         try {
           const authHeader = req.headers['authorization'] ?? '';
           const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
           const claims = tokenService.verifyAccessToken(bearerToken);
           sessionUserId = claims.sub;
+          sessionHomeTenantId = claims.tenantId ?? undefined;
 
           // Use the MCP bearer token directly for data-api calls.
           // The MCP token shares the same JWT secret as nev-api and has a 24h TTL,
@@ -359,10 +359,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           // data.nevent.es accepts both token types via CustomAuthenticationFilter.
           const effectiveToken = bearerToken;
 
-          sessionDataClient = new DataClient({
-            baseUrl: config.dataApiUrl,
-            jwtToken: effectiveToken,
-          });
+          sessionDataClient = new DataClient(
+            {
+              baseUrl: config.dataApiUrl,
+              jwtToken: effectiveToken,
+            },
+            sessionHomeTenantId
+          );
 
           // Paid media client uses the same MCP bearer token to authenticate
           // against nev-api /api/ads/* endpoints. Tenant is resolved from the JWT.
@@ -371,21 +374,15 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
             jwtToken: effectiveToken,
           });
 
-          // Auto-set the active tenant from the JWT claims so tools work
-          // immediately without requiring a manual nevent_switch_tenant call.
-          if (claims.tenantId) {
-            sessionDataClient.setActiveTenant(claims.tenantId);
-          }
-
           console.error(
-            `[nevent-mcp] Session DataClient created | userId=${sessionUserId} ` +
-            `tenant=${claims.tenantId ?? 'none'} ` +
+            `[nevent-mcp] Session clients created | userId=${sessionUserId} ` +
+            `homeTenant=${sessionHomeTenantId ?? 'none'} ` +
             `tokenType=mcp_bearer mode=${OPERATION_MODE}`
           );
         } catch (tokenErr) {
           // If token verification fails at this point, the bearerAuth middleware
           // already validated it, so this should not happen in practice.
-          // Fall back to creating a DataClient without a valid token — the
+          // Fall back to creating clients without a valid token — the
           // first tool call will return a 401 from data-api.
           console.error('[nevent-mcp] Warning: Could not extract userId from bearer token:', tokenErr);
           sessionDataClient = new DataClient({
@@ -397,6 +394,16 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
             jwtToken: '',
           });
         }
+
+        // Build SessionClients aggregate — ensures JWT rotation propagates
+        // to both DataClient and PaidMediaClient atomically, and caches are
+        // invalidated on tenant switch.
+        const sessionClients = new SessionClients(
+          sessionDataClient,
+          sessionPaidMediaClient,
+          config.neventApiUrl,
+          sessionHomeTenantId
+        );
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -419,7 +426,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           }
         };
 
-        // Create a fresh MCP server for this session using the per-session DataClient.
+        // Create a fresh MCP server for this session using the per-session SessionClients.
         // Pass userId and a lazy getSessionId getter so the tool call logger can
         // attribute logs to the correct user and session.
         // getSessionId is lazy because transport.sessionId is only assigned after
@@ -429,6 +436,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           neventApiUrl: config.neventApiUrl,
           mongoUri: config.mongoUri,
           paidMediaClient: sessionPaidMediaClient,
+          sessionClients,
           userId: sessionUserId ?? undefined,
           getSessionId: () => transport.sessionId ?? null,
         });
