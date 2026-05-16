@@ -36,6 +36,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { MongoClient, ObjectId } from 'mongodb';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import {
   ListCampaignsSchema,
   GetCampaignSchema,
@@ -84,7 +85,7 @@ export function registerCampaignTools(
    */
   async function getDb() {
     if (!mongoClient) {
-      const client = new MongoClient(mongoUri);
+      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
       await client.connect();
       mongoClient = client;
     }
