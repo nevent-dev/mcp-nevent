@@ -1,12 +1,16 @@
 /**
  * Email template tools for the Nevent MCP Server.
  *
- * Registers 4 tools:
+ * Registers 8 tools:
  *
- *  1. nevent_list_templates   — List email templates with optional filtering (READ, MongoDB)
- *  2. nevent_get_template     — Full detail of a single template + performance metrics (READ, MongoDB)
- *  3. nevent_create_template  — Create a new email template via nev-api (WRITE)
- *  4. nevent_update_template  — Update an existing email template via nev-api (WRITE)
+ *  1. nevent_list_templates      — List email templates with optional filtering (READ, MongoDB)
+ *  2. nevent_get_template        — Full detail of a single template + performance metrics (READ, MongoDB)
+ *  3. nevent_create_template     — Create a new email template via nev-api (WRITE)
+ *  4. nevent_update_template     — Update an existing email template via nev-api (WRITE)
+ *  5. nevent_clone_template      — Clone an existing template (WRITE, nev-api)
+ *  6. nevent_rename_template     — Rename a template without content re-render (WRITE, nev-api)
+ *  7. nevent_preview_template    — Preview with merge-tag resolution (READ, nev-api)
+ *  8. nevent_send_test_template  — Send a real test email via SES (WRITE, nev-api)
  *
  * ## Architecture
  *
@@ -14,9 +18,14 @@
  * closure-scoped singleton created lazily on first use and reused across
  * invocations.
  *
- * Write tools (create/update) call nev-api (Java Spring Boot) over HTTP using
- * the JWT token extracted from `dataClient`. This is the same pattern used by
- * `registerSegmentTools` in `src/tools/segments.ts`.
+ * Write tools (create/update/clone/rename/test) call nev-api (Java Spring Boot)
+ * over HTTP using a `TemplateClient` injected as an optional parameter.
+ * Existing write tools (create/update) continue to use the extracted JWT from
+ * `dataClient` for backwards compatibility; the new tools use `templateClient`
+ * for cleaner abstraction and automatic 401 auto-refresh.
+ *
+ * Preview (nevent_preview_template) also calls nev-api via `templateClient` but
+ * is classified as READ since it does not mutate any server state.
  *
  * The active tenant ID is read from `dataClient.activeTenantId` (public field).
  * Read tools filter by `tenantId` and exclude soft-deleted documents via
@@ -26,13 +35,19 @@
  *
  * Read tools fail fast when `activeTenantId` is undefined, because all
  * MongoDB queries must be scoped to a tenant for data isolation.
+ * nev-api tools (clone/rename/preview/test) do not require `activeTenantId`
+ * because nev-api resolves the tenant from the JWT bearer token.
  *
  * ## Operation Mode
  *
- * - `nevent_list_templates`  → READ  — permitted in all modes.
- * - `nevent_get_template`    → READ  — permitted in all modes.
- * - `nevent_create_template` → WRITE — blocked in READ_ONLY mode.
- * - `nevent_update_template` → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_list_templates`     → READ  — permitted in all modes.
+ * - `nevent_get_template`       → READ  — permitted in all modes.
+ * - `nevent_create_template`    → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_update_template`    → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_clone_template`     → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_rename_template`    → WRITE — blocked in READ_ONLY mode.
+ * - `nevent_preview_template`   → READ  — permitted in all modes.
+ * - `nevent_send_test_template` → WRITE — blocked in READ_ONLY mode.
  *
  * ## Audit Logging
  *
@@ -45,6 +60,7 @@
 import { MongoClient, ObjectId } from 'mongodb';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
+import type { TemplateClient } from '../clients/template-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import {
@@ -52,6 +68,10 @@ import {
   GetTemplateSchema,
   CreateTemplateSchema,
   UpdateTemplateSchema,
+  CloneTemplateSchema,
+  RenameTemplateSchema,
+  PreviewTemplateSchema,
+  SendTestTemplateSchema,
 } from '../schemas/templates.js';
 
 // ---------------------------------------------------------------------------
@@ -103,26 +123,31 @@ function projectTemplate(raw: Record<string, unknown>): Record<string, unknown> 
 /**
  * Register all email template tools on the MCP server.
  *
- * Read tools (list/get) require `mongoUri` to connect to the `nevent` database.
- * Write tools (create/update) require `neventApiUrl` to call nev-api.
+ * Read tools (list/get/preview) require either `mongoUri` (MongoDB-backed) or
+ * `templateClient` (nev-api-backed). Write tools (create/update/clone/rename/test)
+ * require both `neventApiUrl` and `templateClient` to call nev-api.
  *
  * Should be called during server initialization after `registerAnalyticsTools`.
  *
  * The MongoClient singleton is scoped to this closure so each call to
  * `registerTemplateTools` creates an isolated connection pool.
  *
- * @param server        — The `McpServer` instance to register tools on.
- * @param mongoUri      — MongoDB connection URI (e.g. from MONGODB_URI env var).
- * @param dataClient    — The session's `DataClient` (carries JWT + activeTenantId).
- * @param neventApiUrl  — Base URL of nev-api, e.g. `https://api.nevent.es`.
- *                        When provided, write tools (create/update) are registered.
- *                        When omitted, only read tools are registered.
+ * @param server          — The `McpServer` instance to register tools on.
+ * @param mongoUri        — MongoDB connection URI (e.g. from MONGODB_URI env var).
+ * @param dataClient      — The session's `DataClient` (carries JWT + activeTenantId).
+ * @param neventApiUrl    — Base URL of nev-api, e.g. `https://api.nevent.es`.
+ *                          When provided, write tools are registered.
+ *                          When omitted, only read-from-MongoDB tools are registered.
+ * @param templateClient  — Pre-configured `TemplateClient` for clone/rename/preview/test.
+ *                          When provided, the 4 operation tools are registered.
+ *                          When omitted (backwards-compat), only list/get/create/update are registered.
  */
 export function registerTemplateTools(
   server: McpServer,
   mongoUri: string,
   dataClient: DataClient,
-  neventApiUrl?: string
+  neventApiUrl?: string,
+  templateClient?: TemplateClient
 ): void {
 
   // -------------------------------------------------------------------------
@@ -608,6 +633,221 @@ export function registerTemplateTools(
         );
 
         return ok({ template });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tools 5-8: Template operations via TemplateClient
+  // Only registered when templateClient is provided.
+  // -------------------------------------------------------------------------
+
+  if (!templateClient) {
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Tool 5: nevent_clone_template (WRITE)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_clone_template',
+    'Clone an existing email template to create a duplicate as a starting point for a new campaign. ' +
+    'Use after nevent_list_templates to pick a template to duplicate. ' +
+    'Returns the new cloned template (id, name with "(Copy)" suffix, format, tags). ' +
+    'Typically follow with nevent_rename_template and nevent_update_template to customize the clone.',
+    CloneTemplateSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_clone_template');
+      if (denied) return err(denied);
+
+      const tenantId = dataClient.activeTenantId;
+
+      try {
+        const raw = await templateClient.cloneTemplate(params.template_id);
+
+        // Project the cloned template to a compact MCP-friendly shape
+        const template = projectTemplate(raw as unknown as Record<string, unknown>);
+
+        // Audit log
+        console.error(
+          JSON.stringify({
+            audit: true,
+            tool: 'nevent_clone_template',
+            tenantId: tenantId ?? 'unknown',
+            timestamp: new Date().toISOString(),
+            operation: 'clone',
+            outcome: 'success',
+            sourceTemplateId: params.template_id,
+            clonedTemplateId: template['id'],
+          })
+        );
+
+        return ok({ template });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 6: nevent_rename_template (WRITE)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_rename_template',
+    'Rename an email template without modifying its content (lightweight — no re-render triggered). ' +
+    'Use after nevent_clone_template to give the clone a proper name, or to reorganize existing templates. ' +
+    'Returns the updated template with the new name. ' +
+    'Next step: nevent_update_template to change content, or nevent_preview_template to validate rendering.',
+    RenameTemplateSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_rename_template');
+      if (denied) return err(denied);
+
+      const tenantId = dataClient.activeTenantId;
+
+      try {
+        const raw = await templateClient.renameTemplate(params.template_id, params.name);
+
+        const template = projectTemplate(raw as unknown as Record<string, unknown>);
+
+        // Audit log
+        console.error(
+          JSON.stringify({
+            audit: true,
+            tool: 'nevent_rename_template',
+            tenantId: tenantId ?? 'unknown',
+            timestamp: new Date().toISOString(),
+            operation: 'rename',
+            outcome: 'success',
+            templateId: params.template_id,
+            newName: params.name,
+          })
+        );
+
+        return ok({ template });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 7: nevent_preview_template (READ)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_preview_template',
+    'Preview a template with merge tags resolved against a sample user\'s profile. ' +
+    'Returns originalBody (raw {{tags}}) and personalizedBody (tags replaced with user data), ' +
+    'plus detectedMergeTags (all unique tags found). ' +
+    'Always call before nevent_send_test_template to validate rendering. ' +
+    'Provide sample_user_id or sample_user_email to see real personalization; omit both to see raw tags only.',
+    PreviewTemplateSchema,
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_preview_template');
+      if (denied) return err(denied);
+
+      try {
+        // Build the preview request body — only include fields when provided
+        const body: {
+          sampleUserId?: string;
+          sampleUserEmail?: string;
+          subject?: string;
+        } = {};
+
+        if (params.sample_user_id !== undefined) {
+          body.sampleUserId = params.sample_user_id;
+        }
+        if (params.sample_user_email !== undefined) {
+          body.sampleUserEmail = params.sample_user_email;
+        }
+        if (params.subject !== undefined) {
+          body.subject = params.subject;
+        }
+
+        const preview = await templateClient.previewTemplate(params.template_id, body);
+
+        // detectedMergeTags comes as a Set<string> from Java; normalize to array
+        const normalized = {
+          ...preview,
+          detectedMergeTags: Array.isArray(preview.detectedMergeTags)
+            ? preview.detectedMergeTags
+            : (preview.detectedMergeTags
+              ? Array.from(preview.detectedMergeTags as unknown as Iterable<string>)
+              : []),
+        };
+
+        return ok({ preview: normalized });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 8: nevent_send_test_template (WRITE)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    'nevent_send_test_template',
+    'Send a test email of the template to one or more email addresses via SES. ' +
+    'Use after nevent_preview_template validates rendering. ' +
+    'Test emails carry test indicators in headers and are sent via AWS SES. ' +
+    'This call may take up to 60 seconds due to SES delivery. ' +
+    'Returns success status, list of recipients the email was sent to, and any error details.',
+    SendTestTemplateSchema,
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    async (params) => {
+      const denied = checkMode('nevent_send_test_template');
+      if (denied) return err(denied);
+
+      const tenantId = dataClient.activeTenantId;
+
+      try {
+        // Build the test request body
+        const body: {
+          emails: string[];
+          subject?: string;
+          sampleUserId?: string;
+          sampleUserEmail?: string;
+        } = {
+          emails: params.emails,
+        };
+
+        if (params.subject !== undefined) {
+          body.subject = params.subject;
+        }
+        if (params.sample_user_id !== undefined) {
+          body.sampleUserId = params.sample_user_id;
+        }
+        if (params.sample_user_email !== undefined) {
+          body.sampleUserEmail = params.sample_user_email;
+        }
+
+        const result = await templateClient.sendTestEmail(params.template_id, body);
+
+        // Audit log (regardless of success/failure — both are meaningful)
+        console.error(
+          JSON.stringify({
+            audit: true,
+            tool: 'nevent_send_test_template',
+            tenantId: tenantId ?? 'unknown',
+            timestamp: new Date().toISOString(),
+            operation: 'send_test',
+            outcome: result.success ? 'success' : 'failure',
+            templateId: params.template_id,
+            recipientCount: params.emails.length,
+          })
+        );
+
+        return ok({ result });
       } catch (caught) {
         return err(toErrorEnvelope(caught));
       }
