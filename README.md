@@ -21,7 +21,7 @@ npm run dev
 
 ---
 
-## Available Tools (39)
+## Available Tools (43)
 
 ### Analytics & Segmentation (always registered)
 
@@ -63,6 +63,10 @@ npm run dev
 | `nevent_get_template` | Templates | Full template content: MJML/HTML source, subject, usage metrics. |
 | `nevent_create_template` | Templates | Create a new email template. |
 | `nevent_update_template` | Templates | Update an existing email template's content or tags. |
+| `nevent_clone_template` | Templates | Duplicate an existing template (name gets "(Copy)" suffix). Follow with rename + update. |
+| `nevent_rename_template` | Templates | Rename a template without re-rendering content (lightweight). |
+| `nevent_preview_template` | Templates | Preview with merge-tag resolution against a sample user. Returns raw + personalized HTML. |
+| `nevent_send_test_template` | Templates | Send a real test email via SES to up to 10 recipients. Always preview first. |
 | `nevent_get_sending_profile` | Deliverability | Sender domain validation and warm-up status. |
 | `nevent_get_suppressions_summary` | Deliverability | Suppressions summary with 30-day trend and reason breakdown. |
 
@@ -150,7 +154,8 @@ src/
 │   ├── base-client.ts              # Shared HTTP client (JWT auth, 401 auto-refresh, errors)
 │   ├── data-client.ts              # nev-data-api client (data.nevent.es) with TTL caches
 │   ├── paid-media-client.ts        # nev-api paid media endpoints client
-│   └── session-clients.ts          # Per-session aggregate (DataClient + PaidMediaClient)
+│   ├── template-client.ts          # nev-api template operation endpoints (clone/rename/preview/test)
+│   └── session-clients.ts          # Per-session aggregate (DataClient + PaidMediaClient + TemplateClient)
 ├── config/
 │   ├── operation-mode.ts           # READ_ONLY | STANDARD | FULL operation guard
 │   └── timeouts.ts                 # Centralised timeout constants (ms)
@@ -164,7 +169,7 @@ src/
 │   ├── logging.ts                  # Tool call telemetry logger (MongoDB mcp_tool_calls)
 │   ├── paid-media.ts               # 11 paid media tools (ads, campaigns, ad groups)
 │   ├── segments.ts                 # 4 segment tools (list, get, create, update)
-│   ├── templates.ts                # 4 template tools (list, get, create, update)
+│   ├── templates.ts                # 8 template tools (list, get, create, update, clone, rename, preview, send_test)
 │   └── tenants.ts                  # 3 multi-tenant tools (list, switch, reset)
 ├── transports/
 │   └── http.ts                     # Express app, OAuth endpoints, per-session MCP lifecycle
@@ -187,6 +192,7 @@ src/
 └── types/
     ├── analytics.ts                # BigQuery analytics request/response types
     ├── segmentation.ts             # Segmentation DSL types
+    ├── templates.ts                # EmailTemplate, PreviewResponse, TestResponse types
     └── common.ts                   # Error format, pagination, HTTP response types
 
 infra/
