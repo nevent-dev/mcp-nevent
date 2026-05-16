@@ -1,5 +1,11 @@
 node_modules/
 dist/
+coverage/
 *.log
 .env
+.env.*
 .DS_Store
+*.bak
+*.pid
+README.internal.md
+README.internal.md

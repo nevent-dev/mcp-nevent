@@ -190,6 +190,35 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   app.set('trust proxy', 1);
 
   // -------------------------------------------------------------------------
+  // MCP manifest — publicly accessible, no auth required.
+  // Enables MCP client discovery (e.g. Claude.ai connector directory).
+  // -------------------------------------------------------------------------
+
+  app.get('/.well-known/mcp-manifest.json', (_req: Request, res: Response): void => {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.json({
+      name: 'nevent',
+      displayName: 'Nevent',
+      description: 'Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT',
+      version: '1.0.0',
+      homepage: 'https://nevent.ai/en/features/nevent-ai/',
+      documentation: 'https://docs.nevent.ai/mcp',
+      repository: 'https://github.com/nevent-dev/mcp-nevent',
+      license: 'MIT',
+      publisher: { name: 'Nevent', url: 'https://nevent.ai' },
+      support: { email: 'support@nevent.ai' },
+      transport: 'streamable-http',
+      endpoint: 'https://mcp.nevent.ai/mcp',
+      auth: {
+        type: 'oauth2',
+        metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
+      },
+      categories: ['marketing', 'analytics', 'crm', 'events'],
+      tools_count: 43,
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Health check — MUST be before any rate limiter or logger middleware
   // ALB sends health checks every 30s; mixing them into the rate limiter
   // pool can cause 429s that mark the target as unhealthy.
@@ -200,6 +229,9 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       status: 'ok',
       service: 'nevent-mcp',
       transport: 'http',
+      version: '1.0.0',
+      commitSha: process.env['GIT_COMMIT_SHA'] ?? 'unknown',
+      toolsCount: 43,
       activeSessions: Object.keys(activeSessions).length,
       timestamp: new Date().toISOString(),
     });
@@ -353,10 +385,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           sessionHomeTenantId = claims.tenantId ?? undefined;
 
           // Use the MCP bearer token directly for data-api calls.
-          // The MCP token shares the same JWT secret as nev-api and has a 24h TTL,
-          // while the nev-api access_token stored during OAuth login expires in only
-          // 10 minutes (jwt.access-token-expiration=600000 in production).
-          // data.nevent.es accepts both token types via CustomAuthenticationFilter.
+          // The MCP token shares the same JWT secret as the upstream API and has a 24h TTL,
+          // while the upstream access_token stored during OAuth login expires in only
+          // 10 minutes (short expiry by design).
+          // data.nevent.es accepts both token types via the upstream API's authentication filter.
           const effectiveToken = bearerToken;
 
           sessionDataClient = new DataClient(

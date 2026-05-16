@@ -24,7 +24,7 @@
  * The nev-api response contains an `access_token` JWT that carries user
  * metadata (userId, email, role, tenantId). These claims are decoded and
  * embedded into the MCP access token, aligning the token format with
- * nev-api's `CustomAuthenticationFilter` expectations.
+ * the upstream Nevent API's authentication filter expectations.
  *
  * ## Token revocation
  *
