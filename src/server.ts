@@ -158,7 +158,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
 
   // Multi-tenant + nev-api tools — registered when neventApiUrl is provided
   if (neventApiUrl) {
-    // Build or reuse SessionClients — ensures both clients share token state
+    // Build or reuse SessionClients — ensures all clients share token state
     const sc = providedSessionClients ?? new SessionClients(
       dataClient,
       paidMediaClient ?? new PaidMediaClient({ baseUrl: neventApiUrl, jwtToken: '' }),
@@ -180,8 +180,10 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     // Campaign read tools (list/get/insights from MongoDB)
     registerCampaignTools(server, mongoUri, dataClient);
 
-    // Email template tools (list/get from MongoDB; create/update via nev-api when available)
-    registerTemplateTools(server, mongoUri, dataClient, neventApiUrl);
+    // Email template tools (list/get from MongoDB; create/update/clone/rename/preview/test via nev-api)
+    // Pass templateClient from SessionClients when available for the 4 new operation tools.
+    const templateClient = providedSessionClients?.templateClient;
+    registerTemplateTools(server, mongoUri, dataClient, neventApiUrl, templateClient);
 
     // Deliverability tools (sending profile + suppressions from MongoDB)
     registerDeliverabilityTools(server, mongoUri, dataClient);
