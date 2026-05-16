@@ -220,7 +220,7 @@ const HELP_PAID_MEDIA = `
 ## Tools (11 total)
 - nevent_paid_ads_status(provider) — connection status for META/GOOGLE/TIKTOK
 - nevent_paid_ads_health(provider) — account health, budget, spend pacing
-- nevent_list_paid_ad_accounts(provider) — available ad accounts
+- nevent_get_paid_ad_group_insights(provider, ad_group_id) — performance insights for a specific ad group
 - nevent_list_paid_campaigns(provider, account_id?) — campaigns with performance
 - nevent_get_paid_campaign_insights(provider, campaign_id) — detailed metrics
 - nevent_paid_attribution(provider, campaign_id?) — attributed revenue + ROAS

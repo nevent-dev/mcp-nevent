@@ -21,7 +21,7 @@ npm run dev
 
 ---
 
-## Available Tools (38)
+## Available Tools (39)
 
 ### Analytics & Segmentation (always registered)
 
