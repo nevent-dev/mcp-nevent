@@ -146,7 +146,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_create_campaign',
-    'Create a new email, SMS, or WhatsApp campaign draft. The campaign is always created in DRAFT status and must be manually sent or scheduled.',
+    'Create a new email, SMS, or WhatsApp campaign draft. PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL campaigns: subject, from_name, and from_email are required. For SMS: sms_content is required. Always confirm the segment audience count with the user before scheduling.',
     CreateCampaignSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -299,7 +299,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_schedule_campaign',
-    'Schedule an existing draft campaign for sending at a specified date and time. Requires explicit confirmation.',
+    'Schedule an existing DRAFT campaign for delivery at a specific ISO-8601 datetime. IMPORTANT: this is a DESTRUCTIVE action — the campaign will be queued for sending to real contacts. You MUST set confirmed=true in the call, which requires explicit user consent. Call nevent_get_campaign first to verify the draft content and recipient segment. scheduled_time must be in the future (ISO-8601, e.g. 2025-06-01T10:00:00Z). The campaign transitions from DRAFT to SCHEDULED status on success.',
     ScheduleCampaignSchema,
     { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async (params) => {
