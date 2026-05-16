@@ -30,9 +30,10 @@
  * ## nev-api integration
  *
  * Both tools call nev-api (NOT nev-data-api) using the JWT token stored on
- * the DataClient, accessed via an unsafe cast (same pattern as tenants.ts):
+ * the DataClient, accessed via `dataClient.getJwtToken()` (public accessor
+ * added to BaseClient in commit abb06b0):
  * ```ts
- * const jwtToken = (dataClient as unknown as { jwtToken: string }).jwtToken;
+ * const jwtToken = dataClient.getJwtToken();
  * ```
  *
  * @module tools/campaign-actions
@@ -127,7 +128,7 @@ interface CampaignRecord {
  *
  * Both tools call nev-api directly (not nev-data-api) because campaign
  * lifecycle management is owned by the core API service. They share the JWT
- * token from the provided `dataClient` instance.
+ * token from the provided `dataClient` instance via `dataClient.getJwtToken()`.
  *
  * Parameter order follows the convention of the other Sprint 2 tools:
  * (server, dataClient, neventApiUrl).
@@ -181,7 +182,7 @@ export function registerCampaignActionTools(
       }
 
       // --- Extract JWT from DataClient ---
-      const jwtToken = (dataClient as unknown as { jwtToken: string }).jwtToken;
+      const jwtToken = dataClient.getJwtToken();
 
       // --- JWT presence check ---
       if (!jwtToken) {
@@ -342,7 +343,7 @@ export function registerCampaignActionTools(
       }
 
       // --- Extract JWT ---
-      const jwtToken = (dataClient as unknown as { jwtToken: string }).jwtToken;
+      const jwtToken = dataClient.getJwtToken();
 
       // --- JWT presence check ---
       if (!jwtToken) {
