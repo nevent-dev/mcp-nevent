@@ -18,6 +18,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DataClient } from './clients/data-client.js';
+import { SessionClients } from './clients/session-clients.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
 import { registerTenantTools } from './tools/tenants.js';
 import { registerSegmentTools } from './tools/segments.js';
@@ -28,6 +29,8 @@ import { registerCampaignActionTools } from './tools/campaign-actions.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
 import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
+import { registerHelpTool } from './tools/help.js';
+import { NEVENT_MCP_INSTRUCTIONS } from './server-instructions.js';
 
 // ---------------------------------------------------------------------------
 // Server factory
@@ -79,6 +82,12 @@ export interface CreateNeventServerOptions {
    * When omitted, `session_id` is recorded as `null`.
    */
   getSessionId?: () => string | null;
+  /**
+   * Optional pre-built SessionClients aggregate.
+   * When provided, used directly for tenant tools (maintains shared token state).
+   * When omitted, a SessionClients is constructed from dataClient + paidMediaClient.
+   */
+  sessionClients?: SessionClients;
 }
 
 /**
@@ -90,9 +99,10 @@ export interface CreateNeventServerOptions {
  *
  * ## Registered tool sets
  *
- * - Analytics + Segmentation (8 tools): Always registered.
- * - Multi-tenant (2 tools): Registered when neventApiUrl is provided.
- * - Segment management (3 tools): Registered when neventApiUrl is provided.
+ * - Analytics + Segmentation (9 tools): Always registered.
+ * - Meta help tool (1 tool): Always registered.
+ * - Multi-tenant (3 tools): Registered when neventApiUrl is provided.
+ * - Segment management (4 tools): Registered when neventApiUrl is provided.
  * - Campaign read tools (3 tools): Registered when mongoUri is provided.
  * - Template tools (2-4 tools): Registered when mongoUri is provided.
  *   create/update tools additionally require neventApiUrl.
@@ -104,12 +114,20 @@ export interface CreateNeventServerOptions {
  * @returns A ready-to-connect McpServer with all applicable tools registered.
  */
 export function createNeventServer(options: CreateNeventServerOptions): McpServer {
-  const { dataClient, neventApiUrl, mongoUri, paidMediaClient, userId = null, getSessionId } = options;
+  const {
+    dataClient,
+    neventApiUrl,
+    mongoUri,
+    paidMediaClient,
+    userId = null,
+    getSessionId,
+    sessionClients: providedSessionClients,
+  } = options;
 
-  const server = new McpServer({
-    name: 'nevent-mcp',
-    version: '1.0.0',
-  });
+  const server = new McpServer(
+    { name: 'nevent-mcp', version: '1.0.0' },
+    { instructions: NEVENT_MCP_INSTRUCTIONS }
+  );
 
   // ---------------------------------------------------------------------------
   // Tool call logging
@@ -125,17 +143,32 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   if (mongoUri) {
     const logger = createToolCallLogger(mongoUri);
     applyLoggingToServer(server, logger, dataClient, userId, getSessionId ?? null);
+
+    // Warm up the MongoDB logger connection in the background so the first
+    // tool call does not incur the cold-start ~200ms penalty.
+    // Fire-and-forget — errors are swallowed internally by the logger.
+    void logger.warmUp();
   }
 
   // Sprint 1: Analytics + Segmentation — always registered
   registerAnalyticsTools(server, dataClient);
 
+  // Meta-tool: always registered, no external dependencies
+  registerHelpTool(server);
+
   // Multi-tenant + nev-api tools — registered when neventApiUrl is provided
   if (neventApiUrl) {
-    // Tenant management (list/switch)
-    registerTenantTools(server, dataClient, neventApiUrl);
+    // Build or reuse SessionClients — ensures both clients share token state
+    const sc = providedSessionClients ?? new SessionClients(
+      dataClient,
+      paidMediaClient ?? new PaidMediaClient({ baseUrl: neventApiUrl, jwtToken: '' }),
+      neventApiUrl
+    );
 
-    // Sprint 2: Segment management (list/create/update via nev-api)
+    // Tenant management (list/switch/reset)
+    registerTenantTools(server, sc, neventApiUrl);
+
+    // Sprint 2: Segment management (list/get/create/update via nev-api)
     registerSegmentTools(server, dataClient, neventApiUrl);
 
     // Sprint 2: Campaign actions (create/schedule via nev-api)
