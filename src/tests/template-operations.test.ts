@@ -30,6 +30,9 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { z } from 'zod';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 import { isOperationAllowed } from '../config/operation-mode.js';
 import {
   CloneTemplateSchema,
@@ -776,18 +779,94 @@ describe('SessionClients TemplateClient wiring', () => {
 
     sc.rotateJwt('jwt-new');
 
-    // Verify the templateClient received the new token (access via protected field via cast)
-    const templateJwt = (sc.templateClient as unknown as { jwtToken: string }).jwtToken;
-    expect(templateJwt).toBe('jwt-new');
+    // Verify the templateClient received the new token via the public accessor
+    expect(sc.templateClient.getJwtToken()).toBe('jwt-new');
   });
 
   it('does not expose jwtToken via as-unknown casts in templates.ts tool handlers', () => {
-    // This is a structural check: the 4 new tools use templateClient (which internally
-    // reads jwtToken) rather than the `extractJwt(dataClient)` pattern used by create/update.
-    // We verify by checking that the new tools do NOT throw when templateClient is provided
-    // without needing to cast dataClient to extract its token.
-    // (The actual cast lives only in the existing extractJwt() helper, not in new code.)
-    expect(true).toBe(true); // Structural assertion — verified by code review
+    // Structural regression guard: verify templates.ts source does NOT contain
+    // the actual runtime cast `as unknown as { jwtToken`. Comments that mention
+    // the pattern in JSDoc are excluded by checking for lines that are not pure
+    // comment lines (i.e., lines without a leading ' * ' doc prefix).
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(thisDir, '../tools/templates.ts'), 'utf-8');
+    // Filter to non-comment lines only, then check for the cast pattern.
+    const codeLines = source
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'));
+    const codeOnly = codeLines.join('\n');
+    expect(codeOnly).not.toMatch(/as unknown as \{ jwtToken/);
+  });
+
+  it('401 + auto-refresh + retry succeeds for TemplateClient (full 3-call sequence)', async () => {
+    // This test validates the complete auto-refresh lifecycle for TemplateClient:
+    //  Call 1: original previewTemplate request → 401 Unauthorized
+    //  Call 2: POST /auth/refresh → 200 with new access token
+    //  Call 3: retry of the original request → 200 with preview data
+    //
+    // Replicates the pattern used in session-clients.test.ts for DataClient.
+
+    const { DataClient } = await import('../clients/data-client.js');
+    const { PaidMediaClient } = await import('../clients/paid-media-client.js');
+    const { SessionClients } = await import('../clients/session-clients.js');
+
+    const NEV_API_URL = 'https://api.nevent.es';
+
+    const dc = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: 'old-jwt' });
+    const pmc = new PaidMediaClient({ baseUrl: NEV_API_URL, jwtToken: 'old-jwt' });
+
+    // Seed refresh token at construction time
+    const sc = new SessionClients(dc, pmc, NEV_API_URL, 'tenant-xyz', 'mock-refresh-token');
+
+    // Encode a minimal fake JWT so SessionClients can decode the tenantId claim
+    const newAccessToken = 'new-access-token.eyJ0ZW5hbnRJZCI6InRlbmFudC14eXoifQ==.sig';
+
+    const mockFetch = vi.fn()
+      // Call 1: original previewTemplate request → 401
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ message: 'Unauthorized' }),
+        text: async () => JSON.stringify({ message: 'Unauthorized' }),
+      } as unknown as Response)
+      // Call 2: POST /auth/refresh → 200 with new access token
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          access_token: newAccessToken,
+          refresh_token: 'mock-refresh-token-v2',
+        }),
+        text: async () => '',
+      } as unknown as Response)
+      // Call 3: retry of original request with the refreshed token → 200
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => MOCK_PREVIEW,
+        text: async () => JSON.stringify(MOCK_PREVIEW),
+      } as unknown as Response);
+
+    vi.stubGlobal('fetch', mockFetch);
+
+    // Invoke previewTemplate (simplest TemplateClient method — single call, no body required)
+    const result = await sc.templateClient.previewTemplate('64f3a1b2c8e94d001e2a7f3c', {});
+
+    // 3 fetch calls: original (401) + refresh (200) + retry (200)
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+
+    // Call 3 (index 2) must use the refreshed token in its Authorization header
+    const retryCall = mockFetch.mock.calls[2];
+    const retryInit = retryCall[1] as RequestInit;
+    const authHeader = (retryInit.headers as Record<string, string>)['Authorization'];
+    expect(authHeader).toBe(`Bearer ${newAccessToken}`);
+
+    // Result must be the successful MOCK_PREVIEW response (not an error)
+    expect(result).toEqual(MOCK_PREVIEW);
+    expect(result.templateId).toBe(MOCK_PREVIEW.templateId);
   });
 });
 
