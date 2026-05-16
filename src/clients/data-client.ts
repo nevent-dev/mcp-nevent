@@ -10,6 +10,15 @@
  *  - queryAnalytics passes all new v3.19.0 fields (distinct, dryRun, timeGranularity, etc.)
  *  - New getCampaignReport method for POST /analytics/campaign-report
  *
+ * ## Tenant resolution
+ *
+ * Tenant is resolved **server-side** from the JWT claim `tenantId`. The MCP
+ * MUST NOT send `tenant_id` in body or query — nev-data-api silently ignores
+ * it. To change the active tenant, call `POST /users/tenant` via the
+ * `nevent_switch_tenant` tool, which issues a new JWT scoped to the target
+ * tenant. The new JWT is then applied to this client via
+ * `SessionClients.rotateJwt()`.
+ *
  * All methods are thin wrappers over `BaseClient.request()` — they handle
  * URL construction and casting but not error handling (let errors propagate).
  */
@@ -43,15 +52,19 @@ import type {
  * with the user's own nev-api JWT token. In stdio mode, a single shared
  * instance is used for all requests.
  *
- * ## Multi-tenant support
+ * ## Tenant resolution (IMPORTANT)
  *
- * Set `activeTenantId` to override the tenant context for all subsequent
- * requests made by this client instance. This is mutable because the client
- * is per-session in HTTP mode, so setting it only affects one user's session.
+ * Tenant is resolved **server-side from the JWT**. The MCP must NOT send
+ * `tenant_id` in any request body or query parameter — nev-data-api would
+ * silently ignore it anyway. To switch tenant, call `POST /users/tenant` via
+ * the `nevent_switch_tenant` tool, which re-issues the JWT scoped to the new
+ * tenant. Apply the new token via `SessionClients.rotateJwt()`.
  *
- * When `activeTenantId` is set, it is sent as the `tenant_id` query parameter
- * on every request. data-api validates that the authenticated user has access
- * to the requested tenant.
+ * ## Caches
+ *
+ * Some read-heavy, rarely-changing responses (capabilities, segmentation
+ * criteria) are cached in-memory for 5 minutes. Call `clearAllCaches()` when
+ * the JWT is rotated to avoid serving stale data from a different tenant.
  *
  * @example
  * ```ts
@@ -59,32 +72,65 @@ import type {
  *   baseUrl: process.env.NEVENT_DATA_API_URL ?? 'https://data.nevent.es',
  *   jwtToken: userAccessToken,
  * });
- * client.setActiveTenant('tenant_abc');
  * const caps = await client.getCapabilities();
  * ```
  */
 export class DataClient extends BaseClient {
+  /** Cache TTL in milliseconds (5 minutes). */
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
+
   /**
-   * Optional active tenant ID for multi-tenant queries.
+   * The tenant ID that the current JWT is scoped to.
    *
-   * When set, this value is sent as `tenant_id` in all data-api requests,
-   * allowing SUPERADMIN / OWNER users to query a specific tenant's data.
-   * Set via `nevent_switch_tenant` tool; cleared by setting to `undefined`.
+   * Read-only from the perspective of tool code — updated by
+   * `SessionClients.rotateJwt()` when the JWT is rotated. Used by
+   * MongoDB-backed tools (campaigns, templates, deliverability, segments)
+   * to scope queries to the correct tenant.
+   *
+   * Note: the JWT is the authoritative source. This field mirrors the
+   * `tenantId` claim for convenience — it is kept in sync by SessionClients.
    */
   activeTenantId: string | undefined;
 
-  constructor(config: BaseClientConfig) {
+  /** Cached analytics capabilities response. */
+  private capabilitiesCache: { data: AnalyticsCapabilitiesResponse; expiresAt: number } | null =
+    null;
+
+  /** Cached segmentation criteria response. */
+  private criteriaCache: { data: SegmentationCriteriaResponse; expiresAt: number } | null = null;
+
+  constructor(config: BaseClientConfig, activeTenantId?: string) {
     super(config);
-    this.activeTenantId = undefined;
+    this.activeTenantId = activeTenantId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Cache management
+  // -------------------------------------------------------------------------
+
+  /**
+   * Invalidate all in-memory caches.
+   *
+   * Must be called after `SessionClients.rotateJwt()` because the new JWT may
+   * belong to a different tenant, making cached data stale.
+   */
+  clearAllCaches(): void {
+    this.capabilitiesCache = null;
+    this.criteriaCache = null;
   }
 
   /**
-   * Set the active tenant for subsequent requests.
-   *
-   * @param tenantId - The tenant ID to activate, or `undefined` to clear.
+   * Clear only the capabilities cache (e.g. for manual refresh in tests).
    */
-  setActiveTenant(tenantId: string | undefined): void {
-    this.activeTenantId = tenantId;
+  clearCapabilitiesCache(): void {
+    this.capabilitiesCache = null;
+  }
+
+  /**
+   * Clear only the segmentation criteria cache (e.g. for tests).
+   */
+  clearCriteriaCache(): void {
+    this.criteriaCache = null;
   }
 
   // -------------------------------------------------------------------------
@@ -95,31 +141,27 @@ export class DataClient extends BaseClient {
    * Execute an analytics query against a BigQuery collection.
    * Maps to POST /analytics/query.
    *
-   * When `tenantId` is explicitly provided it overrides `activeTenantId`.
-   * When neither is set, data-api uses the tenant from the bearer token.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
    *
-   * v3.19.0: When `dryRun` is true, sends `?dryRun=true` as a query param instead
-   * of including it in the body. The API returns an estimated cost (bytes) without
-   * actually executing the query.
+   * v3.19.0: When `dryRun` is true, sends `?dryRun=true` as a query param
+   * instead of including it in the body. The API returns an estimated cost
+   * (bytes) without actually executing the query.
    *
-   * @param request  — Full query DSL including collection, dimensions, metrics, filters, etc.
-   * @param tenantId — Optional per-call tenant override (takes precedence over activeTenantId).
-   * @param dryRun   — Optional dry-run flag. When true, estimates cost without executing.
-   * @returns        Transformed response with `data` rows and `metadata`.
+   * @param request - Full query DSL including collection, dimensions, metrics, filters, etc.
+   * @param dryRun  - Optional dry-run flag. When true, estimates cost without executing.
+   * @returns Transformed response with `data` rows and `metadata`.
    */
   async queryAnalytics(
     request: AnalyticsQueryRequest,
-    tenantId?: string,
     dryRun?: boolean
   ): Promise<AnalyticsQueryResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const body = effectiveTenantId
-      ? { ...request, tenant_id: effectiveTenantId }
-      : request;
-
     // dryRun is passed as a query parameter, not in the body
     const params = dryRun ? { dryRun: 'true' } : undefined;
-    const raw = await this.postWithParams<Record<string, unknown>>('/analytics/query', body, params);
+    const raw = await this.postWithParams<Record<string, unknown>>(
+      '/analytics/query',
+      request,
+      params
+    );
     return this.transformQueryResponse(raw);
   }
 
@@ -127,26 +169,34 @@ export class DataClient extends BaseClient {
    * Retrieve available BigQuery tables and their column definitions.
    * Maps to GET /analytics/capabilities (public, no auth required).
    *
+   * Result is cached for 5 minutes. Call `clearAllCaches()` to force a refresh.
+   *
    * @returns List of tables with column names and types plus total count.
    */
   async getCapabilities(): Promise<AnalyticsCapabilitiesResponse> {
-    return this.getPublic<AnalyticsCapabilitiesResponse>('/analytics/capabilities');
+    const now = Date.now();
+    if (this.capabilitiesCache && this.capabilitiesCache.expiresAt > now) {
+      return this.capabilitiesCache.data;
+    }
+    const data = await this.getPublic<AnalyticsCapabilitiesResponse>(
+      '/analytics/capabilities'
+    );
+    this.capabilitiesCache = { data, expiresAt: now + DataClient.CACHE_TTL_MS };
+    return data;
   }
 
   /**
    * Get detailed column schema for a specific BigQuery table.
    * Maps to GET /analytics/schema/:table.
    *
-   * @param table    — Table name (e.g. "purchases", "tickets").
-   * @param tenantId — Optional per-call tenant override.
-   * @returns        Columns with name, type, and optional description.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
+   * @param table - Table name (e.g. "purchases", "tickets").
+   * @returns Columns with name, type, and optional description.
    */
-  async getTableSchema(table: string, tenantId?: string): Promise<AnalyticsTableSchemaResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const params = effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined;
+  async getTableSchema(table: string): Promise<AnalyticsTableSchemaResponse> {
     return this.get<AnalyticsTableSchemaResponse>(
-      `/analytics/schema/${encodeURIComponent(table)}`,
-      params
+      `/analytics/schema/${encodeURIComponent(table)}`
     );
   }
 
@@ -154,21 +204,20 @@ export class DataClient extends BaseClient {
    * Discover distinct field values for constructing valid analytics filters.
    * Maps to POST /analytics/filters.
    *
-   * @param collection — The collection to inspect.
-   * @param filters    — Fields and optional seed values to look up.
-   * @param tenantId   — Optional per-call tenant override.
-   * @returns          Available values per field.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
+   * @param collection - The collection to inspect.
+   * @param filters    - Fields and optional seed values to look up.
+   * @returns Available values per field.
    */
   async getFilterValues(
     collection: string,
-    filters: Array<{ field: string; operator?: string; value?: unknown }>,
-    tenantId?: string
+    filters: Array<{ field: string; operator?: string; value?: unknown }>
   ): Promise<AnalyticsFilterValuesResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const body = effectiveTenantId
-      ? { collection, filters, tenant_id: effectiveTenantId }
-      : { collection, filters };
-    return this.post<AnalyticsFilterValuesResponse>('/analytics/filters', body);
+    return this.post<AnalyticsFilterValuesResponse>('/analytics/filters', {
+      collection,
+      filters,
+    });
   }
 
   /**
@@ -179,23 +228,19 @@ export class DataClient extends BaseClient {
    * campaign in one API call, returning opens, clicks, bounces, unsubscribes,
    * conversions, revenue, and other performance metrics.
    *
-   * @param campaignId — The campaign ID to report on.
-   * @param timeRange  — Optional time range to restrict the report data.
-   * @param tenantId   — Optional per-call tenant override.
-   * @returns          Structured campaign performance report.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
+   * @param campaignId - The campaign ID to report on.
+   * @param timeRange  - Optional time range to restrict the report data.
+   * @returns Structured campaign performance report.
    */
   async getCampaignReport(
     campaignId: string,
-    timeRange?: { start: string; end: string; granularity?: string },
-    tenantId?: string
+    timeRange?: { start: string; end: string; granularity?: string }
   ): Promise<CampaignReportResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
     const body: Record<string, unknown> = { campaignId };
     if (timeRange) {
       body['timeRange'] = timeRange;
-    }
-    if (effectiveTenantId) {
-      body['tenant_id'] = effectiveTenantId;
     }
     return this.post<CampaignReportResponse>('/analytics/campaign-report', body);
   }
@@ -208,76 +253,77 @@ export class DataClient extends BaseClient {
    * List all available segmentation criteria.
    * Maps to GET /segmentation/criteria.
    *
-   * @param tenantId — Optional per-call tenant override.
+   * Result is cached for 5 minutes per-session. Cache is invalidated when the
+   * JWT is rotated (tenant switch) via `clearAllCaches()`.
+   *
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
    * @returns Criteria grouped by type with supported operators.
    */
-  async getSegmentationCriteria(tenantId?: string): Promise<SegmentationCriteriaResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const params = effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined;
-    return this.get<SegmentationCriteriaResponse>('/segmentation/criteria', params);
+  async getSegmentationCriteria(): Promise<SegmentationCriteriaResponse> {
+    const now = Date.now();
+    if (this.criteriaCache && this.criteriaCache.expiresAt > now) {
+      return this.criteriaCache.data;
+    }
+    const data = await this.get<SegmentationCriteriaResponse>('/segmentation/criteria');
+    this.criteriaCache = { data, expiresAt: now + DataClient.CACHE_TTL_MS };
+    return data;
   }
 
   /**
    * Preview the estimated audience size for a segment definition.
    * Maps to POST /segments/preview.
    *
-   * Use this before saving a segment to validate the definition and get a
-   * fan count estimate without persisting anything.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
    *
-   * @param definition — DSL segment definition with stanzas and criteria.
-   * @param tenantId   — Optional per-call tenant override.
-   * @returns          Estimated fan count and a small sample of matching fans.
+   * @param definition - DSL segment definition with stanzas and criteria.
+   * @returns Estimated fan count and a small sample of matching fans.
    */
-  async previewSegment(definition: SegmentDefinition, tenantId?: string): Promise<SegmentPreviewResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const body = effectiveTenantId
-      ? { definition, tenant_id: effectiveTenantId }
-      : { definition };
-    return this.post<SegmentPreviewResponse>('/segments/preview', body);
+  async previewSegment(definition: SegmentDefinition): Promise<SegmentPreviewResponse> {
+    return this.post<SegmentPreviewResponse>('/segments/preview', { definition });
   }
 
   /**
    * Execute a segment definition and retrieve matching contacts with pagination.
    * Maps to POST /segments/execute.
    *
-   * @param definition — DSL segment definition.
-   * @param page       — Zero-based page index (default 0).
-   * @param pageSize   — Results per page (max 100, default 20).
-   * @param tenantId   — Optional per-call tenant override.
-   * @returns          Paginated fan list with contact details.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
+   * @param definition - DSL segment definition.
+   * @param page       - Zero-based page index (default 0).
+   * @param pageSize   - Results per page (max 100, default 20).
+   * @returns Paginated fan list with contact details.
    */
   async executeSegment(
     definition: SegmentDefinition,
     page = 0,
-    pageSize = 20,
-    tenantId?: string
+    pageSize = 20
   ): Promise<SegmentExecuteResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const body = effectiveTenantId
-      ? { definition, page, page_size: pageSize, tenant_id: effectiveTenantId }
-      : { definition, page, page_size: pageSize };
-    return this.post<SegmentExecuteResponse>('/segments/execute', body);
+    return this.post<SegmentExecuteResponse>('/segments/execute', {
+      definition,
+      page,
+      page_size: pageSize,
+    });
   }
 
   /**
    * Get autocomplete values for a segmentation criterion.
    * Maps to POST /dimensions/values.
    *
-   * @param criterionId — The criterion ID to look up values for.
-   * @param search      — Optional search string to filter values.
-   * @param tenantId    — Optional per-call tenant override.
-   * @returns           Matching values as strings or labeled objects.
+   * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
+   *
+   * @param criterionId - The criterion ID to look up values for.
+   * @param search      - Optional search string to filter values.
+   * @returns Matching values as strings or labeled objects.
    */
   async getDimensionValues(
     criterionId: string,
-    search?: string,
-    tenantId?: string
+    search?: string
   ): Promise<DimensionValuesResponse> {
-    const effectiveTenantId = tenantId ?? this.activeTenantId;
-    const body = effectiveTenantId
-      ? { criterion_id: criterionId, search, tenant_id: effectiveTenantId }
-      : { criterion_id: criterionId, search };
-    return this.post<DimensionValuesResponse>('/dimensions/values', body);
+    return this.post<DimensionValuesResponse>('/dimensions/values', {
+      criterion_id: criterionId,
+      search,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -290,7 +336,7 @@ export class DataClient extends BaseClient {
    * The raw API may wrap results in various envelope shapes; we normalize to:
    * `{ data: rows[], metadata: { totalRows, executionTime, query? } }`
    *
-   * @param raw — Raw parsed JSON from POST /analytics/query.
+   * @param raw - Raw parsed JSON from POST /analytics/query.
    */
   private transformQueryResponse(raw: Record<string, unknown>): AnalyticsQueryResponse {
     // Try to extract data rows from common envelope patterns
