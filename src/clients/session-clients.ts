@@ -2,13 +2,14 @@
  * SessionClients — aggregates the per-session API clients and owns token state.
  *
  * In HTTP mode each MCP session has one `SessionClients` instance, holding
- * a `DataClient` (for nev-data-api) and a `PaidMediaClient` (for nev-api paid
- * media endpoints). Both clients share the same bearer JWT; when the token is
- * rotated (e.g. during `nevent_switch_tenant`) both must be updated atomically.
+ * a `DataClient` (for nev-data-api), a `PaidMediaClient` (for nev-api paid
+ * media endpoints), and a `TemplateClient` (for nev-api template operations).
+ * All three clients share the same bearer JWT; when the token is rotated
+ * (e.g. during `nevent_switch_tenant`) all three must be updated atomically.
  *
  * Additionally, `SessionClients` stores the `refreshToken` captured during
  * login / initial OAuth exchange and implements a `refreshAccessToken()` helper
- * that is registered as the `onUnauthorized` callback inside both clients via
+ * that is registered as the `onUnauthorized` callback inside all clients via
  * `wireAuthRefresh()`, which is called at the end of the constructor.
  *
  * ## Tenant reset
@@ -28,6 +29,7 @@
 
 import { DataClient } from './data-client.js';
 import { PaidMediaClient } from './paid-media-client.js';
+import { TemplateClient } from './template-client.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
@@ -62,11 +64,11 @@ function decodeJwtTenantId(token: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregate holder for the two per-session API clients.
+ * Aggregate holder for the per-session API clients.
  *
- * Both `dataClient` and `paidMediaClient` are exposed as public fields so
- * callers can use them directly. Use `rotateJwt` / `rotateTokens` to update
- * the bearer token in both clients atomically.
+ * `dataClient`, `paidMediaClient`, and `templateClient` are exposed as public
+ * fields so callers can use them directly. Use `rotateJwt` / `rotateTokens`
+ * to update the bearer token in all clients atomically.
  */
 export class SessionClients {
   /** Client for nev-data-api (analytics, segmentation). */
@@ -74,6 +76,12 @@ export class SessionClients {
 
   /** Client for nev-api paid media endpoints. */
   readonly paidMediaClient: PaidMediaClient;
+
+  /**
+   * Client for nev-api email template operation endpoints
+   * (clone, rename, preview, test). Shares the same JWT as the other clients.
+   */
+  readonly templateClient: TemplateClient;
 
   /**
    * The tenant ID from the JWT at session creation time.
@@ -116,14 +124,23 @@ export class SessionClients {
     this.homeTenantId = homeTenantId;
     this.refreshToken = refreshToken;
 
-    // Wire the token-refresh callback into both clients so that a 401 response
+    // Create the template client sharing the same nev-api URL and JWT as
+    // paidMediaClient. The JWT is extracted from paidMediaClient to avoid
+    // re-reading from the environment (which may be empty in HTTP mode).
+    const initialJwt = (paidMediaClient as unknown as { jwtToken: string }).jwtToken;
+    this.templateClient = new TemplateClient({
+      baseUrl: neventApiUrl,
+      jwtToken: initialJwt,
+    });
+
+    // Wire the token-refresh callback into all clients so that a 401 response
     // automatically triggers a refresh attempt and a transparent retry.
     this.wireAuthRefresh();
   }
 
   /**
-   * Register `refreshAccessToken` as the `onUnauthorized` callback on both
-   * clients.  Called once from the constructor so that HTTP 401 responses
+   * Register `refreshAccessToken` as the `onUnauthorized` callback on all
+   * clients. Called once from the constructor so that HTTP 401 responses
    * transparently trigger a token refresh and a single retry.
    *
    * Separated from the constructor body for readability and testability.
@@ -132,6 +149,7 @@ export class SessionClients {
     const cb = () => this.refreshAccessToken();
     this.dataClient.setOnUnauthorized(cb);
     this.paidMediaClient.setOnUnauthorized(cb);
+    this.templateClient.setOnUnauthorized(cb);
   }
 
   // -------------------------------------------------------------------------
@@ -139,17 +157,18 @@ export class SessionClients {
   // -------------------------------------------------------------------------
 
   /**
-   * Update the bearer JWT in both clients atomically and invalidate caches.
+   * Update the bearer JWT in all clients atomically and invalidate caches.
    *
    * Call this whenever a new access token is obtained (tenant switch, refresh).
    * After rotation, any tenant-specific cached data from the previous JWT
    * context is discarded via `dataClient.clearAllCaches()`.
    *
-   * @param newAccessToken - The new bearer JWT to apply to both clients.
+   * @param newAccessToken - The new bearer JWT to apply to all clients.
    */
   rotateJwt(newAccessToken: string): void {
     this.dataClient.rotateAccessToken(newAccessToken);
     this.paidMediaClient.rotateAccessToken(newAccessToken);
+    this.templateClient.rotateAccessToken(newAccessToken);
     // Invalidate cached data that was scoped to the previous tenant
     this.dataClient.clearAllCaches();
     // Update activeTenantId to reflect the new JWT's tenant claim
