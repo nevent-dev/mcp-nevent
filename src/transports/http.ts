@@ -215,7 +215,6 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       },
       categories: ['marketing', 'analytics', 'crm', 'events'],
       tools_count: 43,
-      logo: 'https://nevent.ai/logos/nevent-mcp.svg',
     });
   });
 

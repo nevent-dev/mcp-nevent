@@ -31,7 +31,6 @@ const EXPECTED_MANIFEST = {
   },
   categories: ['marketing', 'analytics', 'crm', 'events'],
   tools_count: 43,
-  logo: 'https://nevent.ai/logos/nevent-mcp.svg',
 };
 
 describe('MCP Manifest', () => {
@@ -40,7 +39,7 @@ describe('MCP Manifest', () => {
       'name', 'displayName', 'description', 'version',
       'homepage', 'documentation', 'repository', 'license',
       'publisher', 'support', 'transport', 'endpoint',
-      'auth', 'categories', 'tools_count', 'logo',
+      'auth', 'categories', 'tools_count',
     ];
 
     for (const key of requiredKeys) {

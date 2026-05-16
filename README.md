@@ -381,10 +381,9 @@ All errors follow a structured format:
 
 ## Roadmap
 
-- Additional template operations (analyze performance, bulk import)
+- Additional template operations (AI analysis, bulk import)
 - Advanced audience builder (nested logic groups, multi-event sequences)
 - Webhook tool support
-- <!-- REVIEW: confirm if there are other roadmap items to surface publicly -->
 
 ---
 
