@@ -90,6 +90,14 @@ export interface ToolCallLogger {
    */
   logToolCall: (data: Omit<ToolCallDocument, 'timestamp' | 'date'>) => void;
   /**
+   * Warm up the MongoDB connection in the background (fire-and-forget).
+   *
+   * Call this during server initialization (without await) to pre-establish
+   * the MongoDB connection so the first tool call does not pay the ~200ms
+   * cold-start cost. Errors are silently suppressed — warm-up is best-effort.
+   */
+  warmUp: () => Promise<void>;
+  /**
    * Close the underlying MongoClient.
    * Call during graceful shutdown to flush pending operations.
    */
@@ -207,7 +215,22 @@ export function createToolCallLogger(mongoUri: string): ToolCallLogger {
     }
   }
 
-  return { logToolCall, close };
+  /**
+   * Warm up the MongoDB connection in the background.
+   *
+   * Calls `getCollection()` to pre-establish the connection and create indexes.
+   * Errors are silently suppressed — this is a best-effort optimization.
+   * Call without `await` (fire-and-forget) during server start.
+   */
+  async function warmUp(): Promise<void> {
+    try {
+      await getCollection();
+    } catch {
+      // Silently suppress — warm-up failures are non-fatal
+    }
+  }
+
+  return { logToolCall, warmUp, close };
 }
 
 // ---------------------------------------------------------------------------
