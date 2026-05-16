@@ -87,11 +87,19 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_get_campaign: 'READ',
   nevent_get_campaign_insights: 'READ',
 
-  // Sprint 2: Template tools
+  // Sprint 2: Template tools (read from MongoDB)
   nevent_list_templates: 'READ',
   nevent_get_template: 'READ',
   nevent_create_template: 'WRITE',
   nevent_update_template: 'WRITE',
+
+  // Sprint 3: Template operations (via nev-api)
+  // clone/rename/test → WRITE (create/modify resources or send real emails)
+  // preview → READ (renders server-side but mutates nothing)
+  nevent_clone_template: 'WRITE',
+  nevent_rename_template: 'WRITE',
+  nevent_preview_template: 'READ',
+  nevent_send_test_template: 'WRITE',
 
   // Sprint 2: Deliverability tools
   nevent_get_sending_profile: 'READ',

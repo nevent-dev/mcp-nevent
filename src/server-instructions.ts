@@ -18,7 +18,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - **Analytics (9 tools):** nevent_analytics_capabilities → nevent_analytics_table_schema → nevent_analytics_query | nevent_analytics_filter_values | nevent_campaign_report | nevent_segmentation_criteria | nevent_segment_preview | nevent_segment_execute | nevent_dimension_values
 - **Segments (4 tools):** nevent_list_segments | nevent_get_segment | nevent_create_segment | nevent_update_segment
 - **Campaigns (5 tools):** nevent_list_campaigns | nevent_get_campaign | nevent_get_campaign_insights | nevent_create_campaign | nevent_schedule_campaign
-- **Templates (4 tools):** nevent_list_templates | nevent_get_template | nevent_create_template | nevent_update_template
+- **Templates (8 tools):** nevent_list_templates | nevent_get_template | nevent_create_template | nevent_update_template | nevent_clone_template | nevent_rename_template | nevent_preview_template | nevent_send_test_template
 - **Deliverability (2 tools):** nevent_get_sending_profile | nevent_get_suppressions_summary
 - **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_get_paid_ad_group_insights
 - **Multi-tenant (3 tools):** nevent_list_tenants | nevent_switch_tenant | nevent_reset_tenant
