@@ -136,39 +136,62 @@ Affected tools: `nevent_paid_ads_health`, `nevent_get_paid_campaign_insights`, `
 
 ```
 src/
-├── index.ts                   # Entry point — stdio vs HTTP transport selection
-├── server.ts                  # MCP server factory (transport-agnostic)
+├── index.ts                        # Entry point — stdio vs HTTP transport selection
+├── server.ts                       # MCP server factory (transport-agnostic)
+├── server-instructions.ts          # Server-level LLM instructions (session init)
 ├── auth/
-│   ├── oauth-provider.ts      # OAuth 2.1 provider (login, token exchange, verification)
-│   ├── oauth-stores.ts        # MongoDB-backed OAuth stores (codes, tokens, clients)
-│   ├── token-service.ts       # JWT sign/verify with MCP_JWT_SECRET
-│   └── login-page.ts          # HTML login page renderer
+│   ├── oauth-provider.ts           # OAuth 2.1 provider (login, token exchange, verification)
+│   ├── oauth-stores.ts             # MongoDB-backed OAuth stores (codes, tokens, clients)
+│   ├── token-service.ts            # JWT sign/verify with MCP_JWT_SECRET
+│   └── login-page.ts               # HTML login page renderer
 ├── client/
-│   └── nevent-client.ts       # nev-api client (tenant listing)
+│   └── nevent-client.ts            # nev-api client (tenant listing)
 ├── clients/
-│   ├── base-client.ts         # Shared HTTP client (JWT auth, structured error handling)
-│   └── data-client.ts         # nev-data-api client (data.nevent.es)
+│   ├── base-client.ts              # Shared HTTP client (JWT auth, 401 auto-refresh, errors)
+│   ├── data-client.ts              # nev-data-api client (data.nevent.es) with TTL caches
+│   ├── paid-media-client.ts        # nev-api paid media endpoints client
+│   └── session-clients.ts          # Per-session aggregate (DataClient + PaidMediaClient)
 ├── config/
-│   └── operation-mode.ts      # READ_ONLY | STANDARD | FULL guard
+│   ├── operation-mode.ts           # READ_ONLY | STANDARD | FULL operation guard
+│   └── timeouts.ts                 # Centralised timeout constants (ms)
 ├── tools/
-│   ├── analytics.ts           # 8 analytics + segmentation tool registrations
-│   └── tenants.ts             # 2 multi-tenant tool registrations
+│   ├── analytics.ts                # 9 analytics + segmentation tool registrations
+│   ├── campaign-actions.ts         # 2 campaign write tools (create, schedule)
+│   ├── campaigns.ts                # 3 campaign read tools (list, get, insights)
+│   ├── deliverability.ts           # 2 deliverability tools (sending profile, suppressions)
+│   ├── help.ts                     # 1 meta-tool: nevent_help with topic-based guides
+│   ├── helpers.ts                  # Shared ok/err/toErrorEnvelope/checkMode utilities
+│   ├── logging.ts                  # Tool call telemetry logger (MongoDB mcp_tool_calls)
+│   ├── paid-media.ts               # 11 paid media tools (ads, campaigns, ad groups)
+│   ├── segments.ts                 # 4 segment tools (list, get, create, update)
+│   ├── templates.ts                # 4 template tools (list, get, create, update)
+│   └── tenants.ts                  # 3 multi-tenant tools (list, switch, reset)
 ├── transports/
-│   └── http.ts                # Express app, OAuth endpoints, per-session MCP lifecycle
+│   └── http.ts                     # Express app, OAuth endpoints, per-session MCP lifecycle
 ├── schemas/
-│   └── analytics.ts           # Zod validation schemas
+│   ├── analytics.ts                # Zod schemas for analytics + segmentation tools
+│   ├── campaign-actions.ts         # Zod schemas for campaign create/schedule
+│   ├── campaigns.ts                # Zod schemas for campaign read tools
+│   ├── deliverability.ts           # Zod schemas for deliverability tools
+│   ├── paid-media.ts               # Zod schemas for paid media tools
+│   ├── segments.ts                 # Zod schemas for segment tools
+│   └── templates.ts                # Zod schemas for template tools
 ├── tests/
-│   ├── error-format.test.ts
-│   ├── operation-mode.test.ts
-│   └── schemas.test.ts
+│   ├── data-client-caches.test.ts  # DataClient TTL cache behaviour
+│   ├── error-format.test.ts        # Error envelope structure
+│   ├── operation-mode.test.ts      # Operation mode guard
+│   ├── paid-media.test.ts          # Paid media tool handler tests
+│   ├── schemas.test.ts             # Zod schema validation
+│   ├── segments.test.ts            # Segment tool handler tests
+│   └── session-clients.test.ts     # JWT rotation + 401 auto-refresh tests
 └── types/
-    ├── analytics.ts            # BigQuery analytics types
-    ├── segmentation.ts         # Segmentation DSL types
-    └── common.ts               # Error format, pagination, HTTP types
+    ├── analytics.ts                # BigQuery analytics request/response types
+    ├── segmentation.ts             # Segmentation DSL types
+    └── common.ts                   # Error format, pagination, HTTP response types
 
 infra/
-├── task-definition.json       # ECS Fargate task definition
-└── setup.sh                   # AWS resource provisioning script
+├── task-definition.json            # ECS Fargate task definition
+└── setup.sh                        # AWS resource provisioning script
 ```
 
 ---
