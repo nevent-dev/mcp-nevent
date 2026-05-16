@@ -21,7 +21,9 @@ npm run dev
 
 ---
 
-## Available Tools (21+)
+## Available Tools (38)
+
+### Analytics & Segmentation (always registered)
 
 | Tool | Category | Description |
 |------|----------|-------------|
@@ -29,14 +31,40 @@ npm run dev
 | `nevent_analytics_table_schema` | Analytics | Get column definitions for a specific table (requires ADMIN role). |
 | `nevent_analytics_query` | Analytics | Query a BigQuery collection with dimensions, metrics, filters, time ranges. |
 | `nevent_analytics_filter_values` | Analytics | Get distinct field values to build valid analytics filters. |
+| `nevent_campaign_report` | Analytics | Comprehensive campaign performance report — 13 parallel queries in one call. |
 | `nevent_segmentation_criteria` | Segmentation | List all criteria available for building audience segments. |
 | `nevent_dimension_values` | Segmentation | Autocomplete values for a segmentation criterion. |
 | `nevent_segment_preview` | Segmentation | Preview estimated audience size without saving (always call before execute). |
 | `nevent_segment_execute` | Segmentation | Execute a segment and get paginated matching contacts. |
+| `nevent_help` | Meta | In-session guidance by topic (workflows, errors, tenants, analytics…). |
+
+### Multi-tenant + Segment Management (requires `NEVENT_API_URL`)
+
+| Tool | Category | Description |
+|------|----------|-------------|
 | `nevent_list_tenants` | Multi-tenant | List all tenants accessible to the authenticated user. |
 | `nevent_switch_tenant` | Multi-tenant | Set the active tenant for this MCP session. |
+| `nevent_reset_tenant` | Multi-tenant | Restore home tenant after a cross-tenant operation (SUPERADMIN). |
+| `nevent_list_segments` | Segments | List saved segments for the active tenant. |
+| `nevent_get_segment` | Segments | Get full filter definition and metadata for a segment. |
+| `nevent_create_segment` | Segments | Create and persist a new audience segment. |
+| `nevent_update_segment` | Segments | Modify an existing segment's name or filter definition. |
 
-All tools listed above are read-only. The last two are only registered in HTTP mode (where per-session auth enables tenant switching).
+### Campaign & Template Tools (requires `MONGODB_URI`)
+
+| Tool | Category | Description |
+|------|----------|-------------|
+| `nevent_list_campaigns` | Campaigns | List campaigns with status, channel, and engagement metrics. |
+| `nevent_get_campaign` | Campaigns | Full campaign detail: content, metrics, tracked links. |
+| `nevent_get_campaign_insights` | Campaigns | AI-generated insights and anomalies for a campaign. |
+| `nevent_create_campaign` | Campaigns | Create a new campaign draft (EMAIL/SMS/WhatsApp). |
+| `nevent_schedule_campaign` | Campaigns | Schedule a draft campaign for delivery (destructive — requires `confirmed=true`). |
+| `nevent_list_templates` | Templates | List email templates for the active tenant. |
+| `nevent_get_template` | Templates | Full template content: MJML/HTML source, subject, usage metrics. |
+| `nevent_create_template` | Templates | Create a new email template. |
+| `nevent_update_template` | Templates | Update an existing email template's content or tags. |
+| `nevent_get_sending_profile` | Deliverability | Sender domain validation and warm-up status. |
+| `nevent_get_suppressions_summary` | Deliverability | Suppressions summary with 30-day trend and reason breakdown. |
 
 ---
 
@@ -225,6 +253,74 @@ Tenant switching is session-scoped. Because each HTTP session has its own `DataC
 
 ADMIN users can call `nevent_switch_tenant` but subsequent queries will fail if the target tenant differs from their own.
 
+### Tenant Switching Contract
+
+This section documents the exact behaviour of tenant management tools for SUPERADMIN users who work across multiple tenants.
+
+**When you call `nevent_switch_tenant`:**
+
+1. The MCP server calls `POST /users/tenant` on nev-api with `{ tenantId }`.
+2. nev-api validates that the JWT holder has access to the target tenant and returns a **new access token + refresh token** scoped to the new tenant.
+3. The MCP server updates the JWT in both `DataClient` (for analytics) and `PaidMediaClient` (for paid media) **atomically**.
+4. All in-memory caches (capabilities, segmentation criteria) are **invalidated** — subsequent calls will fetch fresh data for the new tenant context.
+5. `activeTenantId` is updated from the new JWT's `tenantId` claim.
+
+**When you call `nevent_reset_tenant`:**
+
+1. The MCP server reads `homeTenantId` — the tenant ID captured from the original JWT at session creation time.
+2. It calls `POST /users/tenant` with `{ tenantId: homeTenantId }` to restore the original context.
+3. Same cache invalidation and JWT rotation as `nevent_switch_tenant`.
+4. If `homeTenantId` is not available (e.g. the original JWT had no `tenantId` claim), the tool returns an error.
+
+**Invariants:**
+- Tenant context is **session-scoped** — switching in one session does not affect any other user.
+- The JWT rotation is atomic — if the nev-api call fails, neither client is updated.
+- The tool response includes the new `active_tenant_id` so the agent can verify the switch succeeded.
+
+---
+
+## Common Workflows
+
+### Analytics: querying event data
+
+```
+1. nevent_analytics_capabilities      → discover available tables
+2. nevent_analytics_table_schema      → get exact column names for your table
+3. nevent_analytics_filter_values     → get valid values for filter fields
+4. nevent_analytics_query             → run the query
+```
+
+### Segmentation: build and preview an audience
+
+```
+1. nevent_segmentation_criteria       → list available criterion_ids and operators
+2. nevent_dimension_values            → autocomplete criterion values (e.g. event IDs)
+3. nevent_segment_preview             → validate audience size before saving
+4. nevent_create_segment              → persist the segment
+```
+
+### Campaign: create and schedule a send
+
+```
+1. nevent_get_sending_profile         → verify sender domain is validated
+2. nevent_get_suppressions_summary    → check suppression rate (warn if > 2%)
+3. nevent_list_segments               → pick target audience (get segment_id)
+4. nevent_segment_preview             → confirm audience count with user
+5. nevent_list_templates              → pick email template (get template_id)
+6. nevent_get_template                → inspect template content before sending
+7. nevent_create_campaign             → create DRAFT (no messages sent yet)
+8. nevent_schedule_campaign           → schedule delivery (confirmed=true required)
+```
+
+### Performance analysis: how did a campaign perform?
+
+```
+1. nevent_list_campaigns              → find the campaign (filter by date/status)
+2. nevent_get_campaign                → get full metrics (opens, clicks, bounces)
+3. nevent_get_campaign_insights       → AI recommendations and anomaly detection
+4. nevent_campaign_report             → deep analytics with 13 parallel queries
+```
+
 ---
 
 ## Configuration
@@ -354,17 +450,48 @@ npm run dev
 
 ## Workflow Tips
 
-For analytics queries:
-1. Call `nevent_analytics_capabilities` to see available tables.
-2. Call `nevent_analytics_table_schema` for a specific table to see column names.
-3. Call `nevent_analytics_filter_values` to see valid filter values.
-4. Call `nevent_analytics_query` with the correct field names.
+See the [Common Workflows](#common-workflows) section above for step-by-step guidance on analytics, segmentation, and campaign creation.
 
-For segmentation:
-1. Call `nevent_segmentation_criteria` to see available criteria and operators.
-2. Call `nevent_dimension_values` with a `criterion_id` to see valid values.
-3. Call `nevent_segment_preview` to validate your segment definition.
-4. Call `nevent_segment_execute` to get the full paginated contact list.
+You can also call the `nevent_help` tool from within a session to get the same guidance in-context:
+
+```
+nevent_help()                        → index of all topics
+nevent_help({ topic: "workflows" })  → common workflow chains
+nevent_help({ topic: "errors" })     → error code reference
+nevent_help({ topic: "tenants" })    → tenant switching guidance
+```
+
+---
+
+## Observability
+
+See [docs/observability.md](docs/observability.md) for:
+
+- MongoDB `mcp_tool_calls` collection schema and TTL indexes
+- Useful aggregation queries (top tools, error rates, latency P95, response size)
+- Audit log format for write operations
+- Error code reference
+
+---
+
+## Error Codes Glossary
+
+All tool errors return a machine-readable `code` field for programmatic handling.
+
+| Code | Type | Meaning | Recovery |
+|------|------|---------|----------|
+| `invalid_token` | `authentication_error` | JWT missing, expired, or malformed | Re-authenticate; check `NEVENT_JWT_TOKEN` |
+| `forbidden` | `authentication_error` | Insufficient role (ADMIN / SUPERADMIN required) | Use an account with the required role |
+| `not_found` | `not_found` | Resource does not exist or belongs to another tenant | Verify the ID; check active tenant |
+| `rate_limit_exceeded` | `rate_limit_error` | Too many requests — `param` contains retry-after seconds | Wait and retry |
+| `server_error` | `api_error` | nev-api 5xx — transient upstream error | Retry after exponential backoff |
+| `network_error` | `api_error` | Could not reach nev-api (timeout or DNS failure) | Check connectivity; verify `NEVENT_API_URL` |
+| `segment_not_found` | `not_found` | Segment ID not found in active tenant | Verify ID with `nevent_list_segments` |
+| `invalid_segment_definition` | `invalid_request` | Segment DSL validation failed | Check criterion_ids against `nevent_segmentation_criteria` |
+| `missing_update_fields` | `invalid_request` | Update call with no fields to change | Provide at least one of name or definition |
+| `tenant_required` | `invalid_request` | Tool requires active tenant | Call `nevent_switch_tenant` first |
+| `operation_mode_blocked` | `invalid_request` | Write tool called in READ_ONLY mode | Set `NEVENT_OPERATION_MODE=STANDARD` or `FULL` |
+| `feature_gate_not_enrolled` | `not_found` | Tenant not enrolled in provider insights pilot | Contact admin to enable `MODULE_ATTRIBUTION` |
 
 ---
 
