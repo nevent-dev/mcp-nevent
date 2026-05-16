@@ -39,10 +39,9 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { NeventApiError } from '../clients/base-client.js';
 import type { SessionClients } from '../clients/session-clients.js';
-import type { NeventErrorEnvelope } from '../types/common.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { ok, err, toErrorEnvelope } from './helpers.js';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -62,59 +61,6 @@ interface TenantRecord {
   /** Parent tenant ID (for hierarchical tenants). */
   parentId?: string;
   [key: string]: unknown;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Wrap a result object as an MCP text content block.
- * Success responses are NOT pretty-printed to save LLM tokens.
- *
- * @param result — The result object to serialize.
- */
-function ok(result: unknown): { content: Array<{ type: 'text'; text: string }> } {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(result) }],
-  };
-}
-
-/**
- * Wrap a `NeventErrorEnvelope` as an MCP error content block.
- * Errors ARE pretty-printed to aid human debugging.
- *
- * @param envelope — The structured error envelope to serialize.
- */
-function err(
-  envelope: NeventErrorEnvelope
-): { content: Array<{ type: 'text'; text: string }>; isError: true } {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
-    isError: true,
-  };
-}
-
-/**
- * Convert any caught error to a `NeventErrorEnvelope`.
- *
- * @param caught — The value thrown from an async handler.
- */
-function toErrorEnvelope(caught: unknown): NeventErrorEnvelope {
-  if (caught instanceof NeventApiError) {
-    return { error: caught.neventError };
-  }
-  const message =
-    caught instanceof Error
-      ? caught.message
-      : `Unexpected error: ${String(caught)}`;
-  return {
-    error: {
-      type: 'api_error',
-      message,
-      code: 'unexpected_error',
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
