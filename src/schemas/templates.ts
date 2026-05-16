@@ -507,4 +507,23 @@ export const SendTestTemplateSchema = {
       'Optional user email within the active tenant for merge-tag personalization. ' +
       'Ignored when sample_user_id is also provided.'
     ),
+
+  /**
+   * Optional custom parameters for merge-tag substitution in the test email.
+   * Key-value pairs where keys match merge tag names defined in the template.
+   * When provided, overrides sample user profile data for the corresponding tags.
+   *
+   * @example
+   * ```ts
+   * parameters: { name: 'Juan', city: 'Madrid', discount: '20%' }
+   * ```
+   */
+  parameters: z
+    .record(z.unknown())
+    .optional()
+    .describe(
+      'Optional custom parameters for merge-tag substitution in the test email. ' +
+      'Key-value pairs where keys match merge tag names. Example: {name: "Juan", city: "Madrid"}. ' +
+      'When provided, overrides sample user profile data for the corresponding tags.'
+    ),
 };

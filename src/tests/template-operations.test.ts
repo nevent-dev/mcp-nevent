@@ -277,6 +277,21 @@ describe('Template operation Zod schemas', () => {
     const exactly10 = Array.from({ length: 10 }, (_, i) => `user${i}@example.com`);
     expect(schema.safeParse({ template_id: 'abc', emails: exactly10 }).success).toBe(true);
   });
+
+  it('SendTestTemplateSchema accepts optional parameters as record', () => {
+    const schema = z.object(SendTestTemplateSchema);
+    // With parameters — accepts any key-value pairs
+    expect(schema.safeParse({
+      template_id: 'abc',
+      emails: ['qa@example.com'],
+      parameters: { name: 'Juan', city: 'Madrid', count: 42 },
+    }).success).toBe(true);
+    // Without parameters — still valid
+    expect(schema.safeParse({
+      template_id: 'abc',
+      emails: ['qa@example.com'],
+    }).success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -699,6 +714,37 @@ describe('nevent_send_test_template', () => {
     // 2 fetch calls: original + 1 retry attempt (then fails because refresh returns null)
     expect(callCount).toBeGreaterThanOrEqual(1);
     expect(result).toBeDefined();
+  });
+
+  it('sends parameters in request body when provided (STANDARD/FULL only)', async () => {
+    if (!isWriteAllowed) return; // blocked by mode guard — fetch never called
+    let capturedBody: unknown;
+    const server = await setupTemplateTools(async (_url, init) => {
+      capturedBody = JSON.parse((init?.body as string) ?? '{}');
+      return mockFetchOk(MOCK_TEST_RESULT);
+    });
+    await server.invoke('nevent_send_test_template', {
+      template_id: 'abc',
+      emails: ['qa@example.com'],
+      parameters: { name: 'Juan', city: 'Madrid' },
+    });
+    // parameters must be forwarded verbatim to the wire body
+    expect((capturedBody as Record<string, unknown>)?.parameters).toEqual({ name: 'Juan', city: 'Madrid' });
+  });
+
+  it('omits parameters from body when not provided (STANDARD/FULL only)', async () => {
+    if (!isWriteAllowed) return; // blocked by mode guard — fetch never called
+    let capturedBody: unknown;
+    const server = await setupTemplateTools(async (_url, init) => {
+      capturedBody = JSON.parse((init?.body as string) ?? '{}');
+      return mockFetchOk(MOCK_TEST_RESULT);
+    });
+    await server.invoke('nevent_send_test_template', {
+      template_id: 'abc',
+      emails: ['qa@example.com'],
+    });
+    // parameters must NOT appear in the body when caller did not supply it
+    expect((capturedBody as Record<string, unknown>)?.parameters).toBeUndefined();
   });
 });
 
