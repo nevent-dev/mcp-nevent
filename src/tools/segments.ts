@@ -152,7 +152,7 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_list_segments',
-    'List audience segments for the active tenant with names, sizes, and last execution dates.',
+    'Call this FIRST when you need to build or target an audience. Returns all saved segments for the active tenant: id, name, estimated contact count, and last-execution date. Use the returned segment ids to call nevent_get_segment (for the filter definition), nevent_segment_preview (to verify the audience), or nevent_create_campaign (to send a campaign to that segment).',
     ListSegmentsSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
@@ -213,7 +213,7 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_get_segment',
-    'Get full details of a segment including its filter definition, estimated size, and metadata.',
+    'Retrieve the complete filter definition of a specific segment (criteria stanzas, operators, values) along with its estimated contact count and metadata. Call this after nevent_list_segments when you need to inspect, clone, or explain a segment\'s logic. Next step: nevent_segment_preview to count the audience, or nevent_update_segment to modify the definition.',
     GetSegmentSchema,
     { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -276,14 +276,14 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_create_segment',
-    'Create a new audience segment. Requires name + definition DSL. ' +
+    'Create and persist a new audience segment from a filter definition. ' +
+    'PREREQUISITE: call nevent_segmentation_criteria first to discover valid criterion_ids and operators. ' +
     'MANDATORY RULES: ' +
-    '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings (e.g. value: "EVENT_ID" or value: ["EVENT_1","EVENT_2"]). ' +
-    '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
-    '(3) Only include criterion_id, operator, value in criteria — omit id, timeframe, type fields. ' +
-    'Call nevent_segmentation_criteria first to discover valid criterion_ids. ' +
-    'KNOWN LIMITATION: Do NOT combine attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the SAME stanza. Put them in SEPARATE stanzas. ' +
-    'Example: { name: "VIPs at event", definition: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] } }.',
+    '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings — e.g. value: "EVENT_ID" or value: ["E1","E2"]. ' +
+    '(2) Omit modifiers unless the user explicitly requests frequency/recency filtering; if included, time_range.value MUST be > 0. ' +
+    '(3) Criteria fields: only criterion_id, operator, value — omit id, timeframe, type. ' +
+    '(4) KNOWN LIMITATION: do NOT mix attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the same stanza — put them in separate stanzas. ' +
+    'After creation, call nevent_segment_preview to count the audience, then nevent_create_campaign to send to this segment.',
     CreateSegmentSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -370,7 +370,7 @@ export function registerSegmentTools(
 
   server.tool(
     'nevent_update_segment',
-    'Update an existing segment\'s name or filter definition.',
+    'Modify an existing segment\'s name and/or filter definition. Call this after nevent_get_segment to inspect the current definition before changing it. At least one of name or definition must be provided. After update, call nevent_segment_preview to confirm the new audience count before scheduling a campaign.',
     UpdateSegmentSchema,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
