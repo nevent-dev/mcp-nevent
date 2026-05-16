@@ -123,10 +123,9 @@ export function registerTenantTools(
     async (_params) => {
       try {
         // Call nev-api GET /tenants using the DataClient's JWT token.
-        // We reach into the protected jwtToken via a cast because the tenant
-        // list endpoint is on nev-api, not nev-data-api, but they share the
-        // same bearer token (the user's nev-api JWT).
-        const jwtToken = (sessionClients.dataClient as unknown as { jwtToken: string }).jwtToken;
+        // The tenant list endpoint is on nev-api, not nev-data-api, but they
+        // share the same bearer token (the user's nev-api JWT).
+        const jwtToken = sessionClients.dataClient.getJwtToken();
 
         // Try /platform/tenants first (SUPERADMIN — returns all tenants).
         // If 403, fall back to /users/accessible-tenants (ADMIN/OWNER — returns hierarchy).
@@ -234,7 +233,7 @@ export function registerTenantTools(
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       try {
-        const jwtToken = (sessionClients.dataClient as unknown as { jwtToken: string }).jwtToken;
+        const jwtToken = sessionClients.dataClient.getJwtToken();
 
         // Call POST /users/tenant to get a NEW JWT for the target tenant.
         // This is the same endpoint the admin panel uses when switching tenants.
@@ -321,7 +320,7 @@ export function registerTenantTools(
           });
         }
 
-        const jwtToken = (sessionClients.dataClient as unknown as { jwtToken: string }).jwtToken;
+        const jwtToken = sessionClients.dataClient.getJwtToken();
 
         // Call the same endpoint as switch_tenant but with the home tenant ID
         const response = await fetch(`${neventApiUrl}/users/tenant`, {
