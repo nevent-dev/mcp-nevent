@@ -27,6 +27,13 @@ export interface BaseClientConfig {
   jwtToken: string;
   /** Optional request timeout in milliseconds. Default: 30 000. */
   timeoutMs?: number;
+  /**
+   * Optional callback invoked when the server returns HTTP 401.
+   * Should attempt to refresh the access token and return the new token
+   * string, or `null` if refresh failed (expired, no refresh token, etc.).
+   * When `null` is returned the original 401 error is propagated.
+   */
+  onUnauthorized?: () => Promise<string | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,13 +72,42 @@ export class NeventApiError extends Error {
  */
 export class BaseClient {
   protected readonly baseUrl: string;
-  protected readonly jwtToken: string;
+  protected jwtToken: string;
   protected readonly timeoutMs: number;
+  private onUnauthorized?: () => Promise<string | null>;
 
   constructor(config: BaseClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.jwtToken = config.jwtToken;
     this.timeoutMs = config.timeoutMs ?? 30_000;
+    this.onUnauthorized = config.onUnauthorized;
+  }
+
+  /**
+   * Register (or replace) the callback that is invoked when the server
+   * responds with HTTP 401.  Calling this after construction allows
+   * `SessionClients` to wire the refresh callback without a circular
+   * dependency — clients are constructed first, then the callback is
+   * injected once the session holder exists.
+   *
+   * @param cb - Async function that attempts a token refresh and returns the
+   *             new access token string, or `null` on failure.
+   */
+  setOnUnauthorized(cb: () => Promise<string | null>): void {
+    this.onUnauthorized = cb;
+  }
+
+  /**
+   * Update the JWT bearer token on this client.
+   *
+   * Prefer using `SessionClients.rotateJwt()` which keeps both clients in
+   * sync. This public method is exposed so `SessionClients` can rotate the
+   * token without resorting to `as unknown as` casts.
+   *
+   * @param token - The new JWT access token.
+   */
+  public rotateAccessToken(token: string): void {
+    this.jwtToken = token;
   }
 
   // -------------------------------------------------------------------------
@@ -101,6 +137,12 @@ export class BaseClient {
       params?: Record<string, QueryParamValue>;
       /** Skip the Authorization header (for public endpoints). */
       skipAuth?: boolean;
+      /**
+       * Internal flag — set to `true` on the retry after a successful token
+       * refresh to prevent infinite 401 loops.
+       * @internal
+       */
+      _isRetry?: boolean;
     } = {}
   ): Promise<HttpResponse<T>> {
     const url = this.buildUrl(path, options.params);
@@ -138,6 +180,22 @@ export class BaseClient {
 
     // Parse body regardless of status — errors may include useful info
     const rawBody = await this.parseBody(response);
+
+    // -------------------------------------------------------------------------
+    // Auto-refresh on 401
+    //
+    // When the server returns 401 and an onUnauthorized callback is registered,
+    // attempt a token refresh exactly once. A second 401 on the retry means
+    // the refreshed token is also invalid — propagate the error without looping.
+    // -------------------------------------------------------------------------
+    if (response.status === 401 && this.onUnauthorized && !options._isRetry) {
+      const newToken = await this.onUnauthorized();
+      if (newToken) {
+        this.jwtToken = newToken;
+        return this.request<T>(method, path, { ...options, _isRetry: true });
+      }
+      // Refresh failed — fall through and throw the original 401 error
+    }
 
     if (!response.ok) {
       throw this.buildApiError(response.status, rawBody, path);

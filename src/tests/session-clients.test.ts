@@ -194,4 +194,135 @@ describe('SessionClients', () => {
       expect(dc.activeTenantId).toBe('tenant_other');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // W2 — auto-refresh on 401 via onUnauthorized callback
+  // ---------------------------------------------------------------------------
+
+  describe('auto-refresh on 401 (onUnauthorized wiring)', () => {
+    /**
+     * Build a mock Response that looks like a fetch Response with the given
+     * status and optional JSON body.
+     */
+    function mockResponse(status: number, body?: unknown): Response {
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: () => (body !== undefined ? 'application/json' : null) },
+        json: async () => body,
+        text: async () => '',
+      } as unknown as Response;
+    }
+
+    it('retries request with new token when 401 + refresh succeeds', async () => {
+      const dc = makeDataClient('old-jwt', 'tenant_home');
+      const pmc = makePaidMediaClient('old-jwt');
+      const newAccess = fakeJwt({ tenantId: 'tenant_home' });
+
+      // Seed a refresh token so refreshAccessToken() can proceed
+      const sc = new SessionClients(dc, pmc, 'https://api.nevent.es', 'tenant_home', 'rt-initial');
+
+      // fetch: first call → 401, second call (token refresh) → 200 with new token,
+      // third call (retry of original) → 200 with data
+      const mockFetch = vi.fn()
+        // First: original request → 401
+        .mockResolvedValueOnce(mockResponse(401))
+        // Second: POST /auth/refresh → success
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ access_token: newAccess, refresh_token: 'rt-v2' }),
+        } as unknown as Response)
+        // Third: retry of original request → 200 with data
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ tables: [], count: 0 }),
+        } as unknown as Response);
+
+      vi.stubGlobal('fetch', mockFetch);
+
+      const result = await dc.getCapabilities();
+
+      // The retry should have succeeded and returned the data
+      expect(result).toEqual({ tables: [], count: 0 });
+      // fetch was called 3 times: original + refresh + retry
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('propagates 401 when refresh returns null (no refresh token)', async () => {
+      const dc = makeDataClient('old-jwt', 'tenant_home');
+      const pmc = makePaidMediaClient('old-jwt');
+
+      // No refresh token → refreshAccessToken() returns null
+      const _sc = new SessionClients(dc, pmc, 'https://api.nevent.es', 'tenant_home');
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse(401)));
+
+      await expect(dc.getCapabilities()).rejects.toThrow();
+      // Only 1 fetch call — no retry since refresh returned null
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a second time when refreshed token also returns 401', async () => {
+      const dc = makeDataClient('old-jwt', 'tenant_home');
+      const pmc = makePaidMediaClient('old-jwt');
+      const newAccess = fakeJwt({ tenantId: 'tenant_home' });
+
+      const sc = new SessionClients(dc, pmc, 'https://api.nevent.es', 'tenant_home', 'rt-initial');
+
+      const mockFetch = vi.fn()
+        // First: original request → 401
+        .mockResolvedValueOnce(mockResponse(401))
+        // Second: POST /auth/refresh → success (gives us a new token)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ access_token: newAccess, refresh_token: 'rt-v2' }),
+        } as unknown as Response)
+        // Third: retry with new token → still 401 (token is bad)
+        .mockResolvedValueOnce(mockResponse(401));
+
+      vi.stubGlobal('fetch', mockFetch);
+
+      // Should reject — no infinite loop
+      await expect(dc.getCapabilities()).rejects.toThrow();
+      // fetch called exactly 3 times: original + refresh + retry (no further retries)
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('updates jwtToken on both clients after successful refresh', async () => {
+      const dc = makeDataClient('old-jwt', 'tenant_home');
+      const pmc = makePaidMediaClient('old-jwt');
+      const newAccess = fakeJwt({ tenantId: 'tenant_home' });
+
+      const _sc = new SessionClients(dc, pmc, 'https://api.nevent.es', 'tenant_home', 'rt-initial');
+
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce(mockResponse(401))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ access_token: newAccess, refresh_token: 'rt-v2' }),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ tables: [], count: 0 }),
+        } as unknown as Response);
+
+      vi.stubGlobal('fetch', mockFetch);
+
+      await dc.getCapabilities();
+
+      // Both clients should now carry the refreshed token
+      expect((dc as unknown as { jwtToken: string }).jwtToken).toBe(newAccess);
+      expect((pmc as unknown as { jwtToken: string }).jwtToken).toBe(newAccess);
+    });
+  });
 });

@@ -8,7 +8,8 @@
  *
  * Additionally, `SessionClients` stores the `refreshToken` captured during
  * login / initial OAuth exchange and implements a `refreshAccessToken()` helper
- * that can be registered as an `onUnauthorized` callback inside both clients.
+ * that is registered as the `onUnauthorized` callback inside both clients via
+ * `wireAuthRefresh()`, which is called at the end of the constructor.
  *
  * ## Tenant reset
  *
@@ -114,6 +115,23 @@ export class SessionClients {
     this.neventApiUrl = neventApiUrl;
     this.homeTenantId = homeTenantId;
     this.refreshToken = refreshToken;
+
+    // Wire the token-refresh callback into both clients so that a 401 response
+    // automatically triggers a refresh attempt and a transparent retry.
+    this.wireAuthRefresh();
+  }
+
+  /**
+   * Register `refreshAccessToken` as the `onUnauthorized` callback on both
+   * clients.  Called once from the constructor so that HTTP 401 responses
+   * transparently trigger a token refresh and a single retry.
+   *
+   * Separated from the constructor body for readability and testability.
+   */
+  private wireAuthRefresh(): void {
+    const cb = () => this.refreshAccessToken();
+    this.dataClient.setOnUnauthorized(cb);
+    this.paidMediaClient.setOnUnauthorized(cb);
   }
 
   // -------------------------------------------------------------------------
@@ -130,8 +148,8 @@ export class SessionClients {
    * @param newAccessToken - The new bearer JWT to apply to both clients.
    */
   rotateJwt(newAccessToken: string): void {
-    (this.dataClient as unknown as { jwtToken: string }).jwtToken = newAccessToken;
-    (this.paidMediaClient as unknown as { jwtToken: string }).jwtToken = newAccessToken;
+    this.dataClient.rotateAccessToken(newAccessToken);
+    this.paidMediaClient.rotateAccessToken(newAccessToken);
     // Invalidate cached data that was scoped to the previous tenant
     this.dataClient.clearAllCaches();
     // Update activeTenantId to reflect the new JWT's tenant claim
