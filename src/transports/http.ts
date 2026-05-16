@@ -353,10 +353,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           sessionHomeTenantId = claims.tenantId ?? undefined;
 
           // Use the MCP bearer token directly for data-api calls.
-          // The MCP token shares the same JWT secret as nev-api and has a 24h TTL,
-          // while the nev-api access_token stored during OAuth login expires in only
-          // 10 minutes (jwt.access-token-expiration=600000 in production).
-          // data.nevent.es accepts both token types via CustomAuthenticationFilter.
+          // The MCP token shares the same JWT secret as the upstream API and has a 24h TTL,
+          // while the upstream access_token stored during OAuth login expires in only
+          // 10 minutes (short expiry by design).
+          // data.nevent.es accepts both token types via the upstream API's authentication filter.
           const effectiveToken = bearerToken;
 
           sessionDataClient = new DataClient(

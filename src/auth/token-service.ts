@@ -9,19 +9,19 @@
  * - **Access tokens**: HS256-signed JWTs, 1-hour expiry.
  *   Payload: `{ sub, email, role, tenantId, clientId, scopes, aud?, type: 'access_token', iss: 'https://nevent.es' }`.
  *   The `iss`, `type`, `sub`, `email`, `role`, and `tenantId` claims mirror
- *   nev-api's `TokenUtils.java` so that nev-api's `CustomAuthenticationFilter`
+ *   the upstream Nevent API's token conventions so that the upstream API's authentication filter
  *   can validate these tokens. The `type` value `mcp_access_token` is a new
  *   discriminator that distinguishes MCP tokens from regular `access_token`
- *   and `refresh_token` types used internally by nev-api.
+ *   and `refresh_token` types used internally by the upstream API.
  *
  * - **Refresh tokens**: Opaque random UUIDs stored in MongoDB. Not JWTs.
  *   This avoids exposing refresh-token metadata in the token itself and makes
  *   revocation trivially reliable (hard delete from MongoDB).
  *
- * ## Secret sharing with nev-api
+ * ## Secret sharing with the upstream API
  *
- * The JWT is signed with `MCP_JWT_SECRET`. For nev-api to be able to validate
- * MCP access tokens, this secret must equal nev-api's `jwt.secret.key`
+ * The JWT is signed with `MCP_JWT_SECRET`. For the upstream Nevent API to be able to validate
+ * MCP access tokens, this secret must equal the upstream API's JWT signing key
  * application property. In production, both services should read this value
  * from the same AWS Secrets Manager entry.
  *
@@ -53,14 +53,14 @@ export interface AccessTokenClaims {
   aud?: string;
   /**
    * Token type discriminator.
-   * Value `mcp_access_token` distinguishes from nev-api's `access_token` and
-   * `refresh_token` types. nev-api's `CustomAuthenticationFilter` checks
+   * Value `mcp_access_token` distinguishes from the upstream API's `access_token` and
+   * `refresh_token` types. The upstream API's authentication filter checks
    * this field when validating tokens.
    */
   type: 'access_token';
   /**
-   * Issuer. Must be `https://nevent.es` to match nev-api's expected issuer
-   * in `CustomAuthenticationFilter`.
+   * Issuer. Must be `https://nevent.es` to match the upstream API's expected issuer
+   * in the authentication filter.
    */
   iss: string;
   /** Expiry (unix seconds) — standard JWT claim. */
@@ -92,9 +92,9 @@ export interface GeneratedRefreshToken {
 /**
  * Stateless service for creating and verifying MCP OAuth JWT access tokens.
  *
- * Token claims are aligned with nev-api's `TokenUtils.java` conventions so
- * that the same JWT secret can be shared between the MCP server and nev-api,
- * enabling nev-api's `CustomAuthenticationFilter` to validate MCP tokens.
+ * Token claims are aligned with the upstream Nevent API's token conventions so
+ * that the same JWT secret can be shared between the MCP server and the upstream API,
+ * enabling the upstream API's authentication filter to validate MCP tokens.
  *
  * @example
  * ```ts
@@ -117,15 +117,15 @@ export class TokenService {
   static readonly ACCESS_TOKEN_TTL_SECONDS = 86400; // 24 hours
 
   /**
-   * JWT issuer — must match nev-api's expected issuer in
-   * `CustomAuthenticationFilter` (`https://nevent.es`).
+   * JWT issuer — must match the upstream API's expected issuer
+   * in the authentication filter (`https://nevent.es`).
    */
   static readonly ISSUER = 'https://nevent.es';
 
   /**
    * @param jwtSecret - HS256 signing key from `MCP_JWT_SECRET`.
    *   Must be at least 32 characters long in production.
-   *   Should equal nev-api's `jwt.secret.key` for cross-service validation.
+   *   Should equal the upstream API's JWT signing key for cross-service validation.
    */
   constructor(jwtSecret: string) {
     this.secret = jwtSecret;

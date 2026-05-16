@@ -232,19 +232,19 @@ ChatGPT / Claude.ai
 ### Layer 2 — nev-api JWT (MCP server to data.nevent.es)
 
 - When the user logs in through the OAuth flow, the MCP server calls `POST /auth/admin/login` on nev-api.
-- nev-api returns an `access_token` signed with its own secret (`jwt.secret.key`).
+- nev-api returns an `access_token` signed with the upstream API's JWT signing key.
 - The MCP server stores this token in the user's refresh token document in MongoDB.
 - Every subsequent MCP tool call uses this stored token to call `data.nevent.es` on behalf of the user.
 - Each session has its own token — there is no shared service account. This provides complete tenant isolation.
 
 ### Why two separate secrets
 
-| | MCP_JWT_SECRET | jwt.secret.key (nev-api) |
+| | MCP_JWT_SECRET | Upstream API JWT signing key |
 |---|---|---|
-| Owned by | MCP server | nev-api |
-| Signs | MCP access tokens | nev-api access tokens |
-| Stored in | AWS Secrets Manager | nev-api environment |
-| Protects | /mcp endpoints | data.nevent.es + all nev-api endpoints |
+| Owned by | MCP server | Upstream Nevent API |
+| Signs | MCP access tokens | Upstream API access tokens |
+| Stored in | AWS Secrets Manager | Upstream API environment |
+| Protects | /mcp endpoints | data.nevent.es + all upstream API endpoints |
 
 The keys do **not** need to match. Keeping them independent means: if one is compromised, the other layer remains secure.
 
