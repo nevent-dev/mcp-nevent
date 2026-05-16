@@ -174,7 +174,7 @@ Use the [issue templates](.github/ISSUE_TEMPLATE/) to report bugs, request
 features, or ask questions.
 
 For security vulnerabilities, do **not** open a public issue. See
-[SECURITY.md](SECURITY.md) instead.
+[SECURITY.md](SECURITY.md) instead or email support@nevent.ai.
 
 ---
 
