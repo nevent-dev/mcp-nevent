@@ -184,16 +184,38 @@ const HELP_CAMPAIGNS = `
 const HELP_TEMPLATES = `
 # Template Tools Guide
 
-## Tools
-- nevent_list_templates(tags?, content_nature?, limit?) — list email templates
-- nevent_get_template(template_id) — full template with performance metrics
-- nevent_create_template(name, subject, htmlContent, ...) — create template (WRITE)
-- nevent_update_template(template_id, ...) — update template fields (WRITE)
+## Tools (8 total)
+
+### Read / Discovery
+- nevent_list_templates(tags?, content_nature?, limit?) — list email templates for the active tenant
+- nevent_get_template(template_id) — full template with MJML/HTML source and performance metrics
+
+### Create / Modify content
+- nevent_create_template(name, format, mjml_body|html_body, tags?) — create new template (WRITE)
+- nevent_update_template(template_id, name?, format?, mjml_body?, html_body?, tags?) — update content (WRITE)
+
+### Organize
+- nevent_clone_template(template_id) — duplicate a template as starting point (WRITE). Name gets "(Copy)" suffix. Follow with nevent_rename_template.
+- nevent_rename_template(template_id, name) — rename without content re-render (WRITE, lightweight)
+
+### Validate before sending
+- nevent_preview_template(template_id, sample_user_id?, sample_user_email?, subject?) — preview with merge-tag resolution (READ). Returns originalBody, personalizedBody, detectedMergeTags. Always call BEFORE send test.
+- nevent_send_test_template(template_id, emails[], subject?, sample_user_id?, sample_user_email?) — send real test email via SES (WRITE). Max 10 recipients. May take up to 60s.
+
+## Typical template workflow
+1. nevent_list_templates — discover existing templates
+2. nevent_clone_template — duplicate a base template
+3. nevent_rename_template — give the clone a proper name
+4. nevent_update_template — customize the content
+5. nevent_preview_template — validate merge-tag rendering with a sample user
+6. nevent_send_test_template — verify in real inboxes
+7. nevent_create_campaign (from campaign tools) — use the template in a campaign
 
 ## Content nature values: PROMOTIONAL | TRANSACTIONAL | NEWSLETTER
 
-## Performance metrics in nevent_get_template
-Returns open rate, click rate, send count from linked campaigns.
+## Operation mode
+- list/get/preview: always allowed (READ)
+- create/update/clone/rename/send_test: requires STANDARD or FULL operation mode (WRITE)
 `.trim();
 
 const HELP_DELIVERABILITY = `
