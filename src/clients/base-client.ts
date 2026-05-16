@@ -110,6 +110,24 @@ export class BaseClient {
     this.jwtToken = token;
   }
 
+  /**
+   * Get the current JWT token.
+   *
+   * Intended for internal use by `SessionClients` and tool handlers that need
+   * to forward the bearer token to nev-api directly (e.g. for tools that use
+   * `fetch()` rather than a typed client method).
+   *
+   * Prefer `rotateJwt()` / `rotateAccessToken()` for token updates. This
+   * getter eliminates the need for `as unknown as { jwtToken: string }` casts
+   * to access the otherwise-protected field.
+   *
+   * @returns The raw JWT string currently used for Authorization headers.
+   * @internal
+   */
+  public getJwtToken(): string {
+    return this.jwtToken;
+  }
+
   // -------------------------------------------------------------------------
   // Core request method
   // -------------------------------------------------------------------------
