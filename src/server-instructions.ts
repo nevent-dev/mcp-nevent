@@ -20,7 +20,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - **Campaigns (5 tools):** nevent_list_campaigns | nevent_get_campaign | nevent_get_campaign_insights | nevent_create_campaign | nevent_schedule_campaign
 - **Templates (4 tools):** nevent_list_templates | nevent_get_template | nevent_create_template | nevent_update_template
 - **Deliverability (2 tools):** nevent_get_sending_profile | nevent_get_suppressions_summary
-- **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_list_paid_ad_accounts
+- **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_get_paid_ad_group_insights
 - **Multi-tenant (3 tools):** nevent_list_tenants | nevent_switch_tenant | nevent_reset_tenant
 - **Help (1 tool):** nevent_help
 
