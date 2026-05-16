@@ -115,6 +115,93 @@ describe('DataClient caches', () => {
     });
   });
 
+  describe('TTL expiry', () => {
+    /** DataClient.CACHE_TTL_MS is private static — 5 minutes. */
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+
+    it('re-fetches getCapabilities after TTL elapses', async () => {
+      vi.useFakeTimers();
+
+      // First response: data1
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => makeCapabilitiesResponse(),
+      } as unknown as Response);
+
+      const client = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: 'jwt' });
+
+      // Prime the cache
+      await client.getCapabilities();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      // Advance time past the TTL
+      vi.advanceTimersByTime(CACHE_TTL_MS + 1);
+
+      // Update mock for second fetch
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ tables: [{ name: 'updated', fields: [] }], count: 1 }),
+      } as unknown as Response);
+
+      // Second call — cache expired, must re-fetch
+      await client.getCapabilities();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-fetches getSegmentationCriteria after TTL elapses', async () => {
+      vi.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => makeCriteriaResponse(),
+      } as unknown as Response);
+
+      const client = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: 'jwt' });
+
+      await client.getSegmentationCriteria();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(CACHE_TTL_MS + 1);
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ criteria: [{ id: 'new_criterion', type: 'EVENT' }] }),
+      } as unknown as Response);
+
+      await client.getSegmentationCriteria();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT re-fetch before TTL elapses', async () => {
+      vi.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => makeCapabilitiesResponse(),
+      } as unknown as Response);
+
+      const client = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: 'jwt' });
+
+      await client.getCapabilities();
+      // Advance time but stay within TTL
+      vi.advanceTimersByTime(CACHE_TTL_MS - 1);
+      await client.getCapabilities();
+
+      // Should still be cached — only 1 fetch
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('clearAllCaches', () => {
     it('invalidates both caches simultaneously', async () => {
       mockFetch.mockResolvedValue({
