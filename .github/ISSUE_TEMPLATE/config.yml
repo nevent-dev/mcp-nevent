@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions (Q&A)
+    url: https://github.com/nevent-dev/mcp-nevent/discussions
+    about: Use GitHub Discussions for general questions and community conversation.
+  - name: Support email
+    url: mailto:support@nevent.ai
+    about: For account issues, billing, or private matters, email us at support@nevent.ai.
