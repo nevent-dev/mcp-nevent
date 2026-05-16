@@ -42,6 +42,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { NeventApiError } from '../clients/base-client.js';
 import type { SessionClients } from '../clients/session-clients.js';
 import type { NeventErrorEnvelope } from '../types/common.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -189,7 +190,7 @@ export function registerTenantTools(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${jwtToken}`,
           },
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
         });
 
         if (response.status === 403) {
@@ -200,7 +201,7 @@ export function registerTenantTools(
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${jwtToken}`,
             },
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
           });
         }
 
@@ -299,7 +300,7 @@ export function registerTenantTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify({ tenantId: params.tenant_id }),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(TIMEOUTS.AUTH_MS),
         });
 
         if (!response.ok) {
@@ -384,7 +385,7 @@ export function registerTenantTools(
             'Authorization': `Bearer ${jwtToken}`,
           },
           body: JSON.stringify({ tenantId: homeTenantId }),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(TIMEOUTS.AUTH_MS),
         });
 
         if (!response.ok) {
