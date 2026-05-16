@@ -38,6 +38,7 @@
 import { MongoClient, type Collection } from 'mongodb';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
 // Document shape
@@ -152,7 +153,7 @@ export function createToolCallLogger(mongoUri: string): ToolCallLogger {
       return collection;
     }
 
-    const mongoClient = new MongoClient(mongoUri);
+    const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
     await mongoClient.connect();
     client = mongoClient;
 

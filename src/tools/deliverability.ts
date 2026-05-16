@@ -32,6 +32,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { GetSendingProfileSchema, GetSuppressionsSummarySchema } from '../schemas/deliverability.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
 // Tool registration
@@ -77,7 +78,7 @@ export function registerDeliverabilityTools(
    */
   async function getDb(): Promise<Db> {
     if (!mongoClient) {
-      const client = new MongoClient(mongoUri);
+      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
       await client.connect();
       mongoClient = client;
     }

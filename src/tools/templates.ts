@@ -142,7 +142,7 @@ export function registerTemplateTools(
    */
   async function getDb() {
     if (!mongoClient) {
-      const client = new MongoClient(mongoUri);
+      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: TIMEOUTS.MONGO_CONNECT_MS });
       await client.connect();
       mongoClient = client;
     }
