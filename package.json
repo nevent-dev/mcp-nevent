@@ -1,11 +1,57 @@
 {
   "name": "mcp-nevent",
   "version": "1.0.0",
-  "description": "Nevent MCP Server — Analytics + Segmentation tools for nev-data-api",
+  "description": "Official Nevent MCP server. Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT. 43 tools across 8 categories with OAuth 2.1 and stdio transports.",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "mcp-nevent": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Nevent <support@nevent.ai>",
+  "license": "MIT",
+  "homepage": "https://nevent.ai/en/features/nevent-ai/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nevent-dev/mcp-nevent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nevent-dev/mcp-nevent/issues",
+    "email": "support@nevent.ai"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "anthropic",
+    "claude",
+    "chatgpt",
+    "nevent",
+    "events",
+    "crm",
+    "marketing",
+    "analytics",
+    "segmentation",
+    "paid-ads",
+    "meta-ads",
+    "google-ads",
+    "tiktok-ads",
+    "campaigns",
+    "deliverability",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc",
@@ -17,17 +63,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm test"
   },
-  "keywords": [
-    "mcp",
-    "nevent",
-    "analytics",
-    "segmentation",
-    "bigquery"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/jsonwebtoken": "^9.0.10",
