@@ -280,7 +280,9 @@ export class DataClient extends BaseClient {
    * @returns Estimated fan count and a small sample of matching fans.
    */
   async previewSegment(definition: SegmentDefinition): Promise<SegmentPreviewResponse> {
-    return this.post<SegmentPreviewResponse>('/segments/preview', { definition });
+    return this.post<SegmentPreviewResponse>('/segments/preview', {
+      definition: this.addAutoIds(definition),
+    });
   }
 
   /**
@@ -300,7 +302,7 @@ export class DataClient extends BaseClient {
     pageSize = 20
   ): Promise<SegmentExecuteResponse> {
     return this.post<SegmentExecuteResponse>('/segments/execute', {
-      definition,
+      definition: this.addAutoIds(definition),
       page,
       page_size: pageSize,
     });
@@ -329,6 +331,31 @@ export class DataClient extends BaseClient {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Inject auto-generated IDs into stanzas and criteria that don't have them.
+   *
+   * nev-data-api requires every stanza and every criterion in the segment DSL
+   * to have a non-empty `id` field (validateDSLStructure throws otherwise).
+   * The MCP schema marks these as optional for ergonomic LLM usage, so we
+   * inject them here before forwarding the request.
+   *
+   * @param definition - The segment definition to process.
+   * @returns A new definition with IDs guaranteed on all stanzas and criteria.
+   */
+  private addAutoIds(definition: SegmentDefinition): SegmentDefinition {
+    return {
+      ...definition,
+      stanzas: definition.stanzas.map((s, i) => ({
+        ...s,
+        id: s.id && s.id.length > 0 ? s.id : `stanza_${i}_${crypto.randomUUID()}`,
+        criteria: s.criteria.map((c, j) => ({
+          ...c,
+          id: c.id && c.id.length > 0 ? c.id : `crit_${i}_${j}_${crypto.randomUUID()}`,
+        })),
+      })),
+    };
+  }
 
   /**
    * Transform the raw analytics query API response into the compact MCP format.

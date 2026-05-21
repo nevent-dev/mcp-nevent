@@ -342,11 +342,14 @@ export class BaseClient {
     // original machine-readable error code (e.g. "segment_not_found") rather
     // than a generic fallback, which improves LLM error recovery.
     const b = body as Record<string, unknown> | null;
-    const nestedError = b?.error as Record<string, unknown> | undefined;
+    const errField = b?.error;
+    const nestedError = (errField && typeof errField === 'object' ? errField : undefined) as Record<string, unknown> | undefined;
+    const apiErrorString = typeof errField === 'string' ? errField : undefined;
     const apiDetails = nestedError?.details ? String(nestedError.details) : undefined;
     const apiMessage =
       apiDetails ??
       (nestedError?.message ? String(nestedError.message) : undefined) ??
+      apiErrorString ??
       (b?.message ? String(b.message) : undefined);
 
     // Propagate machine-readable code from the API when present
