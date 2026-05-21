@@ -208,7 +208,7 @@ export const CteSchema = z.object({
  *   { "criterion_id": "user_custom_field", "operator": "eq", "value": "Rock", "filters": { "property_name": "preferred_genre" } }
  */
 const SegmentCriterionSchema = z.object({
-  id: z.string().optional().describe('Optional stable ID for UI correlation. Auto-generated if omitted.'),
+  id: z.string().optional().describe('Optional stable ID for UI/cross-request correlation. If omitted, the MCP client auto-generates one before sending to the API.'),
   criterion_id: z.string().describe(
     'Criterion identifier from nevent_segmentation_criteria. ' +
     'Examples: total_spent, attended_event, user_gender, user_age, campaign_opened, nevent_temperature'
@@ -250,7 +250,7 @@ const SegmentCriterionSchema = z.object({
 
 /** A stanza groups criteria with AND logic; stanzas are OR-combined. */
 const SegmentStanzaSchema = z.object({
-  id: z.string().optional().describe('Optional stable ID. Auto-generated if omitted.'),
+  id: z.string().optional().describe('Optional stable ID for the stanza. If omitted, the MCP client auto-generates one before sending to the API. Provide your own only if you need stable references across requests.'),
   criteria: z.array(SegmentCriterionSchema).min(1).describe('Criteria combined with AND logic within this stanza.'),
 });
 
