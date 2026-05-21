@@ -131,13 +131,10 @@ export const GetShortUrlMetricsSchema = {
  * Fetches aggregated campaign-level metrics across a parent and all user links.
  */
 export const GetShortUrlCampaignMetricsSchema = {
-  parentShortCode: z
-    .string()
-    .min(1)
-    .describe(
-      'Short code of the parent (campaign) short URL. ' +
-      'Obtain from nevent_list_short_urls where isParent=true, field "shortCode".'
-    ),
+  parentShortCode: ShortCode.describe(
+    'Short code of the parent (campaign) short URL (6-8 alphanumeric characters). ' +
+    'Obtain from nevent_list_short_urls where isParent=true, field "shortCode".'
+  ),
   days: z
     .number()
     .int()
@@ -185,13 +182,10 @@ export const GetShortUrlClicksSchema = {
  * Lists all per-user short URL links created under a parent.
  */
 export const ListShortUrlUserLinksSchema = {
-  parentShortCode: z
-    .string()
-    .min(1)
-    .describe(
-      'Short code of the parent (campaign) short URL. ' +
-      'Obtain from nevent_list_short_urls where isParent=true, field "shortCode".'
-    ),
+  parentShortCode: ShortCode.describe(
+    'Short code of the parent (campaign) short URL (6-8 alphanumeric characters). ' +
+    'Obtain from nevent_list_short_urls where isParent=true, field "shortCode".'
+  ),
 };
 
 // ---------------------------------------------------------------------------
@@ -309,13 +303,10 @@ export const UpdateShortUrlSchema = {
  * Generates per-user short URL variants for an existing parent short URL.
  */
 export const CreateBulkUserShortUrlsSchema = {
-  parentShortCode: z
-    .string()
-    .min(1)
-    .describe(
-      'Short code of the parent (campaign) short URL under which user links will be created. ' +
-      'Must already exist. Obtain from nevent_list_short_urls where isParent=true.'
-    ),
+  parentShortCode: ShortCode.describe(
+    'Short code of the parent (campaign) short URL (6-8 alphanumeric characters) under which user links will be created. ' +
+    'Must already exist. Obtain from nevent_list_short_urls where isParent=true.'
+  ),
   userIds: z
     .array(z.string().min(1))
     .min(1, 'Must provide at least one user ID')
