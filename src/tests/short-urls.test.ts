@@ -613,6 +613,26 @@ describe('nevent_update_short_url', () => {
     expect(parsed.isActive).toBe(false);
     expect(parsed.title).toBe('Updated Title');
   });
+
+  it('sends PUT to /admin/short-url/{id} (STANDARD/FULL mode only)', async () => {
+    if (!isWriteAllowed) return; // blocked by mode guard — fetch never called
+
+    const expectedId = '507f1f77bcf86cd799439011';
+    let capturedUrl: string | undefined;
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve(mockFetchOk({ ...MOCK_SHORT_URL, title: 'New Title' }));
+    });
+
+    await setupAndInvoke(
+      'nevent_update_short_url',
+      mockFetch as unknown as typeof fetch,
+      { id: expectedId, title: 'New Title' }
+    );
+
+    expect(capturedUrl).toContain(`/admin/short-url/${expectedId}`);
+    expect(capturedUrl).not.toContain('tenant_id');
+  });
 });
 
 describe('nevent_create_bulk_user_short_urls', () => {
