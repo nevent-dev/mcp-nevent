@@ -27,7 +27,9 @@ import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
+import { registerShortUrlTools } from './tools/short-urls.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
+import { ShortUrlClient } from './clients/short-url-client.js';
 import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
 import { registerHelpTool } from './tools/help.js';
 import { NEVENT_MCP_INSTRUCTIONS } from './server-instructions.js';
@@ -68,6 +70,14 @@ export interface CreateNeventServerOptions {
    * Requires roles ADMIN | SUPERADMIN | OWNER and capability MODULE_ATTRIBUTION.
    */
   paidMediaClient?: PaidMediaClient;
+  /**
+   * Pre-configured short URL client for nev-api `/admin/short-url/...` endpoints.
+   * When provided, all 9 short URL tools are registered on the server.
+   * When omitted, short URL tools are not registered (backwards-compatible).
+   *
+   * Requires roles ADMIN | OWNER | SUPERADMIN.
+   */
+  shortUrlClient?: ShortUrlClient;
   /**
    * User identifier from the JWT `sub` claim.
    * When provided, stored in `mcp_tool_calls` documents for attribution.
@@ -119,6 +129,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     neventApiUrl,
     mongoUri,
     paidMediaClient,
+    shortUrlClient,
     userId = null,
     getSessionId,
     sessionClients: providedSessionClients,
@@ -192,6 +203,13 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   // Paid media tools (11 tools) — registered when paidMediaClient is provided
   if (paidMediaClient) {
     registerPaidMediaTools(server, paidMediaClient);
+  }
+
+  // Short URL tools (9 tools) — registered when shortUrlClient is provided
+  // Prefer shortUrlClient from providedSessionClients when available (HTTP mode)
+  const effectiveShortUrlClient = shortUrlClient ?? providedSessionClients?.shortUrlClient;
+  if (effectiveShortUrlClient) {
+    registerShortUrlTools(server, effectiveShortUrlClient);
   }
 
   return server;
