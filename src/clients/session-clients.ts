@@ -3,9 +3,10 @@
  *
  * In HTTP mode each MCP session has one `SessionClients` instance, holding
  * a `DataClient` (for nev-data-api), a `PaidMediaClient` (for nev-api paid
- * media endpoints), and a `TemplateClient` (for nev-api template operations).
- * All three clients share the same bearer JWT; when the token is rotated
- * (e.g. during `nevent_switch_tenant`) all three must be updated atomically.
+ * media endpoints), a `TemplateClient` (for nev-api template operations), and
+ * a `ShortUrlClient` (for nev-api short URL admin endpoints).
+ * All clients share the same bearer JWT; when the token is rotated
+ * (e.g. during `nevent_switch_tenant`) all clients must be updated atomically.
  *
  * Additionally, `SessionClients` stores the `refreshToken` captured during
  * login / initial OAuth exchange and implements a `refreshAccessToken()` helper
@@ -30,6 +31,7 @@
 import { DataClient } from './data-client.js';
 import { PaidMediaClient } from './paid-media-client.js';
 import { TemplateClient } from './template-client.js';
+import { ShortUrlClient } from './short-url-client.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
 // ---------------------------------------------------------------------------
@@ -66,9 +68,9 @@ function decodeJwtTenantId(token: string): string | undefined {
 /**
  * Aggregate holder for the per-session API clients.
  *
- * `dataClient`, `paidMediaClient`, and `templateClient` are exposed as public
- * fields so callers can use them directly. Use `rotateJwt` / `rotateTokens`
- * to update the bearer token in all clients atomically.
+ * `dataClient`, `paidMediaClient`, `templateClient`, and `shortUrlClient` are
+ * exposed as public fields so callers can use them directly. Use `rotateJwt` /
+ * `rotateTokens` to update the bearer token in all clients atomically.
  */
 export class SessionClients {
   /** Client for nev-data-api (analytics, segmentation). */
@@ -82,6 +84,12 @@ export class SessionClients {
    * (clone, rename, preview, test). Shares the same JWT as the other clients.
    */
   readonly templateClient: TemplateClient;
+
+  /**
+   * Client for nev-api short URL admin endpoints (/admin/short-url/...).
+   * Shares the same JWT as the other nev-api clients.
+   */
+  readonly shortUrlClient: ShortUrlClient;
 
   /**
    * The tenant ID from the JWT at session creation time.
@@ -133,6 +141,12 @@ export class SessionClients {
       jwtToken: paidMediaClient.getJwtToken(),
     });
 
+    // Create the short URL client sharing the same nev-api URL and JWT.
+    this.shortUrlClient = new ShortUrlClient({
+      baseUrl: neventApiUrl,
+      jwtToken: paidMediaClient.getJwtToken(),
+    });
+
     // Wire the token-refresh callback into all clients so that a 401 response
     // automatically triggers a refresh attempt and a transparent retry.
     this.wireAuthRefresh();
@@ -150,6 +164,7 @@ export class SessionClients {
     this.dataClient.setOnUnauthorized(cb);
     this.paidMediaClient.setOnUnauthorized(cb);
     this.templateClient.setOnUnauthorized(cb);
+    this.shortUrlClient.setOnUnauthorized(cb);
   }
 
   // -------------------------------------------------------------------------
@@ -169,6 +184,7 @@ export class SessionClients {
     this.dataClient.rotateAccessToken(newAccessToken);
     this.paidMediaClient.rotateAccessToken(newAccessToken);
     this.templateClient.rotateAccessToken(newAccessToken);
+    this.shortUrlClient.rotateAccessToken(newAccessToken);
     // Invalidate cached data that was scoped to the previous tenant
     this.dataClient.clearAllCaches();
     // Update activeTenantId to reflect the new JWT's tenant claim
