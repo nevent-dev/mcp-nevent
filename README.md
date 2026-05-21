@@ -92,11 +92,13 @@ Settings → Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. 
 "Compare ROAS across our Meta ad campaigns for March"
 
 "How many suppressions did we accumulate this month and what are the top reasons?"
+
+"Create per-user tracking links for the Summer Gala campaign and show me which users clicked"
 ```
 
 ---
 
-## Tools (43)
+## Tools (52)
 
 ### Analytics & Segmentation
 
@@ -170,6 +172,22 @@ Settings → Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. 
 | `nevent_get_paid_ad_group_targeting` | Full audience targeting config |
 | `nevent_list_paid_ads` | List individual ads with UTM fields |
 | `nevent_get_paid_ad_creative` | Ad creative: body, title, CTA, images/videos |
+
+### Short URLs (9 tools)
+
+Track campaign link clicks, generate per-user tracking variants, and measure CTR across marketing campaigns.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `nevent_list_short_urls` | Read | Paginated list of all short URLs with click counts. Filter by isActive or search by title/URL. |
+| `nevent_get_short_url` | Read | Full detail of a single short URL — id, shortCode, longUrl, tags, metadata, clickCount, isParent. |
+| `nevent_get_short_url_metrics` | Read | Aggregated analytics over N days: totalClicks, uniqueVisitors, clicksByDay, clicksByDevice, clicksByCountry, topReferers. |
+| `nevent_get_short_url_campaign_metrics` | Read | Campaign-wide CTR across a parent link and all per-user variants. Returns avgClicksPerUrl, clickThroughRate, topUsersByClicks. |
+| `nevent_get_short_url_clicks` | Read | Individual click records ordered newest-first: clickedAt, device, country, UTMs, isPaidTraffic. |
+| `nevent_list_short_url_user_links` | Read | All per-user short URL variants created under a parent/campaign link. |
+| `nevent_create_short_url` | Write | Create a new short URL. Supports customShortCode, expiresAt, tags, and metadata. |
+| `nevent_update_short_url` | Write | Update title, longUrl, isActive, tags, metadata, or expiration. Changes apply immediately. |
+| `nevent_create_bulk_user_short_urls` | Write | Generate per-user tracking variants for a campaign — each user gets a unique link with click attribution. |
 
 ---
 

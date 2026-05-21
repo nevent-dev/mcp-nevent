@@ -214,7 +214,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
       },
       categories: ['marketing', 'analytics', 'crm', 'events'],
-      tools_count: 43,
+      tools_count: 52,
     });
   });
 
@@ -231,7 +231,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       transport: 'http',
       version: '1.0.0',
       commitSha: process.env['GIT_COMMIT_SHA'] ?? 'unknown',
-      toolsCount: 43,
+      toolsCount: 52,
       activeSessions: Object.keys(activeSessions).length,
       timestamp: new Date().toISOString(),
     });

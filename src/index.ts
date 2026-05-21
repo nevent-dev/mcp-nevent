@@ -53,6 +53,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { DataClient } from './clients/data-client.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
+import { ShortUrlClient } from './clients/short-url-client.js';
 import { SessionClients } from './clients/session-clients.js';
 import { OPERATION_MODE } from './config/operation-mode.js';
 import { createNeventServer } from './server.js';
@@ -211,7 +212,13 @@ if (transportArg === 'http') {
     jwtToken: JWT_TOKEN,
   });
 
-  // Build SessionClients so both clients share token state
+  // Short URL client — uses the same JWT and nev-api base URL
+  const shortUrlClient = new ShortUrlClient({
+    baseUrl: NEVENT_API_URL,
+    jwtToken: JWT_TOKEN,
+  });
+
+  // Build SessionClients so all clients share token state
   const sessionClients = new SessionClients(
     dataClient,
     paidMediaClient,
@@ -224,6 +231,7 @@ if (transportArg === 'http') {
     neventApiUrl: NEVENT_API_URL,
     mongoUri: MONGODB_URI,
     paidMediaClient,
+    shortUrlClient,
     sessionClients,
   });
   const transport = new StdioServerTransport();

@@ -29,6 +29,7 @@ Available topics:
 - **templates** — Email template tools guide
 - **deliverability** — Sending profile and suppressions guide
 - **paid_media** — Meta/Google/TikTok paid ads tools guide
+- **short_urls** — Short URL tracking and campaign link tools guide
 
 Call nevent_help with topic="<name>" for detailed guidance on any category.
 `.trim();
@@ -56,6 +57,12 @@ nevent_list_segments → nevent_list_templates → nevent_create_campaign(channe
 
 ## 7. "Deliverability health check"
 nevent_get_sending_profile → nevent_get_suppressions_summary
+
+## 8. "Create and track campaign short URLs"
+nevent_create_short_url(longUrl) → nevent_create_bulk_user_short_urls(parentShortCode, userIds) → [send campaign] → nevent_get_short_url_campaign_metrics(parentShortCode)
+
+## 9. "Audit existing tracking links"
+nevent_list_short_urls(isActive=true) → nevent_get_short_url_metrics(id) → nevent_get_short_url_clicks(id)
 `.trim();
 
 const HELP_ERRORS = `
@@ -261,12 +268,53 @@ in the insights pilot. Tell the user to contact their Nevent admin.
 ## Roles required: ADMIN | SUPERADMIN | OWNER + capability MODULE_ATTRIBUTION
 `.trim();
 
+const HELP_SHORT_URLS = `
+# Short URL Tools Guide
+
+## Tools (9 total)
+
+### Tier 1 — Read essentials
+- nevent_list_short_urls(isActive?, search?, page?, pageSize?) — paginated list of all short URLs with click counts
+- nevent_get_short_url(id) — full detail of one short URL (use id from list)
+- nevent_get_short_url_metrics(id, days?) — aggregated analytics: totalClicks, uniqueVisitors, clicksByDay, clicksByDevice, clicksByCountry, topReferers
+- nevent_get_short_url_campaign_metrics(parentShortCode, days?, topN?) — campaign-wide CTR and per-user breakdown
+
+### Tier 2 — Read drill-down
+- nevent_get_short_url_clicks(id, limit?) — individual click records (timestamp, device, country, UTMs, isPaidTraffic)
+- nevent_list_short_url_user_links(parentShortCode) — all per-user links under a parent
+
+### Tier 3 — Write (STANDARD or FULL mode required)
+- nevent_create_short_url(longUrl, title?, tags?, expiresAt?, customShortCode?, metadata?) — create a new short URL
+- nevent_update_short_url(id, title?, isActive?, tags?, longUrl?, expiresAt?, metadata?) — update configuration
+- nevent_create_bulk_user_short_urls(parentShortCode, userIds[]) — bulk per-user link generation for a campaign
+
+## Typical short URL workflow
+
+### Create a campaign link and track CTR
+1. nevent_create_short_url(longUrl="https://...") — create the parent link
+2. nevent_create_bulk_user_short_urls(parentShortCode, userIds) — generate per-user variants
+3. [Send campaign with per-user shortUrl values]
+4. nevent_get_short_url_campaign_metrics(parentShortCode) — see total CTR and top clickers
+
+### Audit existing links
+1. nevent_list_short_urls(isActive=true) — discover active links
+2. nevent_get_short_url_metrics(id) — analyze individual link performance
+3. nevent_get_short_url_clicks(id) — inspect individual click events
+
+## Key field relationships
+- nevent_list_short_urls → returns id (use with get/metrics/clicks) and shortCode (use with campaign-metrics/user-links)
+- isParent=true links are campaign parents; isParent=false links are user-specific
+- parentShortCode on a user link points to its campaign parent
+
+## Roles required: ADMIN | OWNER | SUPERADMIN
+`.trim();
+
 // ---------------------------------------------------------------------------
 // Topic router
 // ---------------------------------------------------------------------------
 
 type HelpTopic = 'workflows' | 'errors' | 'tenants' | 'analytics' | 'segments' |
-  'campaigns' | 'templates' | 'deliverability' | 'paid_media';
+  'campaigns' | 'templates' | 'deliverability' | 'paid_media' | 'short_urls';
 
 function getHelpContent(topic?: string): string {
   switch (topic as HelpTopic | undefined) {
@@ -279,6 +327,7 @@ function getHelpContent(topic?: string): string {
     case 'templates':     return HELP_TEMPLATES;
     case 'deliverability':return HELP_DELIVERABILITY;
     case 'paid_media':    return HELP_PAID_MEDIA;
+    case 'short_urls':    return HELP_SHORT_URLS;
     default:              return HELP_INDEX;
   }
 }
@@ -299,11 +348,12 @@ const HelpSchema = {
       'templates',
       'deliverability',
       'paid_media',
+      'short_urls',
     ])
     .optional()
     .describe(
       'Topic to get guidance on. Omit to get an index of all available topics. ' +
-      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media'
+      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media | short_urls'
     ),
 };
 
