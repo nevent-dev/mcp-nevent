@@ -126,6 +126,19 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_get_paid_ad_group_targeting: 'READ',
   nevent_list_paid_ads: 'READ',
   nevent_get_paid_ad_creative: 'READ',
+
+  // Short URL tools (Tier 1 + 2): READ operations
+  nevent_list_short_urls: 'READ',
+  nevent_get_short_url: 'READ',
+  nevent_get_short_url_metrics: 'READ',
+  nevent_get_short_url_campaign_metrics: 'READ',
+  nevent_get_short_url_clicks: 'READ',
+  nevent_list_short_url_user_links: 'READ',
+
+  // Short URL tools (Tier 3): WRITE operations
+  nevent_create_short_url: 'WRITE',
+  nevent_update_short_url: 'WRITE',
+  nevent_create_bulk_user_short_urls: 'WRITE',
 };
 
 // ---------------------------------------------------------------------------
