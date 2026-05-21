@@ -24,7 +24,7 @@ const EXPECTED_MANIFEST = {
   publisher: { name: 'Nevent', url: 'https://nevent.ai' },
   support: { email: 'support@nevent.ai' },
   transport: 'streamable-http',
-  endpoint: 'https://mcp.nevent.ai/mcp',
+  endpoint: 'https://mcp.nevent.ai/',
   auth: {
     type: 'oauth2',
     metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
@@ -96,6 +96,6 @@ describe('MCP Manifest', () => {
   });
 
   it('endpoint points to the production MCP server', () => {
-    expect(EXPECTED_MANIFEST.endpoint).toBe('https://mcp.nevent.ai/mcp');
+    expect(EXPECTED_MANIFEST.endpoint).toBe('https://mcp.nevent.ai/');
   });
 });

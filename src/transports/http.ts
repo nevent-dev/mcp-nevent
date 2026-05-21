@@ -208,7 +208,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       publisher: { name: 'Nevent', url: 'https://nevent.ai' },
       support: { email: 'support@nevent.ai' },
       transport: 'streamable-http',
-      endpoint: 'https://mcp.nevent.ai/mcp',
+      endpoint: 'https://mcp.nevent.ai/',
       auth: {
         type: 'oauth2',
         metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
