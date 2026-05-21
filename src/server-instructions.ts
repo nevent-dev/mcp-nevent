@@ -21,6 +21,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - **Templates (8 tools):** nevent_list_templates | nevent_get_template | nevent_create_template | nevent_update_template | nevent_clone_template | nevent_rename_template | nevent_preview_template | nevent_send_test_template
 - **Deliverability (2 tools):** nevent_get_sending_profile | nevent_get_suppressions_summary
 - **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_get_paid_ad_group_insights
+- **Short URLs (9 tools):** nevent_list_short_urls | nevent_get_short_url | nevent_get_short_url_metrics | nevent_get_short_url_campaign_metrics | nevent_get_short_url_clicks | nevent_list_short_url_user_links | nevent_create_short_url | nevent_update_short_url | nevent_create_bulk_user_short_urls
 - **Multi-tenant (3 tools):** nevent_list_tenants | nevent_switch_tenant | nevent_reset_tenant
 - **Help (1 tool):** nevent_help
 
@@ -30,6 +31,8 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 3. **"Email campaign performance"** → nevent_list_campaigns(channel=EMAIL) → nevent_get_campaign_insights OR nevent_campaign_report
 4. **"Compare data across tenants"** → nevent_list_tenants → nevent_switch_tenant → [query] → nevent_reset_tenant
 5. **"What data is available?"** → nevent_analytics_capabilities → nevent_analytics_table_schema → nevent_analytics_query
+6. **"Campaign link CTR"** → nevent_list_short_urls → nevent_get_short_url_campaign_metrics
+7. **"Create per-user tracking links"** → nevent_create_short_url → nevent_create_bulk_user_short_urls → nevent_get_short_url_campaign_metrics
 
 ## MANDATORY: Analytics query rules
 - ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess.
