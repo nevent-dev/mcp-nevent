@@ -64,7 +64,7 @@ export interface ShortUrlDTO {
 export interface ShortUrlListResponse {
   /** List of short URLs for the current page. */
   items: ShortUrlDTO[];
-  /** Total number of short URLs matching the query (across all pages). */
+  /** Total number of short URLs matching the query (across all pages). Java `Long` → JS `number`. */
   total: number;
   /** Current zero-based page number. */
   page: number;

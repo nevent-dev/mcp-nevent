@@ -177,7 +177,8 @@ export function registerShortUrlTools(
     'Requires the `parentShortCode` from nevent_list_short_urls (where isParent=true). ' +
     'Returns: totalChildUrls, totalClicks, urlsWithClicks, avgClicksPerUrl, ' +
     'clickThroughRate (%), topUsersByClicks (userId, shortCode, clickCount, lastClickedAt), ' +
-    'clicksByDay, clicksByDevice, clicksByBrowser, clicksByCountry.',
+    'clicksByDay, clicksByDevice, clicksByBrowser, clicksByCountry. ' +
+    'This tool aggregates across ALL child user links — use nevent_get_short_url_metrics(id) when you need per-link breakdown for a single URL.',
     GetShortUrlCampaignMetricsSchema,
     READ_ONLY_ANNOTATIONS,
     async (params) => {
@@ -268,7 +269,8 @@ export function registerShortUrlTools(
     'Returns the created ShortUrlDTO with: id, shortCode, shortUrl (full redirect URL), ' +
     'longUrl, title, tags, isActive. ' +
     'Use the returned shortCode with nevent_create_bulk_user_short_urls to generate per-user variants. ' +
-    'WRITE operation — requires STANDARD or FULL operation mode.',
+    'WRITE operation — requires STANDARD or FULL operation mode. ' +
+    'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call.',
     CreateShortUrlSchema,
     WRITE_ANNOTATIONS,
     async (params) => {
@@ -303,7 +305,8 @@ export function registerShortUrlTools(
     'Supported updates: title, expiresAt (pass null to remove expiration), isActive (true/false), ' +
     'tags (replaces existing), metadata (replaces existing), longUrl (changes redirect destination). ' +
     'Returns the updated ShortUrlDTO. ' +
-    'WRITE operation — requires STANDARD or FULL operation mode.',
+    'WRITE operation — requires STANDARD or FULL operation mode. ' +
+    'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call.',
     UpdateShortUrlSchema,
     WRITE_ANNOTATIONS,
     async (params) => {
@@ -344,7 +347,9 @@ export function registerShortUrlTools(
     'Returns: parentShortCode, totalRequested, totalCreated, ' +
     'createdLinks (array of ShortUrlDTO with userId, shortCode, shortUrl per user). ' +
     'Use nevent_get_short_url_campaign_metrics afterwards to track aggregate CTR. ' +
-    'WRITE operation — requires STANDARD or FULL operation mode.',
+    'WRITE operation — requires STANDARD or FULL operation mode. ' +
+    'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call. ' +
+    'Note: parentShortCode is sent in both the URL path and request body — they must match (validated server-side).',
     CreateBulkUserShortUrlsSchema,
     WRITE_ANNOTATIONS,
     async (params) => {
