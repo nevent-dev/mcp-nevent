@@ -92,6 +92,8 @@ Settings → Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. 
 "Compare ROAS across our Meta ad campaigns for March"
 
 "How many suppressions did we accumulate this month and what are the top reasons?"
+
+"Create per-user tracking links for the Summer Gala campaign and show me which users clicked"
 ```
 
 ---
