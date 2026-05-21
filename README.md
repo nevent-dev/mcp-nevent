@@ -7,6 +7,29 @@
 
 ---
 
+## Install
+
+### Hosted (recommended — no install needed)
+
+Add `https://mcp.nevent.ai/mcp` as a remote MCP server in your client (Claude.ai, ChatGPT, Cursor, Cline, Continue).
+
+### Local (stdio via npm)
+
+```bash
+npx mcp-nevent
+```
+
+Or install globally:
+
+```bash
+npm install -g mcp-nevent
+mcp-nevent
+```
+
+Required env: `NEVENT_JWT_TOKEN`. Optional: `NEVENT_OPERATION_MODE` (READ_ONLY | STANDARD | FULL).
+
+---
+
 ## Quick add
 
 ### Claude.ai (recommended — hosted, no setup)
