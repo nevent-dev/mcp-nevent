@@ -57,6 +57,7 @@ import { ShortUrlClient } from './clients/short-url-client.js';
 import { SessionClients } from './clients/session-clients.js';
 import { OPERATION_MODE } from './config/operation-mode.js';
 import { createNeventServer } from './server.js';
+import { logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // Shared env vars
@@ -88,7 +89,7 @@ const portArg = parseArg('port') ?? process.env['MCP_PORT'] ?? '3000';
 const HTTP_PORT = parseInt(portArg, 10);
 
 if (isNaN(HTTP_PORT) || HTTP_PORT < 1 || HTTP_PORT > 65535) {
-  console.error(`[nevent-mcp] FATAL: Invalid port "${portArg}". Must be a number between 1 and 65535.`);
+  logger.fatal({ port: portArg }, `FATAL: Invalid port "${portArg}". Must be a number between 1 and 65535.`);
   process.exit(1);
 }
 
@@ -111,29 +112,31 @@ if (transportArg === 'http') {
   const MCP_SERVER_URL = process.env['MCP_SERVER_URL'] ?? `http://localhost:${HTTP_PORT}`;
 
   if (!MCP_JWT_SECRET) {
-    console.error(
-      '[nevent-mcp] FATAL: MCP_JWT_SECRET environment variable is required in HTTP mode. ' +
+    logger.fatal(
+      'FATAL: MCP_JWT_SECRET environment variable is required in HTTP mode. ' +
       'Set it to a strong random secret (>= 32 characters recommended).'
     );
     process.exit(1);
   }
 
   if (!MONGODB_URI) {
-    console.error(
-      '[nevent-mcp] FATAL: MONGODB_URI environment variable is required in HTTP mode. ' +
+    logger.fatal(
+      'FATAL: MONGODB_URI environment variable is required in HTTP mode. ' +
       'Set it to a valid MongoDB connection URI for OAuth storage.'
     );
     process.exit(1);
   }
 
-  console.error(
-    `[nevent-mcp] Starting HTTP transport v1.0.0 | ` +
-    `port=${HTTP_PORT} | ` +
-    `server_url=${MCP_SERVER_URL} | ` +
-    `data_api=${DATA_API_URL} | ` +
-    `nevent_api=${NEVENT_API_URL} | ` +
-    `mode=${OPERATION_MODE} | ` +
-    `auth=per-session`
+  logger.info(
+    {
+      port: HTTP_PORT,
+      serverUrl: MCP_SERVER_URL,
+      dataApi: DATA_API_URL,
+      neventApi: NEVENT_API_URL,
+      mode: OPERATION_MODE,
+      auth: 'per-session',
+    },
+    'Starting HTTP transport v1.0.0'
   );
 
   // Dynamically import to avoid loading Express/MongoDB in stdio mode
@@ -155,10 +158,15 @@ if (transportArg === 'http') {
   process.on('SIGINT', () => void shutdown().then(() => process.exit(0)));
 
   app.listen(HTTP_PORT, () => {
-    console.error(`[nevent-mcp] HTTP server listening on port ${HTTP_PORT}`);
-    console.error(`[nevent-mcp] MCP endpoint:    ${MCP_SERVER_URL}/mcp`);
-    console.error(`[nevent-mcp] Health endpoint: ${MCP_SERVER_URL}/health`);
-    console.error(`[nevent-mcp] OAuth metadata:  ${MCP_SERVER_URL}/.well-known/oauth-authorization-server`);
+    logger.info(
+      {
+        port: HTTP_PORT,
+        mcpEndpoint: `${MCP_SERVER_URL}/mcp`,
+        healthEndpoint: `${MCP_SERVER_URL}/health`,
+        oauthMetadata: `${MCP_SERVER_URL}/.well-known/oauth-authorization-server`,
+      },
+      'HTTP server listening'
+    );
   });
 } else {
   // -------------------------------------------------------------------------
@@ -168,26 +176,26 @@ if (transportArg === 'http') {
   // -------------------------------------------------------------------------
 
   if (transportArg !== 'stdio') {
-    console.error(
-      `[nevent-mcp] Unknown transport "${transportArg}". Valid values: stdio, http. Defaulting to stdio.`
+    logger.warn(
+      { transport: transportArg },
+      `Unknown transport "${transportArg}". Valid values: stdio, http. Defaulting to stdio.`
     );
   }
 
   const JWT_TOKEN = process.env['NEVENT_JWT_TOKEN'];
 
   if (!JWT_TOKEN) {
-    console.error(
-      '[nevent-mcp] FATAL: NEVENT_JWT_TOKEN environment variable is not set. ' +
+    logger.fatal(
+      'FATAL: NEVENT_JWT_TOKEN environment variable is not set. ' +
       'In stdio mode a shared JWT token is required to authenticate with nev-data-api. ' +
       'Set NEVENT_JWT_TOKEN to a valid Nevent JWT token before starting the server.'
     );
     process.exit(1);
   }
 
-  console.error(
-    `[nevent-mcp] Starting stdio transport v1.0.0 | ` +
-    `data_api=${DATA_API_URL} | ` +
-    `mode=${OPERATION_MODE}`
+  logger.info(
+    { dataApi: DATA_API_URL, mode: OPERATION_MODE },
+    'Starting stdio transport v1.0.0'
   );
 
   const NEVENT_API_URL = process.env['NEVENT_API_URL'] ?? 'https://api.nevent.es';
