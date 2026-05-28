@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-28
+
+### Fixed
+- Added missing `mcpName` field in `package.json` required by the MCP Registry validation (`io.github.nevent-dev/mcp-nevent`). v1.1.0 was published successfully to npm but failed to register in the MCP Registry due to this missing metadata.
+
 ## [1.1.0] - 2026-05-28
 
 ### Added
@@ -34,5 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Previous versions were internal-only and are not documented here
 
+[1.1.1]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.1
 [1.1.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.0
 [1.0.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.0.0
