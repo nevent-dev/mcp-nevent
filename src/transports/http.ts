@@ -32,6 +32,13 @@
  * A background interval prunes orphaned sessions (those not cleaned up via
  * transport close events) every 30 minutes to prevent memory leaks.
  *
+ * ## Security headers
+ *
+ * `helmet` is applied as the first `app.use()` call so every response —
+ * including error pages from downstream middleware — carries the configured
+ * security headers: `Content-Security-Policy`, `Strict-Transport-Security`,
+ * `X-Frame-Options`, `X-Content-Type-Options`, `Cross-Origin-*`, etc.
+ *
  * ## Rate limiting
  *
  * `express-rate-limit` is applied on all `/mcp` and `/authorize` endpoints to
@@ -60,6 +67,7 @@
 
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -188,6 +196,58 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR because Express does not trust the
   // forwarded IP by default. Value `1` means trust the first proxy hop (ALB).
   app.set('trust proxy', 1);
+
+  // -------------------------------------------------------------------------
+  // Security headers (Helmet) — applied first so every response gets them,
+  // including error responses from downstream middleware.
+  //
+  // Design choices:
+  //   • contentSecurityPolicy: restrictive defaults with 'self' for default,
+  //     script, connect sources. styleSrc keeps 'unsafe-inline' because the
+  //     OAuth login page (src/auth/login-page.ts) uses a <style> block and
+  //     inline style="" attributes. fontSrc allows Google Fonts CDN. imgSrc
+  //     allows external logos served on the login page (Nevent wordmark,
+  //     Claude/ChatGPT client icons from CDNs).
+  //     TODO: migrate login page to a nonce-based approach and drop
+  //     'unsafe-inline' from styleSrc.
+  //   • crossOriginEmbedderPolicy: disabled — COEP is not meaningful for an
+  //     LLM/MCP API endpoint; enabling it would block clients that do not
+  //     send CORP headers on their sub-resources.
+  //   • hsts: 1 year + includeSubDomains, no preload flag (preload requires
+  //     manual submission to hstspreload.org; can be enabled later).
+  // -------------------------------------------------------------------------
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: [
+            "'self'",
+            "'unsafe-inline'", // required: login page uses <style> block + inline style attrs
+            'https://fonts.googleapis.com',
+          ],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+          imgSrc: [
+            "'self'",
+            'data:',
+            'https://admin.nevent.es',       // Nevent wordmark on login page
+            'https://avatars.slack-edge.com', // Claude logo on login page
+            'https://upload.wikimedia.org',   // ChatGPT logo on login page
+          ],
+          connectSrc: ["'self'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,       // 1 year
+        includeSubDomains: true,
+        preload: false,
+      },
+    })
+  );
 
   // -------------------------------------------------------------------------
   // MCP manifest — publicly accessible, no auth required.
