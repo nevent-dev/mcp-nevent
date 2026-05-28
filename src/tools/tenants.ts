@@ -43,6 +43,7 @@ import type { SessionClients } from '../clients/session-clients.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { ok, err, toErrorEnvelope } from './helpers.js';
 import { z } from 'zod';
+import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // Tenant API types
@@ -250,7 +251,7 @@ export function registerTenantTools(
 
         if (!response.ok) {
           const body = await response.text();
-          console.error(`[nevent-mcp] Tenant switch failed | status=${response.status} | body=${body.slice(0, 200)}`);
+          logger.warn({ status: response.status, body: body.slice(0, 200) }, 'Tenant switch failed');
           return err({
             error: {
               type: response.status === 403 ? 'authentication_error' : 'api_error',
@@ -275,9 +276,7 @@ export function registerTenantTools(
           }
         }
 
-        console.error(
-          `[nevent-mcp] Tenant switched | targetTenantId=${params.tenant_id} | newToken=${!!newAccessToken}`
-        );
+        logger.info({ targetTenantId: params.tenant_id, hasNewToken: !!newAccessToken }, 'Tenant switched');
 
         return ok({
           success: true,
@@ -335,7 +334,7 @@ export function registerTenantTools(
 
         if (!response.ok) {
           const body = await response.text();
-          console.error(`[nevent-mcp] Tenant reset failed | status=${response.status} | body=${body.slice(0, 200)}`);
+          logger.warn({ status: response.status, body: body.slice(0, 200) }, 'Tenant reset failed');
           return err({
             error: {
               type: response.status === 403 ? 'authentication_error' : 'api_error',
@@ -357,9 +356,7 @@ export function registerTenantTools(
           }
         }
 
-        console.error(
-          `[nevent-mcp] Tenant reset | homeTenantId=${homeTenantId} | newToken=${!!newAccessToken}`
-        );
+        logger.info({ homeTenantId, hasNewToken: !!newAccessToken }, 'Tenant reset to home');
 
         return ok({
           success: true,

@@ -35,6 +35,7 @@
  */
 
 import { Collection, Db, MongoClient } from 'mongodb';
+import { logger } from '../logger.js';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 
@@ -377,7 +378,7 @@ export async function createOAuthStores(mongoUri: string): Promise<OAuthStores> 
     refreshTokens.initialize(),
   ]);
 
-  console.error('[nevent-mcp] OAuth MongoDB stores initialized');
+  logger.info('OAuth MongoDB stores initialized');
 
   return { clients, authCodes, refreshTokens, mongoClient };
 }

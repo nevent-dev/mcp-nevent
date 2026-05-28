@@ -12,6 +12,7 @@
 
 import type { QueryParamValue, HttpResponse } from '../types/common.js';
 import type { NeventError } from '../types/common.js';
+import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -330,7 +331,7 @@ export class BaseClient {
     path: string
   ): NeventApiError {
     // Log the error for debugging — this is the only place where upstream API errors surface
-    console.error(`[nevent-mcp] API error | ${this.baseUrl}${path} | status=${status} | body=${JSON.stringify(body)?.slice(0, 500)}`);
+    logger.error({ status, path, body: JSON.stringify(body)?.slice(0, 500) }, 'Upstream API error');
 
     // Extract any message, code, and type the API provided in the body.
     //
