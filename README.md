@@ -3,7 +3,7 @@
 > Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](CHANGELOG.md)
 
 ---
 

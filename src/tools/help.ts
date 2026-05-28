@@ -378,7 +378,7 @@ export function registerHelpTool(server: McpServer): void {
     'topic="tenants" for multi-tenant guidance, or topic=<category> like "paid_media" / "analytics" / "segments". ' +
     'Omit topic to get an index of all available topics.',
     HelpSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    { title: 'Get Nevent MCP help', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async ({ topic }) => ok({ guidance: getHelpContent(topic) })
   );
 }

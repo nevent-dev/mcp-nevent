@@ -58,7 +58,9 @@ import {
 // Shared annotations
 // ---------------------------------------------------------------------------
 
-const READ_ONLY_ANNOTATIONS = {
+// Tool-specific annotation objects are defined inline per-tool to include `title`.
+// The shared constant below is used as a base — spread it and add title per registration.
+const READ_ONLY_ANNOTATIONS_BASE = {
   readOnlyHint: true,
   destructiveHint: false,
   openWorldHint: true,
@@ -144,7 +146,7 @@ export function registerPaidMediaTools(
     'Call this first before any ads queries to confirm the integration is active. ' +
     'Returns: connected (bool), accountId, accountName, lastSyncAt.',
     AdsStatusSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Check paid ads connection status', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_paid_ads_status');
       if (denied) return err(denied);
@@ -169,7 +171,7 @@ export function registerPaidMediaTools(
     'featureGate.isInTenantAllowlist (pilot access), lastSuccessfulSyncAt, lastSuccessfulInsightsAt, backfillEnabled. ' +
     'A 404 here means this tenant is not enrolled in the insights pilot for this provider.',
     AdsHealthSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ads health signals', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_paid_ads_health');
       if (denied) return err(denied);
@@ -207,7 +209,7 @@ export function registerPaidMediaTools(
     'Returns campaign IDs, names, statuses, objectives, and budgets. ' +
     'Use the returned campaignId values with nevent_get_paid_campaign_insights and nevent_list_paid_ad_groups.',
     ListPaidCampaignsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'List paid campaigns', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_list_paid_campaigns');
       if (denied) return err(denied);
@@ -233,7 +235,7 @@ export function registerPaidMediaTools(
     'Each row.date is an ISO 8601 UTC timestamp (e.g. "2026-05-10T00:00:00Z"). ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidCampaignInsightsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid campaign insights', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_paid_campaign_insights');
       if (denied) return err(denied);
@@ -273,7 +275,7 @@ export function registerPaidMediaTools(
     'Use this when the user asks about ROI, conversion, or revenue from paid ads. ' +
     'Use after nevent_list_paid_campaigns to cross-reference campaign IDs.',
     AdsAttributionSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ads attribution', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_paid_attribution');
       if (denied) return err(denied);
@@ -301,7 +303,7 @@ export function registerPaidMediaTools(
     'Returns ad group IDs, names, statuses, and lastSyncedAt. ' +
     'Use the returned adGroupId values with the ad group insights, targeting, and comparative stats tools.',
     ListPaidAdGroupsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'List paid ad groups', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_list_paid_ad_groups');
       if (denied) return err(denied);
@@ -330,7 +332,7 @@ export function registerPaidMediaTools(
     'Each row.date is an ISO 8601 UTC timestamp (e.g. "2026-05-10T00:00:00Z"). ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdGroupInsightsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ad group insights', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_paid_ad_group_insights');
       if (denied) return err(denied);
@@ -373,7 +375,7 @@ export function registerPaidMediaTools(
     'Use after nevent_list_paid_ad_groups to get a valid adGroupId. ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdGroupComparativeStatsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ad group comparative stats', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_paid_ad_group_comparative_stats');
       if (denied) return err(denied);
@@ -414,7 +416,7 @@ export function registerPaidMediaTools(
     'Advantage+ flags (automaticPlacements, expandAge, expandGender), custom and excluded audiences, bidStrategy, promotedObject. ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdGroupTargetingSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ad group targeting', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_paid_ad_group_targeting');
       if (denied) return err(denied);
@@ -449,7 +451,7 @@ export function registerPaidMediaTools(
     'Returns ad IDs, names, statuses, UTM fields (utmSource, utmMedium, utmCampaign, utmContainsMacros), and lastSyncedAt. ' +
     'Use the returned adId values with nevent_get_paid_ad_creative.',
     ListPaidAdsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'List paid ads', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_list_paid_ads');
       if (denied) return err(denied);
@@ -479,7 +481,7 @@ export function registerPaidMediaTools(
     'For Dynamic Creative Ads (hasDca: true), the dca field contains multiple creative variants. ' +
     'A 404 may mean this tenant is not enrolled in the insights pilot — call nevent_paid_ads_health to confirm.',
     GetPaidAdCreativeSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get paid ad creative', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_paid_ad_creative');
       if (denied) return err(denied);
