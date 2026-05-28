@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump version 1.1.1 → 1.2.0 (minor; new annotation metadata, fully backwards-compatible)
 
+Refs: NEV-1639
+
 ## [1.1.1] - 2026-05-28
 
 ### Fixed

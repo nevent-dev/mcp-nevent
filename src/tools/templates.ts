@@ -795,7 +795,8 @@ export function registerTemplateTools(
     'This call may take up to 60 seconds due to SES delivery. ' +
     'Returns success status, list of recipients the email was sent to, and any error details.',
     SendTestTemplateSchema,
-    { title: 'Send test email', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    // destructiveHint: true — sends a real email via AWS SES to the specified inbox(es); the send is irreversible
+    { title: 'Send test email', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_send_test_template');
       if (denied) return err(denied);
