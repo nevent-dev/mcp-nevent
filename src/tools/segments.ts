@@ -157,7 +157,7 @@ export function registerSegmentTools(
     'nevent_list_segments',
     'Call this FIRST when you need to build or target an audience. Returns all saved segments for the active tenant: id, name, estimated contact count, and last-execution date. Use the returned segment ids to call nevent_get_segment (for the filter definition), nevent_segment_preview (to verify the audience), or nevent_create_campaign (to send a campaign to that segment).',
     ListSegmentsSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List segments', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (_params) => {
       const denied = checkMode('nevent_list_segments');
       if (denied) return err(denied);
@@ -218,7 +218,7 @@ export function registerSegmentTools(
     'nevent_get_segment',
     'Retrieve the complete filter definition of a specific segment (criteria stanzas, operators, values) along with its estimated contact count and metadata. Call this after nevent_list_segments when you need to inspect, clone, or explain a segment\'s logic. Next step: nevent_segment_preview to count the audience, or nevent_update_segment to modify the definition.',
     GetSegmentSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get segment details', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_segment');
       if (denied) return err(denied);
@@ -288,7 +288,7 @@ export function registerSegmentTools(
     '(4) KNOWN LIMITATION: do NOT mix attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the same stanza — put them in separate stanzas. ' +
     'After creation, call nevent_segment_preview to count the audience, then nevent_create_campaign to send to this segment.',
     CreateSegmentSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Create segment', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_create_segment');
       if (denied) return err(denied);
@@ -372,7 +372,7 @@ export function registerSegmentTools(
     'nevent_update_segment',
     'Modify an existing segment\'s name and/or filter definition. Call this after nevent_get_segment to inspect the current definition before changing it. At least one of name or definition must be provided. After update, call nevent_segment_preview to confirm the new audience count before scheduling a campaign.',
     UpdateSegmentSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Update segment', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_update_segment');
       if (denied) return err(denied);

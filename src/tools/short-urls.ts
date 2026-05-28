@@ -47,13 +47,14 @@ import type {
 // Shared annotations
 // ---------------------------------------------------------------------------
 
-const READ_ONLY_ANNOTATIONS = {
+// Base annotation objects — spread these and add `title` per tool registration.
+const READ_ONLY_ANNOTATIONS_BASE = {
   readOnlyHint: true,
   destructiveHint: false,
   openWorldHint: true,
 } as const;
 
-const WRITE_ANNOTATIONS = {
+const WRITE_ANNOTATIONS_BASE = {
   readOnlyHint: false,
   destructiveHint: false,
   openWorldHint: true,
@@ -94,7 +95,7 @@ export function registerShortUrlTools(
     'shortUrl, longUrl, title, tags, clickCount, isActive, isParent. ' +
     'Filter by isActive=true for active links only. Use search to filter by title or URL.',
     ListShortUrlsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'List short URLs', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_list_short_urls');
       if (denied) return err(denied);
@@ -125,7 +126,7 @@ export function registerShortUrlTools(
     'clickCount, lastClickedAt, isActive, isExpired, isParent, parentShortCode, userId, userLinksCount. ' +
     'Use the returned id with nevent_get_short_url_metrics for time-series analytics.',
     GetShortUrlSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get short URL details', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_short_url');
       if (denied) return err(denied);
@@ -152,7 +153,7 @@ export function registerShortUrlTools(
     'Use for performance analysis of individual tracking links. ' +
     'For campaign-wide aggregation across all user links, use nevent_get_short_url_campaign_metrics instead.',
     GetShortUrlMetricsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get short URL metrics', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_short_url_metrics');
       if (denied) return err(denied);
@@ -180,7 +181,7 @@ export function registerShortUrlTools(
     'clicksByDay, clicksByDevice, clicksByBrowser, clicksByCountry. ' +
     'This tool aggregates across ALL child user links — use nevent_get_short_url_metrics(id) when you need per-link breakdown for a single URL.',
     GetShortUrlCampaignMetricsSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get short URL campaign metrics', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_short_url_campaign_metrics');
       if (denied) return err(denied);
@@ -214,7 +215,7 @@ export function registerShortUrlTools(
     'Use for detailed click attribution, fraud detection, or per-user behavior analysis. ' +
     'Default returns 100 most recent clicks; use limit to adjust.',
     GetShortUrlClicksSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'Get short URL click events', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_get_short_url_clicks');
       if (denied) return err(denied);
@@ -240,7 +241,7 @@ export function registerShortUrlTools(
     'Returns an array of ShortUrlDTO — each with userId, shortCode, shortUrl, clickCount. ' +
     'Use the returned `id` values with nevent_get_short_url_metrics for per-user analytics.',
     ListShortUrlUserLinksSchema,
-    READ_ONLY_ANNOTATIONS,
+    { title: 'List short URL user links', ...READ_ONLY_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_list_short_url_user_links');
       if (denied) return err(denied);
@@ -272,7 +273,7 @@ export function registerShortUrlTools(
     'WRITE operation — requires STANDARD or FULL operation mode. ' +
     'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call.',
     CreateShortUrlSchema,
-    WRITE_ANNOTATIONS,
+    { title: 'Create short URL', ...WRITE_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_create_short_url');
       if (denied) return err(denied);
@@ -308,7 +309,7 @@ export function registerShortUrlTools(
     'WRITE operation — requires STANDARD or FULL operation mode. ' +
     'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call.',
     UpdateShortUrlSchema,
-    WRITE_ANNOTATIONS,
+    { title: 'Update short URL', ...WRITE_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_update_short_url');
       if (denied) return err(denied);
@@ -351,7 +352,7 @@ export function registerShortUrlTools(
     'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call. ' +
     'Note: parentShortCode is sent in both the URL path and request body — they must match (validated server-side).',
     CreateBulkUserShortUrlsSchema,
-    WRITE_ANNOTATIONS,
+    { title: 'Create bulk user short URLs', ...WRITE_ANNOTATIONS_BASE },
     async (params) => {
       const denied = checkMode('nevent_create_bulk_user_short_urls');
       if (denied) return err(denied);

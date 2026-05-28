@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-28
+
+### Added
+- Tool annotations: all 52 tools now declare a human-readable `title` field (capitalised, no `nevent_` prefix), surfaced in the Anthropic Connectors Directory and any MCP client that renders tool metadata
+- Tool hints: 17 tools that were missing `readOnlyHint`/`destructiveHint` now declare them explicitly — 10 paid-media tools and 7 short-URL tools all set `readOnlyHint: true, destructiveHint: false`; `nevent_schedule_campaign` keeps `destructiveHint: true` as it triggers irreversible delivery
+
+### Changed
+- Bump version 1.1.1 → 1.2.0 (minor; new annotation metadata, fully backwards-compatible)
+
+Refs: NEV-1639
+
 ## [1.1.1] - 2026-05-28
 
 ### Fixed
@@ -39,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Previous versions were internal-only and are not documented here
 
+[1.2.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.2.0
 [1.1.1]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.1
 [1.1.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.0
 [1.0.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.0.0

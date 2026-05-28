@@ -99,7 +99,7 @@ export function registerCampaignTools(
     'nevent_list_campaigns',
     'Call this to discover existing campaigns before reporting on performance or scheduling new sends. Returns campaigns for the active tenant with status, channel, send date, and top-level engagement metrics (sent, open rate, click rate). Filter by status (DRAFT/SCHEDULED/SENT/FAILED), channel (EMAIL/SMS), or date range. Use the returned campaign _id to call nevent_get_campaign (full content + metrics) or nevent_get_campaign_insights (AI analysis).',
     ListCampaignsSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List campaigns', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_list_campaigns');
       if (denied) return err(denied);
@@ -212,7 +212,7 @@ export function registerCampaignTools(
     'nevent_get_campaign',
     'Retrieve the complete record of a campaign: email subject and body HTML, sending profile, all delivery and engagement metrics (sent, delivered, opens, clicks, unsubscribes, bounces), and tracked links with click counts. Call this after nevent_list_campaigns to drill into a specific campaign. Next step: nevent_get_campaign_insights for AI-generated recommendations, or nevent_campaign_report for a full analytics query.',
     GetCampaignSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get campaign details', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_campaign');
       if (denied) return err(denied);
@@ -343,7 +343,7 @@ export function registerCampaignTools(
     'nevent_get_campaign_insights',
     'Get pre-computed AI analysis for a specific campaign: performance summary, detected anomalies (e.g. unusually high bounce rate), and improvement recommendations. Call this after nevent_get_campaign when the user asks "how did this campaign perform?" or "what could be improved?". Complements raw metrics from nevent_get_campaign with narrative insights.',
     GetCampaignInsightsSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get campaign AI insights', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_campaign_insights');
       if (denied) return err(denied);

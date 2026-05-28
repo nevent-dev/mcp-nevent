@@ -184,7 +184,7 @@ export function registerTemplateTools(
     'nevent_list_templates',
     'Call this to discover available email templates before creating a campaign. Returns templates for the active tenant: id, name, tags, and whether they use MJML or HTML. Use the returned template id in nevent_create_campaign. Call nevent_get_template to inspect the full HTML/MJML source of a specific template.',
     ListTemplatesSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List email templates', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_list_templates');
       if (denied) return err(denied);
@@ -277,7 +277,7 @@ export function registerTemplateTools(
     'nevent_get_template',
     'Retrieve the full content of an email template: MJML source, rendered HTML, subject line, tags, and usage metrics (how many campaigns used this template). Call this after nevent_list_templates when the user wants to inspect, copy, or modify a template. Next step: nevent_update_template to change the content, or nevent_create_campaign to use this template in a new campaign.',
     GetTemplateSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get email template', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_get_template');
       if (denied) return err(denied);
@@ -392,7 +392,7 @@ export function registerTemplateTools(
     'nevent_create_template',
     'Create and persist a new email template with MJML or raw HTML content. Prefer MJML for responsive email (set content_type="MJML"). The template is saved and available for reuse across campaigns. After creation, call nevent_create_campaign with the returned template id to send it to a segment.',
     CreateTemplateSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Create email template', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_create_template');
       if (denied) return err(denied);
@@ -502,7 +502,7 @@ export function registerTemplateTools(
     'nevent_update_template',
     'Update an existing email template: change the name, MJML/HTML content, or tags. Call nevent_get_template first to inspect the current version before modifying. At least one of name, content, or tags must be provided. Note: updating a template does NOT retroactively change campaigns already sent with it.',
     UpdateTemplateSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Update email template', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_update_template');
       if (denied) return err(denied);
@@ -656,7 +656,7 @@ export function registerTemplateTools(
     'Returns the new cloned template (id, name with "(Copy)" suffix, format, tags). ' +
     'Typically follow with nevent_rename_template and nevent_update_template to customize the clone.',
     CloneTemplateSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Clone email template', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_clone_template');
       if (denied) return err(denied);
@@ -698,7 +698,7 @@ export function registerTemplateTools(
     'Returns the updated template with the new name. ' +
     'Next step: nevent_update_template to change content, or nevent_preview_template to validate rendering.',
     RenameTemplateSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Rename email template', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_rename_template');
       if (denied) return err(denied);
@@ -740,7 +740,7 @@ export function registerTemplateTools(
     'Always call before nevent_send_test_template to validate rendering. ' +
     'Provide sample_user_id or sample_user_email to see real personalization; omit both to see raw tags only.',
     PreviewTemplateSchema,
-    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Preview template rendering', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_preview_template');
       if (denied) return err(denied);
@@ -795,7 +795,8 @@ export function registerTemplateTools(
     'This call may take up to 60 seconds due to SES delivery. ' +
     'Returns success status, list of recipients the email was sent to, and any error details.',
     SendTestTemplateSchema,
-    { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    // destructiveHint: true — sends a real email via AWS SES to the specified inbox(es); the send is irreversible
+    { title: 'Send test email', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async (params) => {
       const denied = checkMode('nevent_send_test_template');
       if (denied) return err(denied);
