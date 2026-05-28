@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-28
+
 ### Added
-- npm package published as `mcp-nevent`
-- Listed in the official MCP Registry (`io.github.nevent-dev/mcp-nevent`)
+- 9 Short URL tools (Tier 1+2+3): list, get, metrics (overall + per-campaign), clicks, user links, create, update, bulk user short URLs
+- `mcp-nevent` published to npm registry
+- Listed in the official MCP Registry as `io.github.nevent-dev/mcp-nevent`
 - GitHub Action for auto-publish on `v*` tags
+
+### Fixed
+- Manifest endpoint URL — server listens on `/`, not `/mcp`
+- Segments preview/execute were broken due to missing auto-generated DSL IDs; now propagates API error strings instead of generic 500
 
 ## [1.0.0] - 2026-05-16
 
@@ -27,4 +34,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Previous versions were internal-only and are not documented here
 
+[1.1.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.0
 [1.0.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.0.0
