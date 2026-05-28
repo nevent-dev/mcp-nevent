@@ -68,6 +68,7 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { pinoHttp } from 'pino-http';
 import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -82,6 +83,7 @@ import { TokenService } from '../auth/token-service.js';
 import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
+import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -298,17 +300,51 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // Global middleware
+  // HTTP request logger (pino-http)
+  //
+  // Mounted after Helmet so security headers are already applied when the
+  // logger middleware runs. Emits one structured log line per request with
+  // method, URL, status code, response time, and a unique request ID.
+  //
+  // The `req.headers.authorization` field is redacted by the shared logger's
+  // redact list, so tokens never appear in the log sink.
   // -------------------------------------------------------------------------
 
-  // Global request logger — captures every request before any other middleware
-  app.use((req: Request, res: Response, next: () => void) => {
-    const start = Date.now();
-    res.on('finish', () => {
-      console.error(`[nevent-mcp] ${req.method} ${req.path} | status=${res.statusCode} | ${Date.now() - start}ms | auth=${req.headers['authorization'] ? 'yes' : 'no'} | origin=${req.headers['origin'] ?? '-'}`);
-    });
-    next();
-  });
+  app.use(
+    pinoHttp({
+      logger,
+      /**
+       * Assign log level based on response outcome:
+       * - 5xx or thrown error → error
+       * - 4xx → warn
+       * - everything else → info
+       */
+      customLogLevel: (_req: import('http').IncomingMessage, res: import('http').ServerResponse, err?: Error) => {
+        if (err || res.statusCode >= 500) return 'error';
+        if (res.statusCode >= 400) return 'warn';
+        return 'info';
+      },
+      /** Human-readable success summary line. */
+      customSuccessMessage: (req: import('http').IncomingMessage, res: import('http').ServerResponse) =>
+        `${req.method ?? '-'} ${req.url ?? '-'} ${res.statusCode}`,
+      /** Human-readable error summary line. */
+      customErrorMessage: (req: import('http').IncomingMessage, res: import('http').ServerResponse, err: Error) =>
+        `${req.method ?? '-'} ${req.url ?? '-'} ${res.statusCode}: ${err.message}`,
+      /** Trim request serialisation to avoid duplicating header data. */
+      serializers: {
+        req: (req: import('pino-std-serializers').SerializedRequest) => ({
+          method: req.method,
+          url: req.url,
+          remoteAddress: req.remoteAddress,
+        }),
+        res: (res: import('pino-std-serializers').SerializedResponse) => ({ statusCode: res.statusCode }),
+      },
+    })
+  );
+
+  // -------------------------------------------------------------------------
+  // Global middleware
+  // -------------------------------------------------------------------------
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -325,9 +361,9 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     : '*';
 
   if (allowedOriginsEnv) {
-    console.error(`[nevent-mcp] CORS restricted to: ${allowedOriginsEnv}`);
+    logger.info({ allowedOrigins: allowedOriginsEnv }, 'CORS restricted to configured origins');
   } else {
-    console.error('[nevent-mcp] CORS origin: * (set MCP_ALLOWED_ORIGINS for production)');
+    logger.warn('CORS origin: * — set MCP_ALLOWED_ORIGINS for production');
   }
 
   app.use(
@@ -363,11 +399,21 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
 
   app.post('/authorize', authRateLimiter, async (req: Request, res: Response): Promise<void> => {
-    console.error(`[nevent-mcp] POST /authorize | email=${req.body?.email ?? 'missing'} client_id=${req.body?.client_id ?? 'missing'} redirect_uri=${req.body?.redirect_uri ?? 'missing'}`);
+    logger.info(
+      {
+        // email is not a secret, but we omit it here to avoid PII in logs by default.
+        // client_id and redirect_uri are safe to log for audit traceability.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        client_id: req.body?.client_id ?? 'missing',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        redirect_uri: req.body?.redirect_uri ?? 'missing',
+      },
+      'POST /authorize'
+    );
     try {
       await provider.handleLoginPost(req.body as Parameters<typeof provider.handleLoginPost>[0], res);
     } catch (err) {
-      console.error('[nevent-mcp] Error in POST /authorize:', err);
+      logger.error({ err }, 'Error in POST /authorize');
       if (!res.headersSent) {
         res.status(500).send('Internal server error during authorization');
       }
@@ -403,7 +449,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
 
   app.post('/', (req: Request, _res: Response, next: () => void) => {
-    console.error(`[nevent-mcp] POST /mcp | session=${req.headers['mcp-session-id'] ?? 'new'} auth=${req.headers['authorization'] ? 'present' : 'missing'}`);
+    logger.debug(
+      {
+        sessionId: req.headers['mcp-session-id'] ?? 'new',
+        auth: req.headers['authorization'] ? 'present' : 'missing',
+      },
+      'POST /mcp'
+    );
     next();
   }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -466,17 +518,21 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
             jwtToken: effectiveToken,
           });
 
-          console.error(
-            `[nevent-mcp] Session clients created | userId=${sessionUserId} ` +
-            `homeTenant=${sessionHomeTenantId ?? 'none'} ` +
-            `tokenType=mcp_bearer mode=${OPERATION_MODE}`
+          logger.info(
+            {
+              userId: sessionUserId,
+              homeTenant: sessionHomeTenantId ?? 'none',
+              tokenType: 'mcp_bearer',
+              mode: OPERATION_MODE,
+            },
+            'Session clients created'
           );
         } catch (tokenErr) {
           // If token verification fails at this point, the bearerAuth middleware
           // already validated it, so this should not happen in practice.
           // Fall back to creating clients without a valid token — the
           // first tool call will return a 401 from data-api.
-          console.error('[nevent-mcp] Warning: Could not extract userId from bearer token:', tokenErr);
+          logger.warn({ err: tokenErr }, 'Could not extract userId from bearer token — falling back to empty token');
           sessionDataClient = new DataClient({
             baseUrl: config.dataApiUrl,
             jwtToken: '',
@@ -500,7 +556,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
-            console.error(`[nevent-mcp] Session initialized: ${newSessionId}`);
+            logger.info({ sessionId: newSessionId }, 'Session initialized');
             activeSessions[newSessionId] = {
               transport,
               dataClient: sessionDataClient,
@@ -513,7 +569,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         transport.onclose = () => {
           const sid = transport.sessionId;
           if (sid && activeSessions[sid]) {
-            console.error(`[nevent-mcp] Session closed: ${sid}`);
+            logger.info({ sessionId: sid }, 'Session closed');
             delete activeSessions[sid];
           }
         };
@@ -549,7 +605,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         id: null,
       });
     } catch (err) {
-      console.error('[nevent-mcp] Error handling POST /mcp:', err);
+      logger.error({ err }, 'Error handling POST /mcp');
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
@@ -574,13 +630,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
     const lastEventId = req.headers['last-event-id'];
     if (lastEventId) {
-      console.error(`[nevent-mcp] SSE resume | session=${sessionId} lastEventId=${lastEventId}`);
+      logger.debug({ sessionId, lastEventId }, 'SSE resume');
     }
 
     try {
       await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
-      console.error('[nevent-mcp] Error handling GET /mcp:', err);
+      logger.error({ err }, 'Error handling GET /mcp');
       if (!res.headersSent) {
         res.status(500).send('Internal server error');
       }
@@ -599,12 +655,12 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       return;
     }
 
-    console.error(`[nevent-mcp] Session termination requested: ${sessionId}`);
+    logger.info({ sessionId }, 'Session termination requested');
 
     try {
       await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
-      console.error('[nevent-mcp] Error handling DELETE /mcp:', err);
+      logger.error({ err }, 'Error handling DELETE /mcp');
       if (!res.headersSent) {
         res.status(500).send('Error processing session termination');
       }
@@ -629,14 +685,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       ([, { createdAt }]) => now - createdAt.getTime() > SESSION_MAX_AGE_MS
     );
     for (const [sid] of orphaned) {
-      console.error(`[nevent-mcp] Cleaning up orphaned session: ${sid}`);
+      logger.info({ sessionId: sid }, 'Cleaning up orphaned session');
       activeSessions[sid].transport.close().catch(() => {
         // Ignore errors during cleanup — session may already be closed
       });
       delete activeSessions[sid];
     }
     if (orphaned.length > 0) {
-      console.error(`[nevent-mcp] Cleaned up ${orphaned.length} orphaned session(s)`);
+      logger.info({ count: orphaned.length }, 'Orphaned sessions cleaned up');
     }
   }, SESSION_MAX_AGE_MS);
 
@@ -648,7 +704,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
 
   const shutdown = async (): Promise<void> => {
-    console.error('[nevent-mcp] Shutting down HTTP transport...');
+    logger.info('Shutting down HTTP transport...');
     clearInterval(cleanupInterval);
     const sessionIds = Object.keys(activeSessions);
     await Promise.allSettled(
@@ -657,12 +713,12 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           await activeSessions[sid].transport.close();
           delete activeSessions[sid];
         } catch (err) {
-          console.error(`[nevent-mcp] Error closing session ${sid}:`, err);
+          logger.error({ err, sessionId: sid }, 'Error closing session during shutdown');
         }
       })
     );
     await stores.mongoClient.close();
-    console.error('[nevent-mcp] HTTP transport shutdown complete');
+    logger.info('HTTP transport shutdown complete');
   };
 
   return { app, shutdown };
