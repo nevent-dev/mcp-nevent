@@ -33,6 +33,7 @@ import { PaidMediaClient } from './paid-media-client.js';
 import { TemplateClient } from './template-client.js';
 import { ShortUrlClient } from './short-url-client.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -234,9 +235,7 @@ export class SessionClients {
       });
 
       if (!response.ok) {
-        console.error(
-          `[nevent-mcp] Token refresh failed: HTTP ${response.status}`
-        );
+        logger.warn({ status: response.status }, 'Token refresh failed');
         return null;
       }
 
@@ -249,17 +248,17 @@ export class SessionClients {
         | undefined;
 
       if (!newAccessToken) {
-        console.error('[nevent-mcp] Token refresh: no access_token in response');
+        logger.warn('Token refresh: no access_token in response');
         return null;
       }
 
       // Persist both tokens
       this.rotateTokens(newAccessToken, newRefreshToken ?? this.refreshToken);
 
-      console.error('[nevent-mcp] Token refreshed successfully');
+      logger.info('Token refreshed successfully');
       return newAccessToken;
     } catch (err) {
-      console.error('[nevent-mcp] Token refresh error:', err);
+      logger.error({ err }, 'Token refresh error');
       return null;
     }
   }

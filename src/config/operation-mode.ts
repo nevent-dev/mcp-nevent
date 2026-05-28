@@ -14,6 +14,8 @@
  * that are gated by operation mode.
  */
 
+import { logger } from '../logger.js';
+
 export type OperationMode = 'READ_ONLY' | 'STANDARD' | 'FULL';
 
 /**
@@ -45,10 +47,7 @@ export const OPERATION_MODE: OperationMode = VALID_MODES.has(rawMode as Operatio
   : 'READ_ONLY';
 
 if (rawMode && !VALID_MODES.has(rawMode as OperationMode)) {
-  console.error(
-    `[nevent-mcp] Invalid NEVENT_OPERATION_MODE value: "${rawMode}". ` +
-    `Valid values are: READ_ONLY, STANDARD, FULL. Defaulting to READ_ONLY.`
-  );
+  logger.warn({ rawMode }, 'Invalid NEVENT_OPERATION_MODE value — valid values are: READ_ONLY, STANDARD, FULL. Defaulting to READ_ONLY.');
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +159,7 @@ export function isOperationAllowed(toolName: string): boolean {
   const operationType = TOOL_OPERATIONS[toolName];
 
   if (!operationType) {
-    console.warn(`[nevent-mcp] Unknown tool "${toolName}". Allowing operation (fail-open).`);
+    logger.warn({ toolName }, 'Unknown tool — allowing operation (fail-open).');
     return true;
   }
 

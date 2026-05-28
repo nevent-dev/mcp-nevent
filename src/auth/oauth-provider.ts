@@ -39,6 +39,7 @@
 import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import { logger } from '../logger.js';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
@@ -136,9 +137,9 @@ async function validateNeventCredentials(
   } catch (err) {
     // AbortError is thrown by AbortSignal.timeout — treat as transient failure
     if (err instanceof Error && err.name === 'AbortError') {
-      console.error('[nevent-mcp] Timeout calling Nevent auth API (10s)');
+      logger.warn('Timeout calling Nevent auth API (10s)');
     } else {
-      console.error('[nevent-mcp] Error calling Nevent auth API:', err);
+      logger.error({ err }, 'Error calling Nevent auth API');
     }
     return null;
   }
@@ -439,11 +440,11 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     _redirectUri?: string,
     resource?: URL
   ): Promise<OAuthTokens> {
-    console.error(`[nevent-mcp] Token exchange | client=${client.client_id} code=${authorizationCode.slice(0, 8)}... resource=${resource?.toString() ?? 'none'}`);
+    logger.info({ clientId: client.client_id, codePrefix: authorizationCode.slice(0, 8), resource: resource?.toString() ?? 'none' }, 'Token exchange initiated');
     const codeDoc = await this.stores.authCodes.find(authorizationCode);
 
     if (!codeDoc) {
-      console.error(`[nevent-mcp] Token exchange FAILED | code not found or expired`);
+      logger.warn('Token exchange failed — code not found or expired');
       throw new Error('Invalid or expired authorization code');
     }
 
@@ -487,10 +488,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     };
     await this.stores.refreshTokens.save(refreshDoc);
 
-    console.error(
-      `[nevent-mcp] Token issued | userId=${codeDoc.userId} clientId=${client.client_id} ` +
-      `scopes=${scopes.join(',')} expiresAt=${expiresAt}`
-    );
+    logger.info({ userId: codeDoc.userId, clientId: client.client_id, scopes, expiresAt }, 'Token issued');
 
     return {
       access_token: accessToken,
@@ -585,10 +583,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     };
     await this.stores.refreshTokens.save(newRefreshDoc);
 
-    console.error(
-      `[nevent-mcp] Token refreshed | userId=${refreshDoc.userId} clientId=${client.client_id} ` +
-      `scopes=${grantedScopes.join(',')} expiresAt=${expiresAt}`
-    );
+    logger.info({ userId: refreshDoc.userId, clientId: client.client_id, scopes: grantedScopes, expiresAt }, 'Token refreshed');
 
     return {
       access_token: accessToken,
@@ -616,7 +611,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     try {
       const claims = this.tokenService.verifyAccessToken(token);
-      console.error(`[nevent-mcp] Token verified | sub=${claims.sub} role=${claims.role} tenant=${claims.tenantId}`);
+      logger.debug({ sub: claims.sub, role: claims.role, tenantId: claims.tenantId }, 'Token verified');
       return {
         token,
         clientId: claims.clientId,
@@ -625,7 +620,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
         ...(claims.aud && { resource: new URL(claims.aud) }),
       };
     } catch (verifyErr) {
-      console.error(`[nevent-mcp] Token verification FAILED |`, verifyErr);
+      logger.warn({ err: verifyErr }, 'Token verification failed');
       throw verifyErr;
     }
   }
@@ -686,25 +681,17 @@ export class NeventOAuthProvider implements OAuthServerProvider {
 
     if (token_type_hint === 'refresh_token') {
       await this.stores.refreshTokens.consume(token);
-      console.error(`[nevent-mcp] Refresh token revoked`);
+      logger.info('Refresh token revoked');
     } else if (token_type_hint === 'access_token') {
       // Access tokens are stateless JWTs — immediate revocation is not supported.
       // The token will expire naturally within 1 hour.
-      console.error(
-        '[nevent-mcp] WARNING: Access token revocation requested but stateless JWTs ' +
-        'cannot be revoked before expiry. The token will expire in at most 1 hour. ' +
-        'To prevent new access tokens from being issued, revoke the associated refresh token.'
-      );
+      logger.warn('Access token revocation requested but stateless JWTs cannot be revoked before expiry — token will expire within 1 hour. Revoke the associated refresh token to prevent new access tokens from being issued.');
     } else {
       // Hint not provided — try to revoke as refresh token (most common case).
       // Log a warning for access tokens since we cannot immediately revoke them.
       await this.stores.refreshTokens.consume(token).catch(() => {
         // Not a refresh token — may be an access token
-        console.error(
-          '[nevent-mcp] WARNING: Token not found in refresh token store. ' +
-          'If this was an access token, it cannot be immediately revoked (stateless JWT). ' +
-          'It will expire in at most 1 hour.'
-        );
+        logger.warn('Token not found in refresh token store — if this was an access token, it cannot be immediately revoked (stateless JWT) and will expire within 1 hour.');
       });
     }
   }

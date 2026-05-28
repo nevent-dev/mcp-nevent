@@ -45,6 +45,7 @@ import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { CreateCampaignSchema, ScheduleCampaignSchema } from '../schemas/campaign-actions.js';
+import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // Rate limiter (in-memory, per-tenant, sliding window)
@@ -270,18 +271,15 @@ export function registerCampaignActionTools(
         incrementRateLimit(rateLimitKey);
 
         // --- Structured audit log ---
-        console.error(
-          JSON.stringify({
-            event: 'campaign_created',
-            tool: 'nevent_create_campaign',
-            campaignId: campaign.id,
-            campaignName: campaign.name,
-            channel: campaign.channel ?? params.channel,
-            status: campaign.status,
-            tenantId: campaign.tenantId ?? rateLimitKey,
-            timestamp: new Date().toISOString(),
-          })
-        );
+        logger.info({
+          event: 'campaign_created',
+          tool: 'nevent_create_campaign',
+          campaignId: campaign.id,
+          campaignName: campaign.name,
+          channel: campaign.channel ?? params.channel,
+          status: campaign.status,
+          tenantId: campaign.tenantId ?? rateLimitKey,
+        }, 'Campaign created');
 
         return ok({
           campaign,
@@ -452,19 +450,16 @@ export function registerCampaignActionTools(
         const updatedCampaign = await patchResponse.json() as CampaignRecord;
 
         // --- Structured audit log ---
-        console.error(
-          JSON.stringify({
-            event: 'campaign_scheduled',
-            tool: 'nevent_schedule_campaign',
-            campaignId: params.campaign_id,
-            campaignName: updatedCampaign.name ?? existingCampaign.name,
-            scheduledTime: params.scheduled_time,
-            previousStatus: existingCampaign.status,
-            newStatus: updatedCampaign.status,
-            tenantId: updatedCampaign.tenantId ?? existingCampaign.tenantId,
-            timestamp: new Date().toISOString(),
-          })
-        );
+        logger.info({
+          event: 'campaign_scheduled',
+          tool: 'nevent_schedule_campaign',
+          campaignId: params.campaign_id,
+          campaignName: updatedCampaign.name ?? existingCampaign.name,
+          scheduledTime: params.scheduled_time,
+          previousStatus: existingCampaign.status,
+          newStatus: updatedCampaign.status,
+          tenantId: updatedCampaign.tenantId ?? existingCampaign.tenantId,
+        }, 'Campaign scheduled');
 
         return ok({
           campaign: updatedCampaign,

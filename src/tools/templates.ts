@@ -63,6 +63,7 @@ import type { DataClient } from '../clients/data-client.js';
 import type { TemplateClient } from '../clients/template-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { logger } from '../logger.js';
 import {
   ListTemplatesSchema,
   GetTemplateSchema,
@@ -476,18 +477,15 @@ export function registerTemplateTools(
         const template = projectTemplate(rawTemplate);
 
         // Audit log for write operation
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_create_template',
-            tenantId: tenantId ?? 'default',
-            timestamp: new Date().toISOString(),
-            operation: 'create',
-            outcome: 'success',
-            templateId: template['id'],
-            templateName: template['name'],
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_create_template',
+          tenantId: tenantId ?? 'default',
+          operation: 'create',
+          outcome: 'success',
+          templateId: template['id'],
+          templateName: template['name'],
+        }, 'Template created');
 
         return ok({ template });
       } catch (caught) {
@@ -620,18 +618,15 @@ export function registerTemplateTools(
           (field) => params[field as keyof typeof params] !== undefined
         );
 
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_update_template',
-            tenantId: tenantId ?? 'default',
-            timestamp: new Date().toISOString(),
-            operation: 'update',
-            outcome: 'success',
-            templateId: params.template_id,
-            updatedFields,
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_update_template',
+          tenantId: tenantId ?? 'default',
+          operation: 'update',
+          outcome: 'success',
+          templateId: params.template_id,
+          updatedFields,
+        }, 'Template updated');
 
         return ok({ template });
       } catch (caught) {
@@ -646,10 +641,7 @@ export function registerTemplateTools(
   // -------------------------------------------------------------------------
 
   if (!templateClient) {
-    console.warn(
-      '[nevent-mcp] templateClient not available — clone/rename/preview/send_test tools not registered. ' +
-      'Ensure SessionClients is wired in createNeventServer options.'
-    );
+    logger.warn('templateClient not available — clone/rename/preview/send_test tools not registered. Ensure SessionClients is wired in createNeventServer options.');
     return;
   }
 
@@ -678,18 +670,15 @@ export function registerTemplateTools(
         const template = projectTemplate(raw as unknown as Record<string, unknown>);
 
         // Audit log
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_clone_template',
-            tenantId: tenantId ?? 'unknown',
-            timestamp: new Date().toISOString(),
-            operation: 'clone',
-            outcome: 'success',
-            sourceTemplateId: params.template_id,
-            clonedTemplateId: template['id'],
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_clone_template',
+          tenantId: tenantId ?? 'unknown',
+          operation: 'clone',
+          outcome: 'success',
+          sourceTemplateId: params.template_id,
+          clonedTemplateId: template['id'],
+        }, 'Template cloned');
 
         return ok({ template });
       } catch (caught) {
@@ -722,18 +711,15 @@ export function registerTemplateTools(
         const template = projectTemplate(raw as unknown as Record<string, unknown>);
 
         // Audit log
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_rename_template',
-            tenantId: tenantId ?? 'unknown',
-            timestamp: new Date().toISOString(),
-            operation: 'rename',
-            outcome: 'success',
-            templateId: params.template_id,
-            newName: params.name,
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_rename_template',
+          tenantId: tenantId ?? 'unknown',
+          operation: 'rename',
+          outcome: 'success',
+          templateId: params.template_id,
+          newName: params.name,
+        }, 'Template renamed');
 
         return ok({ template });
       } catch (caught) {
@@ -844,18 +830,15 @@ export function registerTemplateTools(
         const result = await templateClient.sendTestEmail(params.template_id, body);
 
         // Audit log (regardless of success/failure — both are meaningful)
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_send_test_template',
-            tenantId: tenantId ?? 'unknown',
-            timestamp: new Date().toISOString(),
-            operation: 'send_test',
-            outcome: result.success ? 'success' : 'failure',
-            templateId: params.template_id,
-            recipientCount: params.emails.length,
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_send_test_template',
+          tenantId: tenantId ?? 'unknown',
+          operation: 'send_test',
+          outcome: result.success ? 'success' : 'failure',
+          templateId: params.template_id,
+          recipientCount: params.emails.length,
+        }, 'Template test email sent');
 
         return ok({ result });
       } catch (caught) {

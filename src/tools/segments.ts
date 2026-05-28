@@ -36,6 +36,7 @@ import type { DataClient } from '../clients/data-client.js';
 import type { SegmentRecord, ListSegmentsResponse } from '../types/segments.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { logger } from '../logger.js';
 import {
   ListSegmentsSchema,
   GetSegmentSchema,
@@ -346,18 +347,15 @@ export function registerSegmentTools(
         const segment = projectSegment(rawSegment);
 
         // Audit log for write operation
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_create_segment',
-            tenantId: tenantId ?? 'default',
-            timestamp: new Date().toISOString(),
-            operation: 'create',
-            outcome: 'success',
-            segmentId: segment.id,
-            segmentName: segment.name,
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_create_segment',
+          tenantId: tenantId ?? 'default',
+          operation: 'create',
+          outcome: 'success',
+          segmentId: segment.id,
+          segmentName: segment.name,
+        }, 'Segment created');
 
         return ok({ segment });
       } catch (caught) {
@@ -461,21 +459,18 @@ export function registerSegmentTools(
         const segment = projectSegment(rawSegment);
 
         // Audit log for write operation
-        console.error(
-          JSON.stringify({
-            audit: true,
-            tool: 'nevent_update_segment',
-            tenantId: tenantId ?? 'default',
-            timestamp: new Date().toISOString(),
-            operation: 'update',
-            outcome: 'success',
-            segmentId: params.segment_id,
-            updatedFields: [
-              ...(params.name !== undefined ? ['name'] : []),
-              ...(params.definition !== undefined ? ['definition'] : []),
-            ],
-          })
-        );
+        logger.info({
+          audit: true,
+          tool: 'nevent_update_segment',
+          tenantId: tenantId ?? 'default',
+          operation: 'update',
+          outcome: 'success',
+          segmentId: params.segment_id,
+          updatedFields: [
+            ...(params.name !== undefined ? ['name'] : []),
+            ...(params.definition !== undefined ? ['definition'] : []),
+          ],
+        }, 'Segment updated');
 
         return ok({ segment });
       } catch (caught) {
