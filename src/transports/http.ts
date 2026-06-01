@@ -71,11 +71,14 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-import { createNeventServer } from '../server.js';
+import { createNeventServer, getToolCount } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
@@ -84,6 +87,23 @@ import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+
+// ---------------------------------------------------------------------------
+// Package metadata — read once at module load time, cached for the process
+// lifetime. Never re-read on each request.
+// ---------------------------------------------------------------------------
+
+/**
+ * Semantic version string read from package.json at startup.
+ * Used in /health and /.well-known/mcp-manifest.json responses so that
+ * deployed containers always report their actual version rather than the
+ * hardcoded string that was present before NEV-1661.
+ */
+const PKG_VERSION: string = (() => {
+  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
+  return pkg.version;
+})();
 
 // ---------------------------------------------------------------------------
 // Config
@@ -269,7 +289,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       name: 'nevent',
       displayName: 'Nevent',
       description: 'Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT',
-      version: '1.0.0',
+      version: PKG_VERSION,
       homepage: 'https://nevent.ai/en/features/nevent-ai/',
       documentation: 'https://docs.nevent.ai/mcp',
       repository: 'https://github.com/nevent-dev/mcp-nevent',
@@ -283,7 +303,12 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
       },
       categories: ['marketing', 'analytics', 'crm', 'events'],
-      tools_count: 52,
+      tools_count: getToolCount({
+        hasNeventApiUrl: true,
+        hasMongoUri: true,
+        hasPaidMediaClient: true,
+        hasShortUrlClient: true,
+      }),
     });
   });
 
@@ -298,9 +323,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       status: 'ok',
       service: 'nevent-mcp',
       transport: 'http',
-      version: '1.0.0',
+      version: PKG_VERSION,
       commitSha: process.env['GIT_COMMIT_SHA'] ?? 'unknown',
-      toolsCount: 52,
+      toolsCount: getToolCount({
+        hasNeventApiUrl: true,
+        hasMongoUri: true,
+        hasPaidMediaClient: true,
+        hasShortUrlClient: true,
+      }),
       activeSessions: Object.keys(activeSessions).length,
       timestamp: new Date().toISOString(),
     });
