@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-06-01
+
+### Fixed
+- OAuth /authorize form submit was blocked by CSP form-action 'self' when the login page is loaded in a sandboxed iframe by Claude.ai. Now declares the absolute URL https://mcp.nevent.ai alongside 'self'.
+
+Refs: NEV-1648
+
 ## [1.2.0] - 2026-05-28
 
 ### Added

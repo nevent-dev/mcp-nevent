@@ -240,6 +240,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           ],
           connectSrc: ["'self'"],
           frameAncestors: ["'none'"],
+          // Sandboxed iframes (Claude.ai, ChatGPT) assign an opaque origin to the
+          // document, so 'self' no longer matches https://mcp.nevent.ai. Declaring
+          // the absolute URL makes the form-action check origin-independent.
+          formAction: ["'self'", 'https://mcp.nevent.ai'],
         },
       },
       crossOriginEmbedderPolicy: false,
