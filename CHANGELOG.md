@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-01
+
+### Added
+- `openWorldHint: true` on all 51 tools that call the Nevent API over HTTPS
+  (analytics, campaigns, campaign-actions, segments, templates, deliverability,
+  paid-media, short-urls, tenants). Required by the OpenAI ChatGPT Apps Directory
+  to signal that each tool interacts with external systems.
+- `openWorldHint: false` on `nevent_help` (pure local meta-tool — never makes an
+  external HTTP call, returns static markdown only).
+
+### Notes
+- No existing `readOnlyHint` or `destructiveHint` values were changed.
+- No tool descriptions, titles, or input schemas were modified.
+- Minor version bump signals a new optional metadata field (fully backwards-compatible).
+
+Refs: NEV-1651
+
 ## [1.2.3] - 2026-06-01
 
 ### Fixed
@@ -64,6 +81,9 @@ Refs: NEV-1639
 
 - Previous versions were internal-only and are not documented here
 
+[1.3.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.3.0
+[1.2.3]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.2.3
+[1.2.2]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.2.2
 [1.2.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.2.0
 [1.1.1]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.1
 [1.1.0]: https://github.com/nevent-dev/mcp-nevent/releases/tag/v1.1.0
