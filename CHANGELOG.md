@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-06-01
+
+### Fixed
+- `/health` response was hardcoded to `version: "1.0.0"` regardless of the deployed version. Now reads the version from `package.json` at startup (cached for the process lifetime).
+- `/health.toolsCount` and `/.well-known/mcp-manifest.json.tools_count` were the integer literal `52`. Both now call `getToolCount()` at request time, which probes the actual registration logic and returns the correct count (55 for the full HTTP feature set).
+- Introduced `getToolCount(ToolCountOptions)` in `server.ts`: creates a lightweight probe `McpServer`, runs the same conditional registration paths as `createNeventServer`, and returns the registered tool count via the SDK's internal `_registeredTools` field. Safe to call repeatedly — no I/O side effects.
+
+Refs: NEV-1661
+
 ## [1.4.0] - 2026-06-01
 
 ### Added

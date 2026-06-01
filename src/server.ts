@@ -16,6 +16,26 @@
  * @module server
  */
 
+// ---------------------------------------------------------------------------
+// Tool count helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes which optional feature groups are active at runtime.
+ * Used by `getToolCount` to compute the exact number of registered tools
+ * without spawning a real McpServer session.
+ */
+export interface ToolCountOptions {
+  /** Whether a neventApiUrl is configured (enables tenant, segment, campaign-action, media tools). */
+  hasNeventApiUrl: boolean;
+  /** Whether a mongoUri is configured (enables campaign, template, deliverability tools). */
+  hasMongoUri: boolean;
+  /** Whether a paidMediaClient is available (enables 11 paid media tools). */
+  hasPaidMediaClient: boolean;
+  /** Whether a shortUrlClient is available (enables 9 short URL tools). */
+  hasShortUrlClient: boolean;
+}
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DataClient } from './clients/data-client.js';
 import { SessionClients } from './clients/session-clients.js';
@@ -32,6 +52,7 @@ import { registerMediaTools } from './tools/media.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
 import { ShortUrlClient } from './clients/short-url-client.js';
 import { MediaClient } from './clients/media-client.js';
+import { TemplateClient } from './clients/template-client.js';
 import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
 import { registerHelpTool } from './tools/help.js';
 import { NEVENT_MCP_INSTRUCTIONS } from './server-instructions.js';
@@ -232,4 +253,91 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   }
 
   return server;
+}
+
+// ---------------------------------------------------------------------------
+// Tool count probe
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the number of tools that would be registered given the supplied
+ * feature flags.
+ *
+ * Internally creates a lightweight "probe" McpServer, runs the same
+ * conditional registration logic as `createNeventServer` (minus MongoDB
+ * logging which has I/O side effects), and reads the internal
+ * `_registeredTools` Map size.
+ *
+ * ## Why not cache this at startup?
+ *
+ * Called at request time (inside `/health` and `/.well-known/mcp-manifest.json`
+ * handlers) so the count always reflects the runtime feature flags rather than
+ * a snapshot taken at module load time. The probe is cheap — tool registration
+ * is purely synchronous and involves no I/O.
+ *
+ * @param opts - Feature flags describing which optional groups are active.
+ * @returns The exact number of tools registered under those flags.
+ */
+export function getToolCount(opts: ToolCountOptions): number {
+  const { hasNeventApiUrl, hasMongoUri, hasPaidMediaClient, hasShortUrlClient } = opts;
+
+  // Stub clients satisfy the TypeScript types but are never called —
+  // registration functions only capture references, they don't invoke clients.
+  const stubDataClient = new DataClient(
+    { baseUrl: 'http://stub', jwtToken: 'stub' }
+  );
+
+  const probe = new McpServer(
+    { name: 'nevent-mcp-probe', version: '0.0.0' },
+    { instructions: '' }
+  );
+
+  // Always registered
+  registerAnalyticsTools(probe, stubDataClient);
+  registerHelpTool(probe);
+
+  if (hasNeventApiUrl) {
+    const stubPaidMediaClient = new PaidMediaClient({ baseUrl: 'http://stub', jwtToken: 'stub' });
+    const stubSessionClients = new SessionClients(stubDataClient, stubPaidMediaClient, 'http://stub');
+    registerTenantTools(probe, stubSessionClients, 'http://stub');
+    registerSegmentTools(probe, stubDataClient, 'http://stub');
+    registerCampaignActionTools(probe, stubDataClient, 'http://stub');
+  }
+
+  if (hasMongoUri) {
+    registerCampaignTools(probe, 'mongodb://stub', stubDataClient);
+    // Pass a stub TemplateClient when neventApiUrl is available so that the
+    // 4 operation tools (clone/rename/preview/send_test) are registered in the
+    // count just as they would be in a real HTTP session.
+    const stubTemplateClient = hasNeventApiUrl
+      ? new TemplateClient({ baseUrl: 'http://stub', jwtToken: 'stub' })
+      : undefined;
+    registerTemplateTools(probe, 'mongodb://stub', stubDataClient, hasNeventApiUrl ? 'http://stub' : undefined, stubTemplateClient);
+    registerDeliverabilityTools(probe, 'mongodb://stub', stubDataClient);
+  }
+
+  if (hasPaidMediaClient) {
+    const stubPaidMediaClient = new PaidMediaClient({ baseUrl: 'http://stub', jwtToken: 'stub' });
+    registerPaidMediaTools(probe, stubPaidMediaClient);
+  }
+
+  if (hasShortUrlClient) {
+    const stubShortUrlClient = new ShortUrlClient({ baseUrl: 'http://stub', jwtToken: 'stub' });
+    registerShortUrlTools(probe, stubShortUrlClient);
+  }
+
+  // Media tools: registered when neventApiUrl is provided (same as createNeventServer)
+  if (hasNeventApiUrl) {
+    const stubMediaClient = new MediaClient({ baseUrl: 'http://stub', jwtToken: 'stub' });
+    registerMediaTools(probe, stubMediaClient);
+  }
+
+  // Access the SDK's internal tool registry via the known private field.
+  // The MCP SDK (v1.x) stores registered tools in `_registeredTools`.
+  // In ESM builds this is a plain object keyed by tool name; in CJS builds it
+  // is a Map. We handle both: prefer Object.keys (works for both types).
+  // There is no public API for the count; using the internal field is
+  // intentional and the field name is stable across the SDK versions we use.
+  const internal = probe as unknown as { _registeredTools: Record<string, unknown> };
+  return Object.keys(internal._registeredTools).length;
 }

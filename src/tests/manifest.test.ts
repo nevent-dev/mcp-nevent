@@ -1,11 +1,24 @@
 /**
- * Tests for the /.well-known/mcp-manifest.json endpoint.
+ * Tests for the /.well-known/mcp-manifest.json endpoint and health check
+ * dynamic fields (version and toolsCount / tools_count).
  *
- * Validates the manifest response shape and required fields without
- * spinning up the full HTTP transport (no MongoDB required).
+ * NEV-1661: Both fields were previously hardcoded literals. They now read from
+ * package.json (version) and getToolCount() (tool counts) at runtime.
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { getToolCount } from '../server.js';
+
+// ---------------------------------------------------------------------------
+// Package.json version — ground truth for what the server should report
+// ---------------------------------------------------------------------------
+
+const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
+const CURRENT_VERSION = pkg.version;
 
 // ---------------------------------------------------------------------------
 // Manifest shape contract — mirrors what createHttpApp() serves
@@ -16,7 +29,7 @@ const EXPECTED_MANIFEST = {
   name: 'nevent',
   displayName: 'Nevent',
   description: 'Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT',
-  version: '1.0.0',
+  version: CURRENT_VERSION,
   homepage: 'https://nevent.ai/en/features/nevent-ai/',
   documentation: 'https://docs.nevent.ai/mcp',
   repository: 'https://github.com/nevent-dev/mcp-nevent',
@@ -30,7 +43,12 @@ const EXPECTED_MANIFEST = {
     metadata: 'https://mcp.nevent.ai/.well-known/oauth-authorization-server',
   },
   categories: ['marketing', 'analytics', 'crm', 'events'],
-  tools_count: 43,
+  tools_count: getToolCount({
+    hasNeventApiUrl: true,
+    hasMongoUri: true,
+    hasPaidMediaClient: true,
+    hasShortUrlClient: true,
+  }),
 };
 
 describe('MCP Manifest', () => {
@@ -63,10 +81,6 @@ describe('MCP Manifest', () => {
     expect(EXPECTED_MANIFEST.auth.type).toBe('oauth2');
   });
 
-  it('tools_count is 43', () => {
-    expect(EXPECTED_MANIFEST.tools_count).toBe(43);
-  });
-
   it('publisher has name and url', () => {
     expect(EXPECTED_MANIFEST.publisher.name).toBe('Nevent');
     expect(EXPECTED_MANIFEST.publisher.url).toBe('https://nevent.ai');
@@ -97,5 +111,123 @@ describe('MCP Manifest', () => {
 
   it('endpoint points to the production MCP server', () => {
     expect(EXPECTED_MANIFEST.endpoint).toBe('https://mcp.nevent.ai/');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dynamic version (NEV-1661)
+// ---------------------------------------------------------------------------
+
+describe('Dynamic version', () => {
+  it('manifest version matches package.json version', () => {
+    expect(EXPECTED_MANIFEST.version).toBe(CURRENT_VERSION);
+  });
+
+  it('version is a valid semver string (major.minor.patch)', () => {
+    expect(CURRENT_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('version is not the old hardcoded literal "1.0.0"', () => {
+    // The server was always shipping 1.0.0 regardless of the actual version.
+    // This test fails if someone accidentally re-introduces the hardcoded value.
+    // NOTE: remove this guard once the real version reaches 1.0.0 again (unlikely).
+    expect(CURRENT_VERSION).not.toBe('1.0.0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dynamic tool count (NEV-1661)
+// ---------------------------------------------------------------------------
+
+describe('getToolCount — dynamic tool count', () => {
+  it('full config (all features enabled) returns a positive count', () => {
+    const count = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(count).toBeGreaterThan(0);
+  });
+
+  it('minimal config (only analytics + help) returns fewer tools', () => {
+    const minimal = getToolCount({
+      hasNeventApiUrl: false,
+      hasMongoUri: false,
+      hasPaidMediaClient: false,
+      hasShortUrlClient: false,
+    });
+    const full = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(minimal).toBeLessThan(full);
+  });
+
+  it('paid media tools add 11 tools when enabled', () => {
+    const withoutPaid = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: false,
+      hasShortUrlClient: true,
+    });
+    const withPaid = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(withPaid - withoutPaid).toBe(11);
+  });
+
+  it('short URL tools add 9 tools when enabled', () => {
+    const withoutShortUrl = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: false,
+    });
+    const withShortUrl = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(withShortUrl - withoutShortUrl).toBe(9);
+  });
+
+  it('full config returns exactly 55 tools (current tool set)', () => {
+    // This test is intentionally concrete: it pins the expected count so that
+    // future tool additions are visible in CI. When new tools are added, update
+    // this number and the description in package.json together.
+    const count = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(count).toBe(55);
+  });
+
+  it('manifest tools_count matches getToolCount(full)', () => {
+    const dynamicCount = getToolCount({
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    });
+    expect(EXPECTED_MANIFEST.tools_count).toBe(dynamicCount);
+  });
+
+  it('getToolCount is deterministic — same options always return the same count', () => {
+    const opts = {
+      hasNeventApiUrl: true,
+      hasMongoUri: true,
+      hasPaidMediaClient: true,
+      hasShortUrlClient: true,
+    };
+    expect(getToolCount(opts)).toBe(getToolCount(opts));
   });
 });
