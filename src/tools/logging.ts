@@ -16,8 +16,16 @@
  *   This mirrors the pattern used in campaigns.ts, templates.ts, and
  *   deliverability.ts.
  *
- * - **Privacy-first params_summary**: full parameter bodies are NEVER stored.
- *   Only a lightweight, PII-free summary is kept (see `summarizeParams`).
+ * - **Raw params with redaction**: the full request body is stored in the
+ *   `params` field so operators can understand exactly what clients are asking.
+ *   Sensitive fields (`jwt`, `token`, `password`, `access_token`,
+ *   `refresh_token`, `authorization`, `cookie`) are replaced with
+ *   `[REDACTED]` by `redactSensitiveFields` before persistence.
+ *   See `redactSensitiveFields` for the complete redaction rules.
+ *
+ *   NOTE: `params` bodies may contain real segment names, campaign subjects,
+ *   filter values, and other business-sensitive data. Restrict access to the
+ *   `mcp_tool_calls` collection accordingly. Documents expire after 90 days.
  *
  * - **Transparent wrapping**: `applyLoggingToServer` monkey-patches the
  *   `McpServer.tool()` method so that EVERY handler registered after the
@@ -65,10 +73,22 @@ export interface ToolCallDocument {
   /** MCP session ID, if available in the tool call metadata. */
   session_id: string | null;
   /**
-   * Lightweight parameter summary — no PII.
-   * Only shape/count information, never raw values.
+   * Raw request body with sensitive fields redacted.
+   *
+   * Contains the full parameter object passed to the tool handler. Keys whose
+   * names match (case-insensitively) any of the following are replaced with the
+   * string `"[REDACTED]"` before storage:
+   *   `jwt`, `token`, `password`, `access_token`, `refresh_token`,
+   *   `authorization`, `cookie`.
+   *
+   * Redaction is applied one level deep for nested objects. Arrays of objects
+   * are also traversed one level deep.
+   *
+   * WARNING: the remaining values ARE the real request data (segment names,
+   * campaign subjects, query filters, etc.). Restrict access to the
+   * `mcp_tool_calls` collection in MongoDB. Documents expire after 90 days.
    */
-  params_summary: Record<string, unknown>;
+  params: Record<string, unknown>;
   /**
    * Approximate response payload size in bytes (UTF-8 length of the JSON text).
    * Null when the response contains no content (e.g. empty content array).
@@ -247,119 +267,102 @@ export function createToolCallLogger(mongoUri: string): ToolCallLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Parameter summarizer (PII-safe)
+// Sensitive-field redactor
 // ---------------------------------------------------------------------------
 
 /**
- * Build a lightweight, PII-free summary of tool call parameters.
- *
- * The goal is to capture enough structural information for analytics
- * (e.g. which filters were applied, whether a time range was provided)
- * without storing any user-supplied values that might contain personal data.
- *
- * Tool-specific rules take precedence over the generic fallback.
- *
- * @param toolName - The name of the tool being called.
- * @param params   - Raw parameter object from the tool handler.
- * @returns        A plain object safe to store in MongoDB.
+ * Set of lowercase key names that must never be stored in plain text.
+ * Matches the Pino redaction list in `src/logger.ts`.
  */
-export function summarizeParams(
-  toolName: string,
+const SENSITIVE_KEYS = new Set([
+  'jwt',
+  'token',
+  'password',
+  'access_token',
+  'refresh_token',
+  'authorization',
+  'cookie',
+]);
+
+/**
+ * Returns true when `key` (case-insensitive) is a sensitive field that
+ * must be replaced with `[REDACTED]` before storage.
+ *
+ * @param key - Object key to test.
+ */
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEYS.has(key.toLowerCase());
+}
+
+/**
+ * Clone a tool call parameter object and replace sensitive field values with
+ * the literal string `"[REDACTED]"`.
+ *
+ * Rules:
+ * - Any top-level key whose name matches (case-insensitively) one of:
+ *   `jwt`, `token`, `password`, `access_token`, `refresh_token`,
+ *   `authorization`, `cookie` — is replaced with `"[REDACTED]"`.
+ * - Nested plain objects are traversed **one level deep**, and the same
+ *   key-matching rule is applied to their keys.
+ * - Arrays at the top level are cloned element by element. If an element is a
+ *   plain object, its keys are redacted one level deep (same as nested objects
+ *   above). Primitive array elements are left unchanged.
+ * - The function does NOT mutate the input object.
+ * - Non-object, non-array values are returned unchanged (though in practice
+ *   the input will always be `Record<string, unknown>`).
+ *
+ * @param params - Raw parameter object from a tool handler.
+ * @returns      A new object with sensitive values replaced by `"[REDACTED]"`.
+ *
+ * @example
+ * ```ts
+ * redactSensitiveFields({ jwt: 'abc', name: 'test' })
+ * // → { jwt: '[REDACTED]', name: 'test' }
+ *
+ * redactSensitiveFields({ filter: { token: 'x', value: 'y' } })
+ * // → { filter: { token: '[REDACTED]', value: 'y' } }
+ * ```
+ */
+export function redactSensitiveFields(
   params: Record<string, unknown>
 ): Record<string, unknown> {
-  switch (toolName) {
-    case 'nevent_analytics_query':
-      return {
-        collection: params['collection'] ?? null,
-        has_time_range: Boolean(params['timeRange']),
-        dimensions_count: Array.isArray(params['dimensions']) ? params['dimensions'].length : 0,
-        metrics_count: Array.isArray(params['metrics']) ? params['metrics'].length : 0,
-        filters_count: Array.isArray(params['filters']) ? params['filters'].length : 0,
-      };
+  const result: Record<string, unknown> = {};
 
-    case 'nevent_analytics_table_schema':
-      return {
-        table: params['table'] ?? null,
-      };
-
-    case 'nevent_analytics_filter_values':
-      return {
-        collection: params['collection'] ?? null,
-        filters_count: Array.isArray(params['filters']) ? params['filters'].length : 0,
-      };
-
-    case 'nevent_list_campaigns':
-      return {
-        status: params['status'] ?? null,
-        channel: params['channel'] ?? null,
-        has_date_range: Boolean(params['date_from'] || params['date_to']),
-        limit: params['limit'] ?? null,
-      };
-
-    case 'nevent_get_campaign':
-    case 'nevent_get_campaign_insights':
-      return {
-        // Only log that a campaign_id was provided, not the value itself
-        has_campaign_id: Boolean(params['campaign_id']),
-      };
-
-    case 'nevent_list_templates':
-      return {
-        has_tags: Array.isArray(params['tags']) && params['tags'].length > 0,
-        content_nature: params['content_nature'] ?? null,
-        limit: params['limit'] ?? null,
-      };
-
-    case 'nevent_get_template':
-      return {
-        has_template_id: Boolean(params['template_id']),
-      };
-
-    case 'nevent_list_segments':
-      return {
-        param_count: Object.keys(params).length,
-      };
-
-    case 'nevent_create_segment':
-      return {
-        has_name: Boolean(params['name']),
-        has_definition: Boolean(params['definition']),
-        has_description: Boolean(params['description']),
-      };
-
-    case 'nevent_update_segment':
-      return {
-        has_name: params['name'] !== undefined,
-        has_definition: params['definition'] !== undefined,
-      };
-
-    case 'nevent_create_campaign':
-      return {
-        channel: params['channel'] ?? null,
-        has_subject: Boolean(params['email_subject']),
-        has_message: Boolean(params['message']),
-        has_segments: Array.isArray(params['segment_ids']) && params['segment_ids'].length > 0,
-        has_template: Boolean(params['template_id']),
-      };
-
-    case 'nevent_schedule_campaign':
-      return {
-        has_campaign_id: Boolean(params['campaign_id']),
-        confirmed: params['confirmed'] === true,
-      };
-
-    case 'nevent_switch_tenant':
-      // tenant_id IS the purpose of this call — safe to log
-      return {
-        has_tenant_id: Boolean(params['tenant_id']),
-      };
-
-    default:
-      // Generic fallback: only log parameter count
-      return {
-        param_count: Object.keys(params).length,
-      };
+  for (const [key, value] of Object.entries(params)) {
+    if (isSensitiveKey(key)) {
+      result[key] = '[REDACTED]';
+    } else if (Array.isArray(value)) {
+      // Redact one level deep inside array elements that are plain objects
+      result[key] = value.map((item) => {
+        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+          return redactObjectShallow(item as Record<string, unknown>);
+        }
+        return item;
+      });
+    } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      // Redact one level deep inside nested plain objects
+      result[key] = redactObjectShallow(value as Record<string, unknown>);
+    } else {
+      result[key] = value;
+    }
   }
+
+  return result;
+}
+
+/**
+ * Shallow-clone an object, replacing values whose keys are sensitive.
+ * Does NOT recurse further than one level.
+ *
+ * @param obj - Plain object to redact.
+ * @returns   Shallow clone with sensitive keys replaced.
+ */
+function redactObjectShallow(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = isSensitiveKey(key) ? '[REDACTED]' : value;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +475,7 @@ export function applyLoggingToServer(
           error_message: message,
           latency_ms: latency,
           session_id: getSessionId ? getSessionId() : null,
-          params_summary: summarizeParams(toolName, params),
+          params: redactSensitiveFields(params),
           response_size_bytes: null,
         });
 
@@ -522,7 +525,7 @@ export function applyLoggingToServer(
         error_message: errorMessage,
         latency_ms: latency,
         session_id: getSessionId ? getSessionId() : null,
-        params_summary: summarizeParams(toolName, params),
+        params: redactSensitiveFields(params),
         response_size_bytes: responseSizeBytes,
       });
 

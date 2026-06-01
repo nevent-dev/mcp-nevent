@@ -24,12 +24,24 @@ interface ToolCallDocument {
   error_message: string | null;   // Truncated to 200 chars
   latency_ms: number;             // End-to-end handler time
   session_id: string | null;      // MCP session ID (HTTP mode only)
-  params_summary: object;         // PII-free parameter shape
+  params: object;                 // Raw request body — sensitive fields redacted
   response_size_bytes: number | null; // UTF-8 byte count of response text
   timestamp: Date;                // UTC, used for TTL index
   date: string;                   // "YYYY-MM-DD" for daily aggregation
 }
 ```
+
+> **Data sensitivity warning:** The `params` field contains the actual request
+> body, which may include segment names, campaign subjects, query filter values,
+> template IDs, and other business-sensitive data. The following key names are
+> replaced with `"[REDACTED]"` before storage (case-insensitive, one level deep
+> for nested objects): `jwt`, `token`, `password`, `access_token`,
+> `refresh_token`, `authorization`, `cookie`. All other parameter values are
+> stored verbatim.
+>
+> **Access control:** Restrict access to the `mcp_tool_calls` collection to
+> operations/engineering personnel only. Documents expire automatically after
+> **90 days** via the TTL index.
 
 ### Indexes
 
