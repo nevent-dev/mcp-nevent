@@ -32,6 +32,7 @@ import { DataClient } from './data-client.js';
 import { PaidMediaClient } from './paid-media-client.js';
 import { TemplateClient } from './template-client.js';
 import { ShortUrlClient } from './short-url-client.js';
+import { MediaClient } from './media-client.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { logger } from '../logger.js';
 
@@ -69,9 +70,10 @@ function decodeJwtTenantId(token: string): string | undefined {
 /**
  * Aggregate holder for the per-session API clients.
  *
- * `dataClient`, `paidMediaClient`, `templateClient`, and `shortUrlClient` are
- * exposed as public fields so callers can use them directly. Use `rotateJwt` /
- * `rotateTokens` to update the bearer token in all clients atomically.
+ * `dataClient`, `paidMediaClient`, `templateClient`, `shortUrlClient`, and
+ * `mediaClient` are exposed as public fields so callers can use them directly.
+ * Use `rotateJwt` / `rotateTokens` to update the bearer token in all clients
+ * atomically.
  */
 export class SessionClients {
   /** Client for nev-data-api (analytics, segmentation). */
@@ -91,6 +93,14 @@ export class SessionClients {
    * Shares the same JWT as the other nev-api clients.
    */
   readonly shortUrlClient: ShortUrlClient;
+
+  /**
+   * Client for nev-api media management endpoints (/media/...).
+   * Handles image upload (POST /media/upload/resource), listing
+   * (GET /media/resources), and deletion (DELETE /media/resource).
+   * Shares the same JWT as the other nev-api clients.
+   */
+  readonly mediaClient: MediaClient;
 
   /**
    * The tenant ID from the JWT at session creation time.
@@ -148,6 +158,12 @@ export class SessionClients {
       jwtToken: paidMediaClient.getJwtToken(),
     });
 
+    // Create the media client sharing the same nev-api URL and JWT.
+    this.mediaClient = new MediaClient({
+      baseUrl: neventApiUrl,
+      jwtToken: paidMediaClient.getJwtToken(),
+    });
+
     // Wire the token-refresh callback into all clients so that a 401 response
     // automatically triggers a refresh attempt and a transparent retry.
     this.wireAuthRefresh();
@@ -166,6 +182,7 @@ export class SessionClients {
     this.paidMediaClient.setOnUnauthorized(cb);
     this.templateClient.setOnUnauthorized(cb);
     this.shortUrlClient.setOnUnauthorized(cb);
+    this.mediaClient.setOnUnauthorized(cb);
   }
 
   // -------------------------------------------------------------------------
@@ -186,6 +203,7 @@ export class SessionClients {
     this.paidMediaClient.rotateAccessToken(newAccessToken);
     this.templateClient.rotateAccessToken(newAccessToken);
     this.shortUrlClient.rotateAccessToken(newAccessToken);
+    this.mediaClient.rotateAccessToken(newAccessToken);
     // Invalidate cached data that was scoped to the previous tenant
     this.dataClient.clearAllCaches();
     // Update activeTenantId to reflect the new JWT's tenant claim

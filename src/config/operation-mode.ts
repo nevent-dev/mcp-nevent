@@ -138,6 +138,15 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_create_short_url: 'WRITE',
   nevent_update_short_url: 'WRITE',
   nevent_create_bulk_user_short_urls: 'WRITE',
+
+  // Media / image management tools
+  // upload → WRITE (creates a new resource in the CDN bucket)
+  // list   → READ  (no side effects)
+  // delete → DELETE (irreversible removal from CDN; templates that reference
+  //          the deleted URL will show broken images — treat as destructive)
+  nevent_upload_image: 'WRITE',
+  nevent_list_images: 'READ',
+  nevent_delete_image: 'DELETE',
 };
 
 // ---------------------------------------------------------------------------

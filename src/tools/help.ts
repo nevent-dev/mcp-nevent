@@ -30,6 +30,7 @@ Available topics:
 - **deliverability** — Sending profile and suppressions guide
 - **paid_media** — Meta/Google/TikTok paid ads tools guide
 - **short_urls** — Short URL tracking and campaign link tools guide
+- **media** — Image upload, list, and delete tools guide
 
 Call nevent_help with topic="<name>" for detailed guidance on any category.
 `.trim();
@@ -309,12 +310,62 @@ const HELP_SHORT_URLS = `
 ## Roles required: ADMIN | OWNER | SUPERADMIN
 `.trim();
 
+const HELP_MEDIA = `
+# Media / Image Management Tools Guide
+
+## Tools (3 total)
+
+- nevent_upload_image(source, imageName?, mimeType?) — upload an image and get a CDN URL (WRITE, STANDARD or FULL mode)
+- nevent_list_images() — list all images stored for the current tenant with name, MIME type, and size (READ, all modes)
+- nevent_delete_image(urls[]) — permanently delete one or more images (DELETE, FULL mode only)
+
+## Upload input forms
+
+The source parameter accepts base64 only (no URL sources):
+
+1. **Data URL**: "data:image/png;base64,<base64data>" — MIME type is parsed from the prefix; mimeType param can be omitted.
+2. **Raw base64**: bare base64 string — mimeType is required.
+
+Maximum decoded size: 5 MB.
+
+## Typical workflow
+
+### Upload an image and embed it in a template
+1. nevent_upload_image(source="data:image/png;base64,...", imageName="banner.png") → { destinationUrl: "https://cdn..." }
+2. Copy the destinationUrl into the <img src="..."> tag inside the template HTML
+3. nevent_update_template(template_id, html_body="...<img src='https://cdn...'>...")
+
+### Audit and clean up the media library
+1. nevent_list_images() — see all stored images with CDN URL, name, size
+2. nevent_delete_image(urls=["https://cdn..."]) — permanently remove unused images
+
+## Returned fields
+
+### nevent_upload_image response
+- destinationUrl — CloudFront CDN URL ready for use in <img src="...">
+- mimeType — resolved MIME type
+- sizeBytes — decoded file size in bytes
+
+### nevent_list_images response (ResourceDTO array)
+- src — CloudFront CDN URL (use in <img src="..."> or pass to nevent_delete_image)
+- name — file name as stored
+- mimeType — MIME type of the file
+- size — file size in bytes
+
+## Operation mode
+- nevent_upload_image: STANDARD or FULL mode required
+- nevent_list_images: all modes (READ)
+- nevent_delete_image: FULL mode only (irreversible — templates referencing deleted URLs will show broken images)
+
+## Roles required: ADMIN | SUPERADMIN | OWNER (for upload and delete)
+`.trim();
+
 // ---------------------------------------------------------------------------
 // Topic router
 // ---------------------------------------------------------------------------
 
 type HelpTopic = 'workflows' | 'errors' | 'tenants' | 'analytics' | 'segments' |
-  'campaigns' | 'templates' | 'deliverability' | 'paid_media' | 'short_urls';
+  'campaigns' | 'templates' | 'deliverability' | 'paid_media' | 'short_urls' | 'media';
 
 function getHelpContent(topic?: string): string {
   switch (topic as HelpTopic | undefined) {
@@ -328,6 +379,7 @@ function getHelpContent(topic?: string): string {
     case 'deliverability':return HELP_DELIVERABILITY;
     case 'paid_media':    return HELP_PAID_MEDIA;
     case 'short_urls':    return HELP_SHORT_URLS;
+    case 'media':         return HELP_MEDIA;
     default:              return HELP_INDEX;
   }
 }
@@ -349,11 +401,12 @@ const HelpSchema = {
       'deliverability',
       'paid_media',
       'short_urls',
+      'media',
     ])
     .optional()
     .describe(
       'Topic to get guidance on. Omit to get an index of all available topics. ' +
-      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media | short_urls'
+      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media | short_urls | media'
     ),
 };
 
