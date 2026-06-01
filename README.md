@@ -139,7 +139,18 @@ LLM (Claude / ChatGPT / Cursor / …)
 
 **Hosted mode** uses OAuth 2.1: the MCP server issues short-lived JWT tokens after validating your Nevent credentials. Each session is isolated — no shared service accounts.
 
-**Privacy:** tenant data is isolated per session. Data does not leave the Nevent infrastructure and is not used for model training.
+---
+
+## Privacy
+
+The Nevent MCP server processes tenant data on Nevent's own infrastructure
+(AWS, eu-west-1). Data does not leave Nevent's infrastructure and is not
+used for model training.
+
+For details on data collection, retention, third-party sharing, and contact
+information, see the full privacy policy: https://nevent.ai/en/privacy/
+
+Security disclosure: see [`SECURITY.md`](./SECURITY.md).
 
 ---
 
