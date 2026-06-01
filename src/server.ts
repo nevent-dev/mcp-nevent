@@ -28,8 +28,10 @@ import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
 import { registerShortUrlTools } from './tools/short-urls.js';
+import { registerMediaTools } from './tools/media.js';
 import { PaidMediaClient } from './clients/paid-media-client.js';
 import { ShortUrlClient } from './clients/short-url-client.js';
+import { MediaClient } from './clients/media-client.js';
 import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
 import { registerHelpTool } from './tools/help.js';
 import { NEVENT_MCP_INSTRUCTIONS } from './server-instructions.js';
@@ -210,6 +212,23 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   const effectiveShortUrlClient = shortUrlClient ?? providedSessionClients?.shortUrlClient;
   if (effectiveShortUrlClient) {
     registerShortUrlTools(server, effectiveShortUrlClient);
+  }
+
+  // Media tools (3 tools) — registered when neventApiUrl is provided.
+  // The mediaClient lives on SessionClients (HTTP mode) or is constructed
+  // on-demand in stdio mode from the existing nev-api URL + JWT.
+  // Prefer mediaClient from providedSessionClients when available (HTTP mode).
+  const effectiveMediaClient = providedSessionClients?.mediaClient;
+  if (effectiveMediaClient) {
+    registerMediaTools(server, effectiveMediaClient);
+  } else if (neventApiUrl) {
+    // stdio mode: construct a standalone MediaClient sharing the same JWT as
+    // DataClient (same bearer token — both target nev-api).
+    const standaloneMediaClient = new MediaClient({
+      baseUrl: neventApiUrl,
+      jwtToken: dataClient.getJwtToken(),
+    });
+    registerMediaTools(server, standaloneMediaClient);
   }
 
   return server;

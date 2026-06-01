@@ -3,7 +3,7 @@
   "name": "io.github.nevent-dev/mcp-nevent",
   "title": "Nevent MCP",
   "description": "Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "websiteUrl": "https://nevent.ai/en/features/nevent-ai/",
   "repository": {
     "url": "https://github.com/nevent-dev/mcp-nevent",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "mcp-nevent",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

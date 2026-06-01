@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-01
+
+### Added
+- 3 image management tools for the RESOURCES media library (same bucket used by the MJML editor):
+  - `nevent_upload_image` — upload an image from base64 (data URL or raw base64 + mimeType) and get a CloudFront CDN URL ready for use in `<img src="...">` inside email template HTML. Enforces 5 MB decoded limit. Mode: STANDARD or FULL.
+  - `nevent_list_images` — list all images stored for the current tenant (src, name, mimeType, size). Mode: READ_ONLY or higher.
+  - `nevent_delete_image` — permanently delete one or more images by CDN URL. Mode: FULL only (irreversible).
+- `MediaClient` — new API client for `POST /media/upload/resource`, `GET /media/resources`, `DELETE /media/resource`.
+- `media` topic added to `nevent_help` (topic="media").
+- `mediaClient` field on `SessionClients` — automatically wired for JWT rotation and 401 auto-refresh.
+
+### Design decisions
+- URL sources for upload explicitly excluded to prevent the MCP from acting as a third-party rehosting proxy.
+- `nevent_delete_image` classified as DELETE (not WRITE) — requires FULL mode because the operation is irreversible and can break existing template HTML.
+
+Refs: NEV-1660
+
 ## [1.3.0] - 2026-06-01
 
 ### Added
