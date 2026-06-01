@@ -1,13 +1,14 @@
 # Reviewer Guide — Nevent MCP
 
-> This guide is for reviewers from the Anthropic Connectors Directory team.
-> Credentials are provided separately in the directory submission form.
+> This guide is for reviewers from the **Anthropic Connectors Directory** and the **ChatGPT Apps Directory**.
+> It covers both hosted connection paths (Step 1a for Claude.ai, Step 1b for ChatGPT) and the optional
+> stdio transport (Step 2). Credentials are provided separately in the directory submission form.
 
 ## What you'll need
 - Credentials provided in the submission form (email, password)
-- Either Claude.ai (recommended) or Claude Desktop, Cursor, or ChatGPT
+- Claude.ai, ChatGPT, Claude Desktop, or Cursor
 
-## Step 1 — Connect the MCP in Claude.ai (hosted, recommended)
+## Step 1a — Connect the MCP in Claude.ai (Anthropic reviewers)
 
 1. Open Claude.ai → Settings → Connectors → Add custom MCP
 2. Server URL: `https://mcp.nevent.ai/mcp`
@@ -16,7 +17,21 @@
 5. If prompted for a tenant, select the one labeled as **demo** (the account has access to a single demo tenant with synthetic data)
 6. Approve the requested scopes; Claude.ai will return to the chat with the connector listed as active
 
-## Step 2 — Connect the MCP locally (Claude Desktop, Cursor, ChatGPT)
+## Step 1b — Connect the MCP in ChatGPT (OpenAI reviewers)
+
+1. Open ChatGPT → Settings → Connectors → Add MCP server
+2. Server URL: `https://mcp.nevent.ai/mcp`
+3. Click Connect; an OAuth flow should open
+4. Log in with the credentials provided in the submission form
+5. If prompted for a tenant, select **demo**
+6. Approve the requested scopes to complete the connection
+
+**Note on OAuth status:** As of 2026-06 the OAuth flow from ChatGPT has not been validated end-to-end against
+this server. The server implements Dynamic Client Registration (DCR), the same mechanism Claude.ai uses, so
+the flow should work. If it does not auto-register or the OAuth window returns an error, contact
+support@nevent.ai and we will assist during the review window.
+
+## Step 2 — Connect the MCP locally (Claude Desktop, Cursor, ChatGPT desktop)
 
 (Optional — only if you want to verify the stdio transport too.)
 
@@ -29,7 +44,7 @@ Add to your Claude Desktop / Cursor MCP config:
       "command": "npx",
       "args": ["mcp-nevent@latest"],
       "env": {
-        "NEVENT_JWT_TOKEN": "<obtain by completing OAuth flow once in Claude.ai>",
+        "NEVENT_JWT_TOKEN": "<obtain by completing the OAuth flow in Step 1a or Step 1b>",
         "NEVENT_OPERATION_MODE": "STANDARD"
       }
     }
@@ -37,11 +52,13 @@ Add to your Claude Desktop / Cursor MCP config:
 }
 ```
 
-Note: stdio mode does not run the OAuth flow — it expects a pre-issued JWT. The hosted mode in Step 1 handles auth automatically and is the recommended path for review.
+Note: stdio mode does not run the OAuth flow — it expects a pre-issued JWT. The hosted modes in Step 1a/1b
+handle auth automatically and are the recommended paths for review.
 
 ## Step 3 — Verify the connector with one tool per category
 
-Try these prompts (the demo tenant has synthetic data so all of them will return non-empty results):
+These prompts work with any MCP-capable client (Claude.ai, ChatGPT, Claude Desktop, Cursor).
+The demo tenant has synthetic data so all of them will return non-empty results:
 
 | Category | Prompt | Tool used | Mode |
 |---|---|---|---|
@@ -59,7 +76,7 @@ The reviewer account has `STANDARD` operation mode, which allows creating segmen
 
 - Every read tool returns structured data filtered to the demo tenant.
 - Write tools create new entities you can verify via the read tools.
-- All requests are authenticated against the Nevent API with the OAuth token issued during Step 1.
+- All requests are authenticated against the Nevent API with the OAuth token issued during Step 1a or 1b.
 
 ## Operation modes available
 
@@ -78,7 +95,7 @@ The reviewer account has `STANDARD` operation mode, which allows creating segmen
 ## Support during review
 
 - Primary contact: Samuel Fraga, samuel.fraga@nevent.es
-- Support: support@nevent.ai
+- Support: support@nevent.ai (handles review inquiries from both Anthropic and OpenAI review teams)
 
 ## Reference
 
