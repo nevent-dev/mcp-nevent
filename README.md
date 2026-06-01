@@ -1,9 +1,14 @@
 # Nevent MCP
 
-> Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT.
+> Talk to your live-events CRM (campaigns, analytics, paid ads, segments, short URLs) in Claude and ChatGPT.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](CHANGELOG.md)
+[![npm](https://img.shields.io/npm/v/mcp-nevent.svg)](https://www.npmjs.com/package/mcp-nevent)
+[![Help Center](https://img.shields.io/badge/docs-help.nevent.ai-8B5CF6)](https://help.nevent.ai/en/nevent-ai/)
+
+Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 52 tools across 9 categories (campaigns, analytics, segmentation, paid media, deliverability, short URLs, multi-tenant, templates) over **OAuth 2.1** (hosted) or **stdio** (local).
+
+📚 **Full documentation:** **<https://help.nevent.ai/en/nevent-ai/>**
 
 ---
 
@@ -11,7 +16,9 @@
 
 ### Hosted (recommended — no install needed)
 
-Add `https://mcp.nevent.ai/mcp` as a remote MCP server in your client (Claude.ai, ChatGPT, Cursor, Cline, Continue).
+Add `https://mcp.nevent.ai/mcp` as a remote MCP server in your client. Works with Claude.ai, ChatGPT, Cursor, Cline, Continue and any compatible MCP client.
+
+→ Step-by-step with screenshots: [Connect with Claude](https://help.nevent.ai/en/nevent-ai/connect-claude/) · [Connect with ChatGPT](https://help.nevent.ai/en/nevent-ai/connect-chatgpt/)
 
 ### Local (stdio via npm)
 
@@ -19,32 +26,34 @@ Add `https://mcp.nevent.ai/mcp` as a remote MCP server in your client (Claude.ai
 npx mcp-nevent
 ```
 
-Or install globally:
+Required env: `NEVENT_JWT_TOKEN`. Optional: `NEVENT_OPERATION_MODE` (`READ_ONLY` | `STANDARD` | `FULL`).
 
-```bash
-npm install -g mcp-nevent
-mcp-nevent
-```
-
-Required env: `NEVENT_JWT_TOKEN`. Optional: `NEVENT_OPERATION_MODE` (READ_ONLY | STANDARD | FULL).
+→ Full local setup: [Local installation](https://help.nevent.ai/en/nevent-ai/developers/local-installation/)
 
 ---
 
 ## Quick add
 
-### Claude.ai (recommended — hosted, no setup)
+### Claude.ai · ChatGPT (hosted, no setup)
 
-1. Open Claude.ai → Settings → Integrations
-2. Add custom connector → URL: `https://mcp.nevent.ai/mcp`
-3. Authorize with your Nevent admin account
+Settings → Integrations / Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. Authorize with your Nevent admin account.
 
-<!-- screenshot: claude-ai-add-connector.png -->
+### Claude Code
 
-### Claude Desktop / Cursor / Cline / Continue (stdio, local)
+```bash
+# Hosted (OAuth)
+claude mcp add --transport http nevent https://mcp.nevent.ai/mcp
 
-Build first if needed: `npm install && npm run build`
+# Or local (stdio)
+claude mcp add nevent -- node /path/to/mcp-nevent/dist/index.js
+export NEVENT_JWT_TOKEN=your_token
+```
 
-Add to your MCP client config:
+→ Full guide: [Claude Code](https://help.nevent.ai/en/nevent-ai/developers/claude-code/)
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
 
 ```json
 {
@@ -60,20 +69,11 @@ Add to your MCP client config:
 }
 ```
 
-For **Claude Desktop**, the config file is:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+→ Full guide: [Claude Desktop](https://help.nevent.ai/en/nevent-ai/developers/claude-desktop/)
 
-For **Claude Code**:
+### Cursor · Cline · Continue · VS Code
 
-```bash
-claude mcp add nevent -- node /path/to/mcp-nevent/dist/index.js
-export NEVENT_JWT_TOKEN=your_token
-```
-
-### ChatGPT (custom connectors)
-
-Settings → Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. The OAuth flow will prompt you to log in with your Nevent admin account.
+→ Per-client setup: [Cursor, Cline, Continue, VS Code](https://help.nevent.ai/en/nevent-ai/developers/cursor-cline-continue/)
 
 ---
 
@@ -84,119 +84,49 @@ Settings → Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. 
 
 "Which campaigns sent last month had an open rate above 30%?"
 
-"Create a segment of all attendees who bought a VIP ticket in 2025
+"Create a segment of attendees who bought a VIP ticket in 2025
  but haven't opened any email in the last 90 days"
 
-"Schedule the 'Summer Gala' email campaign for next Monday at 10:00 CET"
+"Schedule the 'Summer Gala' campaign for next Monday at 10:00 CET"
 
 "Compare ROAS across our Meta ad campaigns for March"
 
-"How many suppressions did we accumulate this month and what are the top reasons?"
-
-"Create per-user tracking links for the Summer Gala campaign and show me which users clicked"
+"Create per-user tracking links for the Summer Gala campaign
+ and show me which users clicked"
 ```
+
+→ More patterns: [Ready-to-use prompts](https://help.nevent.ai/en/nevent-ai/ready-to-use-prompts/) · [Use cases](https://help.nevent.ai/en/nevent-ai/use-cases/)
 
 ---
 
-## Tools (52)
+## Documentation
 
-### Analytics & Segmentation
+| Topic | Link |
+|---|---|
+| What Nevent AI is and how it works | <https://help.nevent.ai/en/nevent-ai/> |
+| Capabilities by area (analytics, campaigns, audience, paid media…) | <https://help.nevent.ai/en/nevent-ai/what-you-can-do/> |
+| End-to-end use cases | <https://help.nevent.ai/en/nevent-ai/use-cases/> |
+| Permissions and security | <https://help.nevent.ai/en/nevent-ai/permissions-and-security/> |
+| FAQ | <https://help.nevent.ai/en/nevent-ai/faq/> |
 
-| Tool | Description |
-|------|-------------|
-| `nevent_analytics_capabilities` | Discover available data tables — call first if unsure what data exists |
-| `nevent_analytics_table_schema` | Get column definitions for a specific table |
-| `nevent_analytics_query` | Query with dimensions, metrics, filters, and time ranges |
-| `nevent_analytics_filter_values` | Get distinct field values to build valid filters |
-| `nevent_campaign_report` | Comprehensive campaign performance report — 13 parallel queries in one call |
-| `nevent_segmentation_criteria` | List all criteria available for building audience segments |
-| `nevent_dimension_values` | Autocomplete values for a segmentation criterion |
-| `nevent_segment_preview` | Preview estimated audience size without saving |
-| `nevent_segment_execute` | Execute a segment and get paginated matching contacts |
-| `nevent_help` | In-session guidance by topic (workflows, errors, tenants, analytics) |
+### For developers
 
-### Multi-tenant + Segment Management
-
-| Tool | Description |
-|------|-------------|
-| `nevent_list_tenants` | List all tenants accessible to the authenticated user |
-| `nevent_switch_tenant` | Set the active tenant for this MCP session |
-| `nevent_reset_tenant` | Restore home tenant after a cross-tenant operation (SUPERADMIN) |
-| `nevent_list_segments` | List saved segments for the active tenant |
-| `nevent_get_segment` | Get full filter definition and metadata for a segment |
-| `nevent_create_segment` | Create and persist a new audience segment |
-| `nevent_update_segment` | Modify an existing segment's name or filter definition |
-
-### Campaigns
-
-| Tool | Description |
-|------|-------------|
-| `nevent_list_campaigns` | List campaigns with status, channel, and engagement metrics |
-| `nevent_get_campaign` | Full campaign detail: content, metrics, tracked links |
-| `nevent_get_campaign_insights` | AI-generated insights and anomalies for a campaign |
-| `nevent_create_campaign` | Create a new campaign draft (EMAIL/SMS/WhatsApp) |
-| `nevent_schedule_campaign` | Schedule a draft campaign for delivery (requires `confirmed=true`) |
-
-### Templates
-
-| Tool | Description |
-|------|-------------|
-| `nevent_list_templates` | List email templates for the active tenant |
-| `nevent_get_template` | Full template content: MJML/HTML source, subject, usage metrics |
-| `nevent_create_template` | Create a new email template |
-| `nevent_update_template` | Update an existing template's content or tags |
-| `nevent_clone_template` | Duplicate an existing template |
-| `nevent_rename_template` | Rename a template without re-rendering content |
-| `nevent_preview_template` | Preview with merge-tag resolution against a sample user |
-| `nevent_send_test_template` | Send a real test email via SES to up to 10 recipients |
-
-### Deliverability
-
-| Tool | Description |
-|------|-------------|
-| `nevent_get_sending_profile` | Sender domain validation and warm-up status |
-| `nevent_get_suppressions_summary` | Suppressions summary with 30-day trend and reason breakdown |
-
-### Paid Media (11 tools)
-
-| Tool | Description |
-|------|-------------|
-| `nevent_paid_ads_status` | Check if a provider account is connected and when data last synced |
-| `nevent_paid_ads_health` | Surfaces throttle state, feature gate enrollment, stale syncs |
-| `nevent_list_paid_campaigns` | List all synced campaigns with budget and status |
-| `nevent_get_paid_campaign_insights` | Daily metrics: spend, CTR, CPM, CPC, ROAS |
-| `nevent_paid_attribution` | Links campaigns to ticket sales and revenue via UTM matching |
-| `nevent_list_paid_ad_groups` | List ad groups, optionally filtered by campaign |
-| `nevent_get_paid_ad_group_insights` | Daily metrics for an ad group |
-| `nevent_get_paid_ad_group_comparative_stats` | Compare ad group vs campaign siblings |
-| `nevent_get_paid_ad_group_targeting` | Full audience targeting config |
-| `nevent_list_paid_ads` | List individual ads with UTM fields |
-| `nevent_get_paid_ad_creative` | Ad creative: body, title, CTA, images/videos |
-
-### Short URLs (9 tools)
-
-Track campaign link clicks, generate per-user tracking variants, and measure CTR across marketing campaigns.
-
-| Tool | Tier | Description |
-|------|------|-------------|
-| `nevent_list_short_urls` | Read | Paginated list of all short URLs with click counts. Filter by isActive or search by title/URL. |
-| `nevent_get_short_url` | Read | Full detail of a single short URL — id, shortCode, longUrl, tags, metadata, clickCount, isParent. |
-| `nevent_get_short_url_metrics` | Read | Aggregated analytics over N days: totalClicks, uniqueVisitors, clicksByDay, clicksByDevice, clicksByCountry, topReferers. |
-| `nevent_get_short_url_campaign_metrics` | Read | Campaign-wide CTR across a parent link and all per-user variants. Returns avgClicksPerUrl, clickThroughRate, topUsersByClicks. |
-| `nevent_get_short_url_clicks` | Read | Individual click records ordered newest-first: clickedAt, device, country, UTMs, isPaidTraffic. |
-| `nevent_list_short_url_user_links` | Read | All per-user short URL variants created under a parent/campaign link. |
-| `nevent_create_short_url` | Write | Create a new short URL. Supports customShortCode, expiresAt, tags, and metadata. |
-| `nevent_update_short_url` | Write | Update title, longUrl, isActive, tags, metadata, or expiration. Changes apply immediately. |
-| `nevent_create_bulk_user_short_urls` | Write | Generate per-user tracking variants for a campaign — each user gets a unique link with click attribution. |
+| Topic | Link |
+|---|---|
+| Overview, transports and architecture | <https://help.nevent.ai/en/nevent-ai/developers/> |
+| Local installation and env vars | <https://help.nevent.ai/en/nevent-ai/developers/local-installation/> |
+| Multi-tenant model | <https://help.nevent.ai/en/nevent-ai/developers/multi-tenant/> |
+| Reference of all 52 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
+| Troubleshooting and error codes | <https://help.nevent.ai/en/nevent-ai/developers/troubleshooting/> |
 
 ---
 
 ## How it works
 
 ```
-LLM (Claude / ChatGPT)
+LLM (Claude / ChatGPT / Cursor / …)
         |
-        | MCP over Streamable HTTP or stdio
+        | MCP (Streamable HTTP or stdio)
         v
   ┌─────────────────┐
   │  Nevent MCP     │  mcp.nevent.ai (hosted) or local
@@ -204,235 +134,26 @@ LLM (Claude / ChatGPT)
         |
         | REST + JWT
         v
-  Nevent APIs (analytics, campaigns, segments, paid media)
+  Nevent APIs (analytics, campaigns, segments, paid media, short URLs)
 ```
 
-**OAuth 2.1** is used for hosted (HTTP) mode: the MCP server acts as an
-authorization server, issuing short-lived JWT tokens after validating your
-Nevent credentials. Each session is isolated — no shared service accounts.
+**Hosted mode** uses OAuth 2.1: the MCP server issues short-lived JWT tokens after validating your Nevent credentials. Each session is isolated — no shared service accounts.
 
-**Privacy:** tenant data is isolated per session. Data does not leave the
-Nevent infrastructure and is not used for model training.
+**Privacy:** tenant data is isolated per session. Data does not leave the Nevent infrastructure and is not used for model training.
 
 ---
 
-## For developers
+## Contributing
 
-### Run locally (stdio)
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
 
-```bash
-npm install
-npm run build
-export NEVENT_JWT_TOKEN=your_token
-node dist/index.js
-```
+## License
 
-### Run locally (HTTP)
+[MIT](LICENSE) © Nevent
 
-```bash
-npm install
-npm run build
-MCP_JWT_SECRET=dev-secret-at-least-32-chars \
-MONGODB_URI=mongodb://localhost:27017/mcp-nevent \
-MCP_TRANSPORT=http \
-node dist/index.js
-```
+## Support
 
-### Configuration
-
-**stdio mode:**
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEVENT_JWT_TOKEN` | Yes | — | JWT token for authenticating with the data API |
-| `NEVENT_DATA_API_URL` | No | `https://data.nevent.es` | Data API base URL |
-| `NEVENT_OPERATION_MODE` | No | `READ_ONLY` | `READ_ONLY` \| `STANDARD` \| `FULL` |
-
-**HTTP mode:**
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MCP_JWT_SECRET` | Yes | — | JWT signing key for MCP access tokens (>= 32 chars) |
-| `MONGODB_URI` | Yes | — | MongoDB connection URI for OAuth token storage |
-| `MCP_TRANSPORT` | Yes | `stdio` | Set to `http` |
-| `MCP_PORT` | No | `3000` | HTTP port |
-| `MCP_SERVER_URL` | No | `http://localhost:{port}` | Public HTTPS URL of this server |
-| `NEVENT_API_URL` | No | `https://api.nevent.es` | Nevent API URL (auth + tenant endpoints) |
-| `NEVENT_DATA_API_URL` | No | `https://data.nevent.es` | Data API base URL |
-| `NEVENT_OPERATION_MODE` | No | `READ_ONLY` | `READ_ONLY` \| `STANDARD` \| `FULL` |
-| `MCP_ALLOWED_ORIGINS` | No | `*` | Comma-separated allowed CORS origins |
-
-### Architecture brief
-
-```
-src/
-├── index.ts                        # Entry point — stdio vs HTTP transport selection
-├── server.ts                       # MCP server factory (transport-agnostic)
-├── server-instructions.ts          # Server-level LLM instructions (session init)
-├── auth/
-│   ├── oauth-provider.ts           # OAuth 2.1 provider (login, token exchange)
-│   ├── oauth-stores.ts             # MongoDB-backed OAuth stores
-│   ├── token-service.ts            # JWT sign/verify with MCP_JWT_SECRET
-│   └── login-page.ts               # HTML login page renderer
-├── clients/
-│   ├── base-client.ts              # Shared HTTP client (JWT auth, 401 auto-refresh)
-│   ├── data-client.ts              # Data API client with TTL caches
-│   ├── paid-media-client.ts        # Paid media endpoints client
-│   ├── template-client.ts          # Template operation endpoints
-│   └── session-clients.ts          # Per-session aggregate with atomic JWT rotation
-├── config/
-│   ├── operation-mode.ts           # READ_ONLY | STANDARD | FULL operation guard
-│   └── timeouts.ts                 # Centralised timeout constants
-├── tools/                          # One file per tool category
-├── schemas/                        # Zod validation schemas per category
-└── types/                          # TypeScript types per domain
-```
-
-Key design decisions:
-- **SessionClients** provides atomic JWT rotation — if a tenant switch or 401 refresh
-  fails mid-flight, neither the data client nor the paid media client is updated.
-- **TTL caches** (5 min) in `DataClient` for capabilities and segmentation criteria
-  reduce API calls on repeated tool invocations within a session.
-- **Operation mode guard** (`READ_ONLY` / `STANDARD` / `FULL`) controls which write
-  tools are available, protecting against accidental mutations.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
-
----
-
-## Multi-tenant support
-
-Nevent uses a hierarchical tenant model.
-
-| Role | What they can see |
-|------|-------------------|
-| SUPERADMIN | All tenants in the system |
-| OWNER | Their own tenant and all child tenants |
-| ADMIN | Only their own tenant |
-
-```
-1. nevent_list_tenants      → list accessible tenants (returns tenant IDs)
-2. nevent_switch_tenant     → set active tenant for this session
-3. nevent_reset_tenant      → restore home tenant (SUPERADMIN)
-```
-
-### Tenant switching contract
-
-**When you call `nevent_switch_tenant`:**
-
-1. The MCP server calls the tenant-switch endpoint on the Nevent API with `{ tenantId }`.
-2. The API validates that the JWT holder has access to the target tenant and returns a new access token scoped to the new tenant.
-3. The MCP server updates the JWT in both `DataClient` (for analytics) and `PaidMediaClient` (for paid media) **atomically**.
-4. All in-memory caches (capabilities, segmentation criteria) are **invalidated** — subsequent calls will fetch fresh data for the new tenant context.
-5. `activeTenantId` is updated from the new JWT's `tenantId` claim.
-
-**When you call `nevent_reset_tenant`:**
-
-1. The MCP server reads `homeTenantId` — the tenant ID captured from the original JWT at session creation time.
-2. It calls the tenant-switch endpoint with `{ tenantId: homeTenantId }` to restore the original context.
-3. Same cache invalidation and JWT rotation as `nevent_switch_tenant`.
-4. If `homeTenantId` is not available (e.g. the original JWT had no `tenantId` claim), the tool returns an error.
-
-**Invariants:**
-- Tenant context is **session-scoped** — switching in one session does not affect any other user.
-- The JWT rotation is atomic — if the API call fails, neither client is updated.
-- The tool response includes the new `active_tenant_id` so the agent can verify the switch succeeded.
-
----
-
-## Common workflows
-
-### Analytics: querying event data
-
-```
-1. nevent_analytics_capabilities      → discover available tables
-2. nevent_analytics_table_schema      → get exact column names for your table
-3. nevent_analytics_filter_values     → get valid values for filter fields
-4. nevent_analytics_query             → run the query
-```
-
-### Segmentation: build and preview an audience
-
-```
-1. nevent_segmentation_criteria       → list available criterion_ids and operators
-2. nevent_dimension_values            → autocomplete criterion values (e.g. event IDs)
-3. nevent_segment_preview             → validate audience size before saving
-4. nevent_create_segment              → persist the segment
-```
-
-### Campaign: create and schedule a send
-
-```
-1. nevent_get_sending_profile         → verify sender domain is validated
-2. nevent_get_suppressions_summary    → check suppression rate (warn if > 2%)
-3. nevent_list_segments               → pick target audience (get segment_id)
-4. nevent_segment_preview             → confirm audience count with user
-5. nevent_list_templates              → pick email template (get template_id)
-6. nevent_get_template                → inspect template content before sending
-7. nevent_create_campaign             → create DRAFT (no messages sent yet)
-8. nevent_schedule_campaign           → schedule delivery (confirmed=true required)
-```
-
-### Performance analysis: how did a campaign perform?
-
-```
-1. nevent_list_campaigns              → find the campaign (filter by date/status)
-2. nevent_get_campaign                → get full metrics (opens, clicks, bounces)
-3. nevent_get_campaign_insights       → AI recommendations and anomaly detection
-4. nevent_campaign_report             → deep analytics with 13 parallel queries
-```
-
----
-
-## Error codes glossary
-
-All tool errors return a machine-readable `code` field for programmatic handling.
-
-| Code | Type | Meaning | Recovery |
-|------|------|---------|----------|
-| `invalid_token` | `authentication_error` | JWT missing, expired, or malformed | Re-authenticate; check `NEVENT_JWT_TOKEN` |
-| `forbidden` | `authentication_error` | Insufficient role (ADMIN / SUPERADMIN required) | Use an account with the required role |
-| `not_found` | `not_found` | Resource does not exist or belongs to another tenant | Verify the ID; check active tenant |
-| `rate_limit_exceeded` | `rate_limit_error` | Too many requests — `param` contains retry-after seconds | Wait and retry |
-| `server_error` | `api_error` | Upstream API 5xx — transient error | Retry after exponential backoff |
-| `network_error` | `api_error` | Could not reach upstream API (timeout or DNS failure) | Check connectivity; verify `NEVENT_API_URL` |
-| `segment_not_found` | `not_found` | Segment ID not found in active tenant | Verify ID with `nevent_list_segments` |
-| `invalid_segment_definition` | `invalid_request` | Segment DSL validation failed | Check criterion_ids against `nevent_segmentation_criteria` |
-| `missing_update_fields` | `invalid_request` | Update call with no fields to change | Provide at least one of name or definition |
-| `tenant_required` | `invalid_request` | Tool requires active tenant | Call `nevent_switch_tenant` first |
-| `operation_mode_blocked` | `invalid_request` | Write tool called in READ_ONLY mode | Set `NEVENT_OPERATION_MODE=STANDARD` or `FULL` |
-| `feature_gate_not_enrolled` | `not_found` | Tenant not enrolled in provider insights pilot | Contact admin to enable `MODULE_ATTRIBUTION` |
-
-### Error format
-
-All errors follow a structured format:
-
-```json
-{
-  "error": {
-    "type": "authentication_error | invalid_request | api_error | rate_limit_error | not_found",
-    "message": "Human-readable explanation with actionable guidance",
-    "code": "machine_readable_code",
-    "param": "offending_parameter (when applicable)"
-  }
-}
-```
-
----
-
-## Roadmap
-
-- Additional template operations (AI analysis, bulk import)
-- Advanced audience builder (nested logic groups, multi-event sequences)
-- Webhook tool support
-
----
-
-## Links
-
-- Landing: https://nevent.ai/en/features/nevent-ai/
-- Docs (coming soon): https://docs.nevent.ai/mcp
-- Support: support@nevent.ai
-- License: [MIT](LICENSE)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security: [SECURITY.md](SECURITY.md)
+- **Help Center:** <https://help.nevent.ai>
+- **Issues:** <https://github.com/nevent-dev/mcp-nevent/issues>
+- **Email:** [support@nevent.ai](mailto:support@nevent.ai)
+- **Product:** <https://nevent.ai/en>
