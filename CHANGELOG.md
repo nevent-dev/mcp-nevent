@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-06-01
+
+### Fixed
+- OAuth /authorize submit was still blocked by CSP form-action even after v1.2.2 added the absolute URL. Chrome evaluates form-action against the full redirect chain (POST -> 302 -> client callback), so any allowlist that does not include every possible MCP client's callback origin will fail. Switched to wildcard since redirect_uri validation in the OAuth provider is the actual defense.
+
+Refs: NEV-1648
+
 ## [1.2.2] - 2026-06-01
 
 ### Fixed

@@ -240,10 +240,13 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           ],
           connectSrc: ["'self'"],
           frameAncestors: ["'none'"],
-          // Sandboxed iframes (Claude.ai, ChatGPT) assign an opaque origin to the
-          // document, so 'self' no longer matches https://mcp.nevent.ai. Declaring
-          // the absolute URL makes the form-action check origin-independent.
-          formAction: ["'self'", 'https://mcp.nevent.ai'],
+          // Allow form submits to any URL. The MCP server is a public OAuth provider
+          // serving multiple MCP clients (Claude.ai, ChatGPT, Cursor, etc.). The real
+          // defense is redirect_uri validation in oauth-provider.ts against the
+          // client's DCR registration. CSP form-action is only defense-in-depth here.
+          // Without wildcard, Chrome blocks the OAuth flow because it evaluates
+          // form-action against the full redirect chain (POST -> 302 -> client callback).
+          formAction: ['*'],
         },
       },
       crossOriginEmbedderPolicy: false,
