@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-06-02
+
+### Fixed
+- **CRITICAL:** `DataClient.transformQueryResponse()` was silently discarding all analytics results, always returning `{data: [], metadata: {totalRows: 0, executionTime: 0}}`. Root cause: `nev-data-api` wraps every successful response in an envelope `{success: true, data: {data: [...], metadata: {...}}, timestamp: "..."}`. The method expected `raw['data']` to be an array (the rows), but it was an **object** (the inner payload), so it fell through to the `[]` fallback with no warning or error log. This affected 100% of `nevent_analytics_query` and `nevent_campaign_report` calls. Any analytics data consulted via MCP since the analytics feature shipped may be affected — this regression has been in production since the initial analytics feature release (NEV-1674).
+
+### Added
+- 25 new unit tests in `src/tests/data-client-transform.test.ts` covering:
+  - New nev-data-api envelope `{success: true, data: {data:[...], metadata:{}}, timestamp}` — extracts rows and metadata correctly
+  - Legacy `{data: [...], metadata: {}}` format — backward-compatible regression test
+  - Legacy `{rows: [...]}` format — backward-compatible regression test
+  - Bare array response — backward-compatible regression test
+  - Edge case: `{success: false, data: {...}}` — does NOT unwrap (error envelopes untouched)
+  - Edge case: `{success: true, data: [bareArray]}` — does NOT unwrap when `data` is already an array
+  - Edge case: `{}` empty object — no crash, returns empty response
+  - Edge case: `{data: null}` — no crash, returns empty response
+  - snake_case metadata fields (`total_rows`, `execution_time`) mapped correctly
+  - `query` field extracted from envelope metadata
+  - `totalRows` fallback to `rows.length` when metadata absent
+  - `executionTime` fallback to `0` when metadata absent
+  - Full production-shaped response with strict assertions on exact row values
+
+### Audit: other DataClient methods
+- `getCapabilities()`: passes raw response to tool → analytics.ts tool handler already had envelope-aware extraction at lines 125-126 (`raw['data'] ?? raw`) — **not affected**
+- `getTableSchema()`, `getFilterValues()`, `getSegmentationCriteria()`, `previewSegment()`, `executeSegment()`, `getDimensionValues()`, `getCampaignReport()`: all pass the raw response directly to the MCP tool without any transformation — the LLM receives the full envelope but can navigate it. No silent data loss — **not affected**
+
+Refs: NEV-1674
+
 ## [1.7.0] - 2026-06-02
 
 ### Added
