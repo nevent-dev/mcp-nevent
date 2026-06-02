@@ -15,6 +15,8 @@
  * - `channel` mirrors the backend `CommunicationChannel` enum exactly (11
  *   values). Legacy aliases EMAIL/SMS/WHATSAPP are mapped to their _ONLY
  *   counterparts in the handler for backwards-compatibility (NEV-1669).
+ * - `reply_to` (NEV-1671): optional email address validated by Zod. Maps to
+ *   `replyTo` in the backend payload. Max 254 chars per RFC 5321.
  */
 
 import { z } from 'zod';
@@ -269,6 +271,36 @@ export const CreateCampaignSchema = {
     .record(z.string(), z.string())
     .optional()
     .describe('Custom tracking parameters as key-value pairs appended to tracked links (optional).'),
+
+  // -------------------------------------------------------------------------
+  // Reply-To address (NEV-1671)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Reply-To email address.
+   *
+   * When provided, email replies from recipients will be directed to this
+   * address instead of the campaign's From address. Useful for routing
+   * replies to a shared inbox (e.g. "support@company.com") while keeping
+   * a dedicated sending identity (e.g. "news@company.com").
+   *
+   * Maps to `replyTo` on the backend `CampaignDraftRequest` (NEV-1670).
+   * Max 254 characters per RFC 5321. Backend cascade:
+   *   campaign.replyTo > tenant.emailSendingSettings.replyTo > fromEmail
+   *
+   * Only relevant for email-bearing channels (EMAIL_ONLY, EMAIL_AND_SMS,
+   * EMAIL_AND_WHATSAPP, ALL_CHANNELS, OMNICHANNEL). Ignored by the backend
+   * for SMS/WhatsApp/Push-only channels.
+   */
+  reply_to: z
+    .string()
+    .email()
+    .max(254)
+    .optional()
+    .describe(
+      'Reply-To email address (optional). Recipients\' replies go to this address instead of the From address. ' +
+      'Must be a valid email, max 254 chars. Only meaningful for email-bearing channels.'
+    ),
 };
 
 // ---------------------------------------------------------------------------

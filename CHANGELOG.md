@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-02
+
+### Added
+- `nevent_create_campaign` now exposes the optional `reply_to` parameter (string, valid email format, max 254 chars per RFC 5321). When provided it is sent to nev-api as `replyTo` in the campaign draft body; when absent the field is omitted entirely from the request (not sent as `null` or `undefined`) (NEV-1671).
+- 7 new unit tests covering `reply_to` schema validation (valid email accepted, absent field accepted, invalid format rejected, >254 chars rejected, boundary at 254 chars) and payload wiring (`replyTo` present when provided, absent when omitted, value matches exactly).
+
+### Notes
+- `reply_to` is only meaningful for email-bearing channels (EMAIL_ONLY, EMAIL_AND_SMS, EMAIL_AND_WHATSAPP, ALL_CHANNELS, OMNICHANNEL). The backend ignores it for non-email channels.
+- Backend cascade: `campaign.replyTo > tenant.emailSendingSettings.replyTo > fromEmail` — omitting `reply_to` falls back to tenant or sender defaults.
+- Related to NEV-1670 (backend fix for `createDraft` persistence, merged to development, pending prod deploy). The MCP sends the field correctly now; `POST /campaigns` will persist it once NEV-1670 reaches production. `PUT /campaigns/{id}` already works correctly in all environments.
+- `nevent_schedule_campaign` intentionally does NOT expose `reply_to` — scheduling does not modify campaign content.
+
+Refs: NEV-1671
+
 ## [1.6.0] - 2026-06-02
 
 ### Fixed

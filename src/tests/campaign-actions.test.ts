@@ -1,5 +1,5 @@
 /**
- * Unit tests for campaign action tools (NEV-1585 / NEV-1668 / NEV-1669).
+ * Unit tests for campaign action tools (NEV-1585 / NEV-1668 / NEV-1669 / NEV-1671).
  *
  * Covers:
  * - Zod schema validation for CreateCampaignSchema and ScheduleCampaignSchema
@@ -17,6 +17,11 @@
  *   - With one UTM: payload includes utmTracking with that field
  *   - With all UTMs: payload includes all fields
  *   - utm_custom_params serialised correctly as object
+ * - reply_to support (NEV-1671):
+ *   - Valid email → accepted by schema and included in payload as `replyTo`
+ *   - Absent → NOT included in payload (no null, no undefined key)
+ *   - Invalid format (non-email) → Zod rejects
+ *   - Exceeds 254 chars → Zod rejects
  *
  * ## Operation mode
  *
@@ -779,5 +784,135 @@ describe('nevent_create_campaign — UTM payload (NEV-1669, STANDARD/FULL mode)'
     });
 
     expect(capturedBody).not.toHaveProperty('utmTracking');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEV-1671: reply_to schema validation
+// ---------------------------------------------------------------------------
+
+describe('CreateCampaignSchema — reply_to (NEV-1671)', () => {
+  it('accepts a valid reply_to email address', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Reply Test',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      reply_to: 'replies@company.com',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.reply_to).toBe('replies@company.com');
+  });
+
+  it('accepts campaign without reply_to (field is optional)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'No Reply',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.reply_to).toBeUndefined();
+  });
+
+  it('rejects reply_to with invalid email format', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Bad Reply',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      reply_to: 'not-an-email',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects reply_to exceeding 254 characters', () => {
+    // 249-char local part + @x.com (6 chars) = 255 chars total → must fail
+    const longLocal = 'a'.repeat(249);
+    const address = `${longLocal}@x.com`;
+    expect(address).toHaveLength(255); // sanity-check the test string itself
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Too Long Reply',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      reply_to: address,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts reply_to exactly at 254 character limit', () => {
+    // 248-char local part + @x.com (6 chars) = 254 chars total (boundary — must pass)
+    const borderLocal = 'a'.repeat(248);
+    const address = `${borderLocal}@x.com`;
+    expect(address).toHaveLength(254); // sanity-check the test string itself
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Boundary Reply',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      reply_to: address,
+    });
+    // Note: some email validators also reject very long local parts (>64 chars per RFC 5321).
+    // Zod's .email() uses a lenient regex so this passes the format check.
+    // The operative constraint here is .max(254); a 255-char address must fail (see previous test).
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEV-1671: reply_to payload wiring
+// ---------------------------------------------------------------------------
+
+describe('nevent_create_campaign — reply_to payload (NEV-1671, STANDARD/FULL mode)', () => {
+  it('includes replyTo in payload when reply_to is provided', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'r1', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-reply-present');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Reply Campaign',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      reply_to: 'support@company.com',
+    });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody).toHaveProperty('replyTo', 'support@company.com');
+  });
+
+  it('does NOT include replyTo in payload when reply_to is absent', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'r2', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-reply-absent');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'No Reply Campaign',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+    });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody).not.toHaveProperty('replyTo');
+  });
+
+  it('replyTo value in payload matches the provided reply_to string exactly', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'r3', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-reply-value');
+
+    const replyAddress = 'marketing-replies@festival.com';
+    await server.invoke('nevent_create_campaign', {
+      name: 'Exact Reply',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      reply_to: replyAddress,
+    });
+
+    expect(capturedBody!['replyTo']).toBe(replyAddress);
   });
 });
