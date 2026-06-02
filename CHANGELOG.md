@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-02
+
+### Fixed
+- `nevent_schedule_campaign` was using `PATCH /campaigns/{id}` with body `{ status: 'SCHEDULED', scheduledTime }`, which returned HTTP 405 because the backend has no PATCH mapping for that route. The correct endpoint is `POST /campaigns/{id}/actions/schedule` with body `{ scheduledTime }` only. The status transition to SCHEDULED is handled internally by nev-api. This regression was introduced in commit `5145ac2` (15 April 2026) and caused 100% failure rate when scheduling campaigns from Claude/MCP.
+
+### Added
+- Unit tests for `nevent_create_campaign` and `nevent_schedule_campaign` in `src/tests/campaign-actions.test.ts` (25 tests). Includes schema validation, operation mode guard, and HTTP shape regression tests for NEV-1668.
+
+### Notes
+- Requires updating the MCP in the client (Claude Desktop / Claude CLI) after installing this release to pick up the new binary.
+
+Refs: NEV-1668
+
 ## [1.4.1] - 2026-06-01
 
 ### Fixed
