@@ -408,46 +408,47 @@ export function registerCampaignActionTools(
           });
         }
 
-        // --- PATCH campaign with scheduledTime and SCHEDULED status ---
-        const patchPayload: Record<string, unknown> = {
-          status: 'SCHEDULED',
+        // --- POST to schedule endpoint with scheduledTime ---
+        // Backend action pattern: POST /campaigns/{id}/actions/schedule
+        // Body: { scheduledTime } only — backend handles status transition internally.
+        const schedulePayload: Record<string, unknown> = {
           scheduledTime: params.scheduled_time,
         };
 
-        const patchResponse = await fetch(
-          `${neventApiUrl}/campaigns/${encodeURIComponent(params.campaign_id)}`,
+        const scheduleResponse = await fetch(
+          `${neventApiUrl}/campaigns/${encodeURIComponent(params.campaign_id)}/actions/schedule`,
           {
-            method: 'PATCH',
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${jwtToken}`,
             },
-            body: JSON.stringify(patchPayload),
+            body: JSON.stringify(schedulePayload),
             signal: AbortSignal.timeout(TIMEOUTS.DEFAULT_MS),
           }
         );
 
-        if (!patchResponse.ok) {
-          const body = await patchResponse.text();
+        if (!scheduleResponse.ok) {
+          const body = await scheduleResponse.text();
           return err({
             error: {
-              type: patchResponse.status === 403 ? 'authentication_error' : 'api_error',
+              type: scheduleResponse.status === 403 ? 'authentication_error' : 'api_error',
               message:
-                patchResponse.status === 403
+                scheduleResponse.status === 403
                   ? 'Access denied. Scheduling campaigns requires appropriate permissions.'
-                  : patchResponse.status === 422
+                  : scheduleResponse.status === 422
                     ? `Validation error from nev-api when scheduling: ${body}`
-                    : `Failed to schedule campaign: HTTP ${patchResponse.status}. ${body}`,
-              code: patchResponse.status === 403
+                    : `Failed to schedule campaign: HTTP ${scheduleResponse.status}. ${body}`,
+              code: scheduleResponse.status === 403
                 ? 'forbidden'
-                : patchResponse.status === 422
+                : scheduleResponse.status === 422
                   ? 'validation_error'
                   : 'api_error',
             },
           });
         }
 
-        const updatedCampaign = await patchResponse.json() as CampaignRecord;
+        const updatedCampaign = await scheduleResponse.json() as CampaignRecord;
 
         // --- Structured audit log ---
         logger.info({
