@@ -44,7 +44,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import { CreateCampaignSchema, ScheduleCampaignSchema } from '../schemas/campaign-actions.js';
+import { CreateCampaignSchema, ScheduleCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
 import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_create_campaign',
-    'Create a new email, SMS, or WhatsApp campaign draft. PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL campaigns: subject, from_name, and from_email are required. For SMS: sms_content is required. Always confirm the segment audience count with the user before scheduling.',
+    'Create a new campaign draft (email, SMS, WhatsApp, push, or multi-channel). PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL_ONLY (and email multi-channel): email_subject is required. For SMS_ONLY/WHATSAPP_ONLY/PUSH_ONLY and multi-channel involving those: message is required. Always confirm the segment audience count with the user before scheduling.',
     CreateCampaignSchema,
     { title: 'Create campaign draft', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -157,29 +157,60 @@ export function registerCampaignActionTools(
       const denied = checkMode('nevent_create_campaign');
       if (denied) return err(denied);
 
+      // --- Resolve channel alias to canonical nev-api enum value (NEV-1669) ---
+      // Legacy aliases EMAIL/SMS/WHATSAPP are mapped to their _ONLY counterparts.
+      const resolvedChannel: string = CHANNEL_ALIAS_MAP[params.channel] ?? params.channel;
+
       // --- Channel-specific field validation ---
-      if (params.channel === 'EMAIL' && !params.email_subject) {
+      // Email-bearing channels require a subject line.
+      const isEmailChannel =
+        resolvedChannel === 'EMAIL_ONLY' ||
+        resolvedChannel === 'EMAIL_AND_SMS' ||
+        resolvedChannel === 'EMAIL_AND_WHATSAPP';
+
+      // Non-email channels that require a text message body.
+      const requiresMessage =
+        resolvedChannel === 'SMS_ONLY' ||
+        resolvedChannel === 'WHATSAPP_ONLY' ||
+        resolvedChannel === 'PUSH_ONLY' ||
+        resolvedChannel === 'EMAIL_AND_SMS' ||
+        resolvedChannel === 'EMAIL_AND_WHATSAPP' ||
+        resolvedChannel === 'PUSH_AND_SMS' ||
+        resolvedChannel === 'PUSH_AND_WHATSAPP' ||
+        resolvedChannel === 'SMS_AND_WHATSAPP' ||
+        resolvedChannel === 'ALL_CHANNELS' ||
+        resolvedChannel === 'OMNICHANNEL';
+
+      if (isEmailChannel && !params.email_subject) {
         return err({
           error: {
             type: 'invalid_request',
             message:
-              'email_subject is required when channel is EMAIL. ' +
+              `email_subject is required when channel is ${resolvedChannel}. ` +
               'Provide a non-empty subject line for the campaign.',
             code: 'missing_required_field',
           },
         });
       }
 
-      if ((params.channel === 'SMS' || params.channel === 'WHATSAPP') && !params.message) {
-        return err({
-          error: {
-            type: 'invalid_request',
-            message:
-              `message is required when channel is ${params.channel}. ` +
-              'Provide the message text body for the campaign.',
-            code: 'missing_required_field',
-          },
-        });
+      if (requiresMessage && !params.email_subject && !params.message) {
+        // For pure non-email channels, require message; for multi-channel that includes
+        // both email and non-email, we let the backend validate message presence.
+        const pureNonEmailChannel =
+          resolvedChannel === 'SMS_ONLY' ||
+          resolvedChannel === 'WHATSAPP_ONLY' ||
+          resolvedChannel === 'PUSH_ONLY';
+        if (pureNonEmailChannel && !params.message) {
+          return err({
+            error: {
+              type: 'invalid_request',
+              message:
+                `message is required when channel is ${resolvedChannel}. ` +
+                'Provide the message text body for the campaign.',
+              code: 'missing_required_field',
+            },
+          });
+        }
       }
 
       // --- Extract JWT from DataClient ---
@@ -218,9 +249,10 @@ export function registerCampaignActionTools(
       try {
         // --- Build the request payload ---
         // status is ALWAYS "DRAFT" — hardcoded, never from params.
+        // channel uses the resolved canonical nev-api enum value (NEV-1669).
         const payload: Record<string, unknown> = {
           name: params.name,
-          channel: params.channel,
+          channel: resolvedChannel,
           status: 'DRAFT',
         };
 
@@ -233,6 +265,21 @@ export function registerCampaignActionTools(
           payload['segmentIds'] = params.segment_ids;
         }
         if (params.template_id !== undefined) payload['templateId'] = params.template_id;
+
+        // --- Build utmTracking object only if at least one UTM field is set (NEV-1669) ---
+        const utmTracking: Record<string, unknown> = {};
+        if (params.utm_source !== undefined) utmTracking['source'] = params.utm_source;
+        if (params.utm_medium !== undefined) utmTracking['medium'] = params.utm_medium;
+        if (params.utm_campaign !== undefined) utmTracking['campaign'] = params.utm_campaign;
+        if (params.utm_content !== undefined) utmTracking['content'] = params.utm_content;
+        if (params.utm_term !== undefined) utmTracking['term'] = params.utm_term;
+        if (params.utm_custom_params !== undefined && Object.keys(params.utm_custom_params).length > 0) {
+          utmTracking['customParams'] = params.utm_custom_params;
+        }
+        // Only attach utmTracking to the payload when at least one field is provided.
+        if (Object.keys(utmTracking).length > 0) {
+          payload['utmTracking'] = utmTracking;
+        }
 
         // --- POST to nev-api ---
         const response = await fetch(`${neventApiUrl}/campaigns`, {
