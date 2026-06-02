@@ -6,6 +6,16 @@
  *  1. nevent_create_campaign  — Create a campaign in DRAFT state
  *  2. nevent_schedule_campaign — Schedule a DRAFT campaign for future delivery
  *
+ * ## reply_to support (NEV-1671)
+ *
+ * `nevent_create_campaign` exposes an optional `reply_to` parameter that maps
+ * to the backend `CampaignDraftRequest.replyTo` field. When provided it is
+ * included in the POST body as `replyTo`; when absent the field is omitted
+ * entirely (never sent as null or undefined).
+ *
+ * Backend cascade (AWSSESClient.resolveReplyToAddresses):
+ *   campaign.replyTo > tenant.emailSendingSettings.replyTo > fromEmail
+ *
  * ## Guardrails
  *
  * ### nevent_create_campaign
@@ -149,7 +159,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_create_campaign',
-    'Create a new campaign draft (email, SMS, WhatsApp, push, or multi-channel). PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL_ONLY (and email multi-channel): email_subject is required. For SMS_ONLY/WHATSAPP_ONLY/PUSH_ONLY and multi-channel involving those: message is required. Always confirm the segment audience count with the user before scheduling.',
+    'Create a new campaign draft (email, SMS, WhatsApp, push, or multi-channel). PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL_ONLY (and email multi-channel): email_subject is required. For SMS_ONLY/WHATSAPP_ONLY/PUSH_ONLY and multi-channel involving those: message is required. Optional fields: from_name, preview_text, template_id, segment_ids, utm_source/medium/campaign/content/term/custom_params, reply_to (email address for reply routing — useful when replies should go to a different mailbox than the From address). Always confirm the segment audience count with the user before scheduling.',
     CreateCampaignSchema,
     { title: 'Create campaign draft', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     async (params) => {
@@ -279,6 +289,14 @@ export function registerCampaignActionTools(
         // Only attach utmTracking to the payload when at least one field is provided.
         if (Object.keys(utmTracking).length > 0) {
           payload['utmTracking'] = utmTracking;
+        }
+
+        // --- reply_to → replyTo (NEV-1671) ---
+        // Only include in payload when the parameter is present and non-empty.
+        // Sending replyTo=undefined or replyTo=null would overwrite the tenant
+        // default with a null, which is not the intended behaviour when omitted.
+        if (params.reply_to !== undefined) {
+          payload['replyTo'] = params.reply_to;
         }
 
         // --- POST to nev-api ---
