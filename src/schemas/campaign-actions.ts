@@ -12,9 +12,75 @@
  *   the exact value `true` or Zod will reject it at parse time.
  * - ISO 8601 strings are validated at the schema level for format, and the
  *   handler validates that the scheduled time is in the future.
+ * - `channel` mirrors the backend `CommunicationChannel` enum exactly (11
+ *   values). Legacy aliases EMAIL/SMS/WHATSAPP are mapped to their _ONLY
+ *   counterparts in the handler for backwards-compatibility (NEV-1669).
  */
 
 import { z } from 'zod';
+
+// ---------------------------------------------------------------------------
+// CommunicationChannel enum (NEV-1669)
+// ---------------------------------------------------------------------------
+
+/**
+ * The complete set of delivery channel values accepted by the nev-api
+ * `CommunicationChannel` enum. The handler maps the three legacy aliases
+ * (EMAIL, SMS, WHATSAPP) to EMAIL_ONLY, SMS_ONLY, and WHATSAPP_ONLY
+ * respectively for backwards-compatibility.
+ *
+ * Choose the value that best describes the intended delivery mix:
+ *
+ * | Value              | Channels used                         |
+ * |--------------------|---------------------------------------|
+ * | EMAIL_ONLY         | Email only                            |
+ * | SMS_ONLY           | SMS only                              |
+ * | WHATSAPP_ONLY      | WhatsApp only                         |
+ * | PUSH_ONLY          | Push notifications only               |
+ * | EMAIL_AND_SMS      | Email + SMS                           |
+ * | EMAIL_AND_WHATSAPP | Email + WhatsApp                      |
+ * | PUSH_AND_SMS       | Push + SMS                            |
+ * | PUSH_AND_WHATSAPP  | Push + WhatsApp                       |
+ * | SMS_AND_WHATSAPP   | SMS + WhatsApp                        |
+ * | ALL_CHANNELS       | All available channels                |
+ * | OMNICHANNEL        | Automatic best-channel selection      |
+ *
+ * Deprecated aliases (mapped internally, not recommended for new use):
+ *   EMAIL → EMAIL_ONLY, SMS → SMS_ONLY, WHATSAPP → WHATSAPP_ONLY
+ */
+export const COMMUNICATION_CHANNEL_VALUES = [
+  // Primary single-channel values
+  'EMAIL_ONLY',
+  'SMS_ONLY',
+  'WHATSAPP_ONLY',
+  'PUSH_ONLY',
+  // Multi-channel combinations
+  'EMAIL_AND_SMS',
+  'EMAIL_AND_WHATSAPP',
+  'PUSH_AND_SMS',
+  'PUSH_AND_WHATSAPP',
+  'SMS_AND_WHATSAPP',
+  // Broad values
+  'ALL_CHANNELS',
+  'OMNICHANNEL',
+  // Backwards-compatibility aliases (mapped in handler to _ONLY variants)
+  'EMAIL',
+  'SMS',
+  'WHATSAPP',
+] as const;
+
+/** Union type of all accepted channel values (including legacy aliases). */
+export type CommunicationChannel = (typeof COMMUNICATION_CHANNEL_VALUES)[number];
+
+/**
+ * Mapping of legacy channel aliases to the correct nev-api enum values.
+ * Applied in the `nevent_create_campaign` handler before sending to the API.
+ */
+export const CHANNEL_ALIAS_MAP: Partial<Record<CommunicationChannel, string>> = {
+  EMAIL: 'EMAIL_ONLY',
+  SMS: 'SMS_ONLY',
+  WHATSAPP: 'WHATSAPP_ONLY',
+};
 
 // ---------------------------------------------------------------------------
 // Tool 1: nevent_create_campaign
@@ -38,14 +104,31 @@ export const CreateCampaignSchema = {
     .describe('Campaign name (required, max 255 characters)'),
 
   /**
-   * Delivery channel. Determines which content fields are relevant.
-   * - EMAIL  : requires email_subject; supports email_body, preview_text, from_name
-   * - SMS    : requires message
-   * - WHATSAPP: requires message
+   * Delivery channel. Must be one of the nev-api CommunicationChannel enum values.
+   *
+   * Single-channel: EMAIL_ONLY | SMS_ONLY | WHATSAPP_ONLY | PUSH_ONLY
+   * Multi-channel:  EMAIL_AND_SMS | EMAIL_AND_WHATSAPP | PUSH_AND_SMS |
+   *                 PUSH_AND_WHATSAPP | SMS_AND_WHATSAPP
+   * Broad:          ALL_CHANNELS | OMNICHANNEL
+   *
+   * Legacy aliases EMAIL, SMS, WHATSAPP are accepted and mapped automatically
+   * to EMAIL_ONLY, SMS_ONLY, WHATSAPP_ONLY (deprecated, prefer _ONLY variants).
+   *
+   * Content requirements by channel:
+   * - EMAIL_ONLY / EMAIL_AND_*: email_subject required; email_body, preview_text, from_name optional
+   * - SMS_ONLY / SMS_AND_* / PUSH_AND_SMS: message required
+   * - WHATSAPP_ONLY / EMAIL_AND_WHATSAPP / PUSH_AND_WHATSAPP / SMS_AND_WHATSAPP: message required
+   * - PUSH_ONLY: message required
    */
   channel: z
-    .enum(['EMAIL', 'SMS', 'WHATSAPP'])
-    .describe('Delivery channel: EMAIL | SMS | WHATSAPP'),
+    .enum(COMMUNICATION_CHANNEL_VALUES)
+    .describe(
+      'Delivery channel (nev-api CommunicationChannel enum). ' +
+      'Use EMAIL_ONLY, SMS_ONLY, WHATSAPP_ONLY, PUSH_ONLY for single-channel; ' +
+      'EMAIL_AND_SMS, EMAIL_AND_WHATSAPP, PUSH_AND_SMS, PUSH_AND_WHATSAPP, SMS_AND_WHATSAPP for multi-channel; ' +
+      'ALL_CHANNELS or OMNICHANNEL for broad delivery. ' +
+      'Legacy values EMAIL/SMS/WHATSAPP are accepted but deprecated.'
+    ),
 
   /**
    * Email subject line.
@@ -114,6 +197,78 @@ export const CreateCampaignSchema = {
     .string()
     .optional()
     .describe('Template ID to pre-populate campaign content (optional)'),
+
+  // -------------------------------------------------------------------------
+  // UTM tracking parameters (NEV-1669)
+  // -------------------------------------------------------------------------
+
+  /**
+   * UTM source parameter — identifies the traffic source.
+   * Maps to `utmTracking.source` on the backend (max 100 chars).
+   * Example: "nevent", "newsletter", "instagram"
+   * Defaults to "nevent" on the backend when omitted.
+   */
+  utm_source: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('UTM source parameter (e.g. "nevent", "newsletter"). Max 100 chars.'),
+
+  /**
+   * UTM medium parameter — identifies the marketing medium.
+   * Maps to `utmTracking.medium` on the backend (max 100 chars).
+   * Example: "email", "sms", "whatsapp"
+   * The backend auto-detects the medium from the channel when omitted.
+   */
+  utm_medium: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('UTM medium parameter (e.g. "email", "sms"). Max 100 chars. Auto-detected from channel if omitted.'),
+
+  /**
+   * UTM campaign parameter — identifies the specific campaign.
+   * Maps to `utmTracking.campaign` on the backend (max 100 chars).
+   * Example: "summer-sale-2026", "welcome-series"
+   * The backend defaults to a slugified version of the campaign name when omitted.
+   */
+  utm_campaign: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('UTM campaign parameter (e.g. "summer-sale-2026"). Max 100 chars. Defaults to slugified campaign name.'),
+
+  /**
+   * UTM content parameter — differentiates ads or links in the same campaign.
+   * Maps to `utmTracking.content` on the backend (max 100 chars).
+   * Example: "header-cta", "footer-link"
+   */
+  utm_content: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('UTM content parameter — differentiates links/variants. Max 100 chars.'),
+
+  /**
+   * UTM term parameter — identifies paid search keywords.
+   * Maps to `utmTracking.term` on the backend (max 100 chars).
+   * Example: "festival+tickets", "music+events"
+   */
+  utm_term: z
+    .string()
+    .max(100)
+    .optional()
+    .describe('UTM term parameter — paid search keyword. Max 100 chars.'),
+
+  /**
+   * Custom UTM-style query parameters to append to tracked links.
+   * Maps to `utmTracking.customParams` on the backend (Map<String,String>).
+   * Example: { "ref": "promo2026", "variant": "A" }
+   */
+  utm_custom_params: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Custom tracking parameters as key-value pairs appended to tracked links (optional).'),
 };
 
 // ---------------------------------------------------------------------------

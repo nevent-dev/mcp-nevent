@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-02
+
+### Fixed
+- `nevent_create_campaign` was sending `"EMAIL"`, `"SMS"`, or `"WHATSAPP"` as the channel value, which does not match the `CommunicationChannel` enum in `nev-api` (11 values: `EMAIL_ONLY`, `SMS_ONLY`, `WHATSAPP_ONLY`, `PUSH_ONLY`, `EMAIL_AND_SMS`, `EMAIL_AND_WHATSAPP`, `PUSH_AND_SMS`, `PUSH_AND_WHATSAPP`, `SMS_AND_WHATSAPP`, `ALL_CHANNELS`, `OMNICHANNEL`). Jackson silently ignores or errors on unknown enum values, causing channel to be undefined or rejected since Sprint 2 (NEV-1669).
+- Tool description for `nevent_create_campaign` incorrectly mentioned `from_email` as a required field. That field does not exist in the schema (NEV-1669).
+
+### Added
+- `nevent_create_campaign` now exposes all 11 `CommunicationChannel` enum values in the Zod schema. The three legacy aliases (`EMAIL`, `SMS`, `WHATSAPP`) are still accepted for backwards-compatibility and automatically mapped to `EMAIL_ONLY`, `SMS_ONLY`, `WHATSAPP_ONLY` respectively in the handler (NEV-1669).
+- UTM tracking support for `nevent_create_campaign`: 6 new optional parameters — `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `utm_custom_params` — mapped to the backend `utmTracking` object. The `utmTracking` field is only included in the API payload when at least one UTM parameter is provided; an empty `utm_custom_params: {}` does not trigger inclusion (NEV-1669).
+- 34 new unit tests covering channel enum validation, alias mapping, canonical channel passthrough, UTM payload presence/absence, and `utm_custom_params` serialisation.
+
+### Notes
+- Backwards compatible: existing code passing `"EMAIL"`, `"SMS"`, or `"WHATSAPP"` continues to work.
+- Requires updating the MCP in the client (Claude Desktop / Claude CLI) after installing this release.
+
+Refs: NEV-1669
+
 ## [1.5.0] - 2026-06-02
 
 ### Fixed
