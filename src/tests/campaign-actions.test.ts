@@ -1,5 +1,5 @@
 /**
- * Unit tests for campaign action tools (NEV-1585 / NEV-1668).
+ * Unit tests for campaign action tools (NEV-1585 / NEV-1668 / NEV-1669).
  *
  * Covers:
  * - Zod schema validation for CreateCampaignSchema and ScheduleCampaignSchema
@@ -8,6 +8,15 @@
  *   - URL must be /campaigns/{id}/actions/schedule — regression for NEV-1668
  *   - Body must contain only { scheduledTime } (no status field) — regression for NEV-1668
  * - HTTP request shape for nevent_create_campaign (POST /campaigns)
+ * - Channel enum fix (NEV-1669):
+ *   - All 11 CommunicationChannel values accepted by schema
+ *   - Invalid channel values rejected by Zod
+ *   - Legacy aliases EMAIL/SMS/WHATSAPP mapped to _ONLY variants in the payload
+ * - UTM tracking support (NEV-1669):
+ *   - Without UTMs: payload does NOT include utmTracking
+ *   - With one UTM: payload includes utmTracking with that field
+ *   - With all UTMs: payload includes all fields
+ *   - utm_custom_params serialised correctly as object
  *
  * ## Operation mode
  *
@@ -24,7 +33,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { z } from 'zod';
 import { isOperationAllowed } from '../config/operation-mode.js';
-import { CreateCampaignSchema, ScheduleCampaignSchema } from '../schemas/campaign-actions.js';
+import { CreateCampaignSchema, ScheduleCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
 
 // ---------------------------------------------------------------------------
 // Schema helpers
@@ -416,5 +425,359 @@ describe('nevent_create_campaign — HTTP request shape', () => {
     });
 
     expect(capturedBody!['status']).toBe('DRAFT');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEV-1669: channel enum fix
+// ---------------------------------------------------------------------------
+
+describe('CreateCampaignSchema — channel enum (NEV-1669)', () => {
+  // All 11 canonical CommunicationChannel values must be accepted by Zod.
+  const validChannels = [
+    'EMAIL_ONLY',
+    'SMS_ONLY',
+    'WHATSAPP_ONLY',
+    'PUSH_ONLY',
+    'EMAIL_AND_SMS',
+    'EMAIL_AND_WHATSAPP',
+    'PUSH_AND_SMS',
+    'PUSH_AND_WHATSAPP',
+    'SMS_AND_WHATSAPP',
+    'ALL_CHANNELS',
+    'OMNICHANNEL',
+  ] as const;
+
+  for (const channel of validChannels) {
+    it(`accepts canonical channel value "${channel}"`, () => {
+      const result = z.object(CreateCampaignSchema).safeParse({
+        name: 'Test Campaign',
+        channel,
+        // Provide required fields for channels that need them
+        ...(channel.includes('EMAIL') || channel === 'EMAIL_ONLY' ? { email_subject: 'Subject' } : {}),
+        message: 'Test message',
+      });
+      expect(result.success).toBe(true);
+    });
+  }
+
+  // Legacy aliases must also be accepted (backward compat).
+  it('accepts legacy alias "EMAIL" (backward compat)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Legacy EMAIL',
+      channel: 'EMAIL',
+      email_subject: 'Subject',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts legacy alias "SMS" (backward compat)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Legacy SMS',
+      channel: 'SMS',
+      message: 'Hi!',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts legacy alias "WHATSAPP" (backward compat)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Legacy WA',
+      channel: 'WHATSAPP',
+      message: 'Hi!',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid channel value "NOT_A_CHANNEL"', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Bad Channel',
+      channel: 'NOT_A_CHANNEL',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid channel value "PUSH" (not in enum)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Push only',
+      channel: 'PUSH',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty string as channel', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Empty channel',
+      channel: '',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('CHANNEL_ALIAS_MAP — backward compatibility mapping (NEV-1669)', () => {
+  it('maps EMAIL → EMAIL_ONLY', () => {
+    expect(CHANNEL_ALIAS_MAP['EMAIL']).toBe('EMAIL_ONLY');
+  });
+
+  it('maps SMS → SMS_ONLY', () => {
+    expect(CHANNEL_ALIAS_MAP['SMS']).toBe('SMS_ONLY');
+  });
+
+  it('maps WHATSAPP → WHATSAPP_ONLY', () => {
+    expect(CHANNEL_ALIAS_MAP['WHATSAPP']).toBe('WHATSAPP_ONLY');
+  });
+
+  it('canonical values are NOT in the alias map (no double-mapping)', () => {
+    expect(CHANNEL_ALIAS_MAP['EMAIL_ONLY']).toBeUndefined();
+    expect(CHANNEL_ALIAS_MAP['SMS_ONLY']).toBeUndefined();
+    expect(CHANNEL_ALIAS_MAP['WHATSAPP_ONLY']).toBeUndefined();
+  });
+});
+
+describe('nevent_create_campaign — channel payload (NEV-1669, STANDARD/FULL mode)', () => {
+  // Each test uses a unique tenant ID to avoid rate limiter collisions across
+  // tests that share the same in-memory rateLimits Map.
+  it('sends EMAIL_ONLY when channel=EMAIL (legacy alias resolved)', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'c1', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-ch-email');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Test',
+      channel: 'EMAIL',
+      email_subject: 'Hi',
+    });
+
+    expect(capturedBody!['channel']).toBe('EMAIL_ONLY');
+  });
+
+  it('sends SMS_ONLY when channel=SMS (legacy alias resolved)', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'c2', name: 'Test', status: 'DRAFT', channel: 'SMS_ONLY' }, 201);
+    }, 'tenant-ch-sms');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Test',
+      channel: 'SMS',
+      message: 'Hi!',
+    });
+
+    expect(capturedBody!['channel']).toBe('SMS_ONLY');
+  });
+
+  it('sends WHATSAPP_ONLY when channel=WHATSAPP (legacy alias resolved)', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'c3', name: 'Test', status: 'DRAFT', channel: 'WHATSAPP_ONLY' }, 201);
+    }, 'tenant-ch-wa');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Test',
+      channel: 'WHATSAPP',
+      message: 'Hola!',
+    });
+
+    expect(capturedBody!['channel']).toBe('WHATSAPP_ONLY');
+  });
+
+  it('sends EMAIL_AND_SMS unchanged (canonical value, no mapping)', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'c4', name: 'Test', status: 'DRAFT', channel: 'EMAIL_AND_SMS' }, 201);
+    }, 'tenant-ch-multi');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Test',
+      channel: 'EMAIL_AND_SMS',
+      email_subject: 'Subject',
+      message: 'Hi!',
+    });
+
+    expect(capturedBody!['channel']).toBe('EMAIL_AND_SMS');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEV-1669: UTM tracking support
+// ---------------------------------------------------------------------------
+
+describe('CreateCampaignSchema — UTM fields (NEV-1669)', () => {
+  it('accepts all optional UTM fields', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'UTM Test',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      utm_source: 'nevent',
+      utm_medium: 'email',
+      utm_campaign: 'summer-sale',
+      utm_content: 'header-cta',
+      utm_term: 'festival+tickets',
+      utm_custom_params: { ref: 'promo2026', variant: 'A' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses without any UTM fields (all optional)', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'No UTM',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+    });
+    expect(result.success).toBe(true);
+    const data = result.data!;
+    expect(data.utm_source).toBeUndefined();
+    expect(data.utm_medium).toBeUndefined();
+    expect(data.utm_campaign).toBeUndefined();
+    expect(data.utm_content).toBeUndefined();
+    expect(data.utm_term).toBeUndefined();
+    expect(data.utm_custom_params).toBeUndefined();
+  });
+
+  it('rejects utm_source longer than 100 chars', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Too long UTM',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      utm_source: 'a'.repeat(101),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects utm_custom_params with non-string values', () => {
+    const result = z.object(CreateCampaignSchema).safeParse({
+      name: 'Bad custom params',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Subject',
+      utm_custom_params: { key: 123 },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('nevent_create_campaign — UTM payload (NEV-1669, STANDARD/FULL mode)', () => {
+  // Each test uses a unique tenant ID to avoid rate limiter collisions.
+
+  it('does NOT include utmTracking when no UTM fields provided', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'u1', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-utm-none');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'No UTM',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+    });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody).not.toHaveProperty('utmTracking');
+  });
+
+  it('includes utmTracking with source when only utm_source provided', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'u2', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-utm-source');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Source only',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      utm_source: 'nevent',
+    });
+
+    expect(capturedBody).toHaveProperty('utmTracking');
+    const utm = capturedBody!['utmTracking'] as Record<string, unknown>;
+    expect(utm['source']).toBe('nevent');
+    expect(utm['medium']).toBeUndefined();
+    expect(utm['campaign']).toBeUndefined();
+  });
+
+  it('includes all UTM fields when all provided', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'u3', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-utm-all');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'All UTMs',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      utm_source: 'nevent',
+      utm_medium: 'email',
+      utm_campaign: 'summer-sale',
+      utm_content: 'header-cta',
+      utm_term: 'festival+tickets',
+      utm_custom_params: { ref: 'promo2026', variant: 'A' },
+    });
+
+    expect(capturedBody).toHaveProperty('utmTracking');
+    const utm = capturedBody!['utmTracking'] as Record<string, unknown>;
+    expect(utm['source']).toBe('nevent');
+    expect(utm['medium']).toBe('email');
+    expect(utm['campaign']).toBe('summer-sale');
+    expect(utm['content']).toBe('header-cta');
+    expect(utm['term']).toBe('festival+tickets');
+    expect(utm['customParams']).toEqual({ ref: 'promo2026', variant: 'A' });
+  });
+
+  it('serialises utm_custom_params as an object (not array)', async () => {
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'u4', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-utm-params');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Custom params',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      utm_custom_params: { a: '1', b: '2' },
+    });
+
+    expect(capturedBody).toHaveProperty('utmTracking');
+    const utm = capturedBody!['utmTracking'] as Record<string, unknown>;
+    const params = utm['customParams'];
+    expect(Array.isArray(params)).toBe(false);
+    expect(typeof params).toBe('object');
+    expect(params).toEqual({ a: '1', b: '2' });
+  });
+
+  it('does NOT include utmTracking when utm_custom_params is empty object', async () => {
+    // An empty customParams object should not trigger utmTracking inclusion
+    // because the handler checks Object.keys().length > 0 for customParams
+    // AND Object.keys(utmTracking).length > 0 for the wrapper.
+    if (!isWriteAllowed) return;
+    let capturedBody: Record<string, unknown> | null = null;
+    const server = await setupCampaignTools(async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return mockFetchOk({ id: 'u5', name: 'Test', status: 'DRAFT', channel: 'EMAIL_ONLY' }, 201);
+    }, 'tenant-utm-empty');
+
+    await server.invoke('nevent_create_campaign', {
+      name: 'Empty params',
+      channel: 'EMAIL_ONLY',
+      email_subject: 'Hello',
+      utm_custom_params: {},
+    });
+
+    expect(capturedBody).not.toHaveProperty('utmTracking');
   });
 });
