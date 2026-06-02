@@ -360,21 +360,49 @@ export class DataClient extends BaseClient {
   /**
    * Transform the raw analytics query API response into the compact MCP format.
    *
-   * The raw API may wrap results in various envelope shapes; we normalize to:
-   * `{ data: rows[], metadata: { totalRows, executionTime, query? } }`
+   * nev-data-api wraps all successful responses in a top-level envelope:
+   *   `{ success: true, data: { data: [...], metadata: {...} }, timestamp: "..." }`
+   *
+   * This method first detects and unwraps that envelope, then falls back to
+   * legacy normalization paths for backwards-compatibility:
+   *   - `{ data: [] }`         — direct array in data field
+   *   - `{ rows: [] }`         — rows field
+   *   - bare array             — the response itself is an array
+   *
+   * We normalize all shapes to:
+   *   `{ data: rows[], metadata: { totalRows, executionTime, query? } }`
    *
    * @param raw - Raw parsed JSON from POST /analytics/query.
    */
   private transformQueryResponse(raw: Record<string, unknown>): AnalyticsQueryResponse {
-    // Normalize response envelope: accept { data: [] }, { rows: [] }, or bare array
+    // Detect and unwrap the nev-data-api standard envelope:
+    // { success: true, data: { data: [...], metadata: {...} }, timestamp: "..." }
+    //
+    // We only unwrap when:
+    //   - success === true  (don't unwrap error envelopes like {success:false, data:{...}})
+    //   - raw['data'] is a plain object (not an array — if it's already an array, no wrapping)
+    //
+    // This ensures 100% backward-compatibility with any consumer that already passes
+    // an unwrapped payload or a legacy format.
+    const isWrappedEnvelope =
+      raw['success'] === true &&
+      typeof raw['data'] === 'object' &&
+      raw['data'] !== null &&
+      !Array.isArray(raw['data']);
+
+    const payload = isWrappedEnvelope
+      ? (raw['data'] as Record<string, unknown>)
+      : raw;
+
+    // Normalize rows — accept { data: [] }, { rows: [] }, or bare array
     const rows: Record<string, unknown>[] = (
-      (Array.isArray(raw['data']) ? raw['data'] : null) ??
-      (Array.isArray(raw['rows']) ? raw['rows'] : null) ??
-      (Array.isArray(raw) ? (raw as unknown as unknown[]) : null) ??
+      (Array.isArray(payload['data']) ? payload['data'] : null) ??
+      (Array.isArray(payload['rows']) ? payload['rows'] : null) ??
+      (Array.isArray(payload) ? (payload as unknown as unknown[]) : null) ??
       []
     ) as Record<string, unknown>[];
 
-    const meta = raw['metadata'] as Record<string, unknown> | undefined;
+    const meta = payload['metadata'] as Record<string, unknown> | undefined;
 
     return {
       data: rows,
