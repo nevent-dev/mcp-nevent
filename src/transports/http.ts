@@ -673,7 +673,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       'POST /mcp'
     );
     next();
-  }, lazyAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
+  }, mcpRateLimiter, lazyAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     const hasAuth = Boolean(req.headers['authorization']);
 
@@ -962,7 +962,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // GET /mcp — SSE stream for server-initiated messages
   // -------------------------------------------------------------------------
 
-  app.get('/', bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {
@@ -989,7 +989,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // DELETE /mcp — Session termination
   // -------------------------------------------------------------------------
 
-  app.delete('/', bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId || !activeSessions[sessionId]) {

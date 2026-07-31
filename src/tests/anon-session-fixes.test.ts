@@ -24,7 +24,7 @@
  *     mimics the try/finally pattern added in http.ts.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { DISCOVERY_METHODS } from '../transports/http.js';
 
 // ---------------------------------------------------------------------------
