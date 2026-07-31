@@ -710,9 +710,12 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           //   2. Tool EXECUTION (tools/call) is blocked for anonymous sessions
           //      at the lazyAuthMiddleware level — only DISCOVERY_METHODS pass
           //      through — so the stub URI can never be used in a real query.
-          //   3. This eliminates the per-request createToolCallLogger(mongoUri)
-          //      + warmUp() calls that the previous code triggered, which
-          //      opened a real Mongo connection for EVERY anonymous initialize.
+          //   3. Tool call logging is disabled via enableToolCallLogging: false
+          //      (see createNeventServer call below). Even though 'mongodb://stub'
+          //      is truthy, the logging gate in server.ts checks BOTH mongoUri
+          //      AND enableToolCallLogging before creating a ToolCallLogger or
+          //      calling warmUp(). This prevents background DNS/connection retries
+          //      against the non-existent stub host for EVERY anonymous initialize.
           //
           // All tool groups are still registered (same count as authenticated
           // sessions) so that directory scanners see the full tool catalog.
@@ -740,6 +743,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
             // tools is registered without opening any real MongoDB connection.
             // Tool EXECUTION is blocked at middleware level for anon sessions.
             mongoUri: config.mongoUri ? 'mongodb://stub' : undefined,
+            // Disable logging so no MongoClient is created for the stub URI.
+            // The logging gate in server.ts requires both mongoUri truthy AND
+            // enableToolCallLogging !== false; without this flag a warmUp()
+            // against 'mongodb://stub' would fire on every anonymous initialize.
+            enableToolCallLogging: false,
             paidMediaClient: stubPaidMediaClient,
             sessionClients: stubSessionClients,
             // No userId/getSessionId — anonymous sessions have no attribution.
