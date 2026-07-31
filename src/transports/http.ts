@@ -17,11 +17,29 @@
  *   │
  *   ├── POST /authorize (custom) → NeventOAuthProvider.handleLoginPost()
  *   │
- *   ├── POST /mcp                — MCP JSON-RPC (requireBearerAuth)
- *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth)
- *   ├── DELETE /mcp              — Session termination (requireBearerAuth)
+ *   ├── POST /mcp                — MCP JSON-RPC (lazyAuthMiddleware, NEV-1776)
+ *   │     ├── with Bearer token  → requireBearerAuth (unchanged)
+ *   │     └── without token      → discovery-only (initialize, tools/list, ping…)
+ *   │           → anonymous McpServer probe (stub clients, full tool metadata)
+ *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth, always)
+ *   ├── DELETE /mcp              — Session termination (requireBearerAuth, always)
  *   └── GET  /health             — Health check (no auth)
  * ```
+ *
+ * ## Lazy auth / public discovery (NEV-1776)
+ *
+ * MCP directory scanners (Smithery, Glama, PulseMCP) send `initialize` +
+ * `tools/list` without a Bearer token. Previously the server returned 401 to
+ * ALL requests, causing Smithery to show "No capabilities found".
+ *
+ * The `lazyAuthMiddleware` allows unauthenticated requests through if — and
+ * only if — every JSON-RPC method in the body is in `DISCOVERY_METHODS`.
+ * Execution methods (e.g. `tools/call`) without a token still return 401
+ * with the standard `WWW-Authenticate` challenge to trigger the OAuth flow.
+ *
+ * Anonymous sessions are backed by a stub McpServer (no real credentials,
+ * no business data) and expire after 5 minutes. A stricter
+ * `discoveryRateLimiter` (30 req/min) applies to all unauthenticated requests.
  *
  * ## Session management
  *
@@ -65,7 +83,7 @@
  * @module transports/http
  */
 
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
@@ -87,6 +105,38 @@ import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+
+// ---------------------------------------------------------------------------
+// Lazy auth — public discovery constants
+// ---------------------------------------------------------------------------
+
+/**
+ * JSON-RPC methods that MCP directory scanners (Smithery, Glama, PulseMCP)
+ * send during capability discovery. These are safe to serve without a Bearer
+ * token because they expose only tool metadata — never user data or side
+ * effects.
+ *
+ * Any other method (e.g. `tools/call`) arriving without Authorization will
+ * receive a 401 with `WWW-Authenticate`, which triggers the standard OAuth
+ * flow in real MCP clients.
+ */
+export const DISCOVERY_METHODS = new Set([
+  'initialize',
+  'notifications/initialized',
+  'ping',
+  'tools/list',
+  'prompts/list',
+  'resources/list',
+]);
+
+/**
+ * Anonymous session TTL in milliseconds.
+ *
+ * Discovery sessions hold no credentials and carry no user data. They are
+ * cleaned up aggressively (5 minutes) so they do not accumulate in memory
+ * when scanners open many parallel probes.
+ */
+const ANON_SESSION_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 // ---------------------------------------------------------------------------
 // Package metadata — read once at module load time, cached for the process
@@ -181,6 +231,22 @@ const mcpRateLimiter = rateLimit({
   // Suppress validation warnings for X-Forwarded-For when behind AWS ALB.
   // Trust proxy is set on the app (`app.set('trust proxy', 1)`), so the
   // forwarded IP is expected and safe to use for rate-limiting.
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
+/**
+ * Strict rate limiter for unauthenticated discovery requests (NEV-1776).
+ *
+ * Directory scanners (Smithery, Glama, PulseMCP) typically send at most a
+ * handful of probes per minute. 30 req/min per IP is generous for legitimate
+ * scanners while still blocking abusive anonymous traffic.
+ */
+const discoveryRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 anonymous requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many discovery requests. Please try again in a minute.' },
   validate: { trustProxy: false, xForwardedForHeader: false },
 });
 
@@ -481,9 +547,114 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // POST /mcp — Handle MCP JSON-RPC messages
+  // Anonymous discovery sessions (NEV-1776)
+  //
+  // Directory scanners (Smithery, Glama, PulseMCP) send `initialize` +
+  // `tools/list` without a Bearer token. We serve them from lightweight
+  // anonymous sessions backed by a stub McpServer (no real credentials,
+  // no business data). Anonymous sessions are short-lived (ANON_SESSION_MAX_AGE_MS)
+  // and cleaned up by the same orphan-cleanup interval used for real sessions.
   // -------------------------------------------------------------------------
 
+  /** Registry of active anonymous (unauthenticated) discovery sessions. */
+  const anonSessions: Record<string, {
+    transport: StreamableHTTPServerTransport;
+    createdAt: Date;
+  }> = {};
+
+  // -------------------------------------------------------------------------
+  // Lazy auth middleware (NEV-1776)
+  //
+  // Replaces the direct `bearerAuth` call on POST /. Decision tree:
+  //
+  //   1. Request has Authorization header → full bearerAuth (unchanged behaviour).
+  //   2. Request has no Authorization AND existing mcp-session-id that belongs
+  //      to an anonymous session → allow (scanner resuming discovery).
+  //   3. Request has no Authorization AND is a new initialize request → allow
+  //      (scanner starting a fresh discovery probe) — hits discoveryRateLimiter.
+  //   4. Request has no Authorization AND all JSON-RPC methods in the body are
+  //      in DISCOVERY_METHODS → allow (scanner sending tools/list on anon session).
+  //   5. Anything else without Authorization → 401 with WWW-Authenticate,
+  //      triggering the standard OAuth flow in real MCP clients.
+  //
+  // The WWW-Authenticate header format matches what `requireBearerAuth` emits
+  // so that existing OAuth clients (Claude.ai, ChatGPT) see the same challenge.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns true when every JSON-RPC method in the body (single request or
+   * batch array) is in the `DISCOVERY_METHODS` allowlist.
+   */
+  function isDiscoveryOnly(body: unknown): boolean {
+    if (!body || typeof body !== 'object') return false;
+    const requests = Array.isArray(body) ? body : [body];
+    return requests.every((r) => {
+      if (!r || typeof r !== 'object') return false;
+      const method = (r as Record<string, unknown>)['method'];
+      return typeof method === 'string' && DISCOVERY_METHODS.has(method);
+    });
+  }
+
+  /**
+   * 401 response that matches the WWW-Authenticate format emitted by the SDK's
+   * `requireBearerAuth`. Keeps the challenge consistent so real MCP clients
+   * (Claude.ai, ChatGPT) can parse it and launch the OAuth flow.
+   */
+  function send401(res: Response): void {
+    const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(config.mcpServerUrl);
+    res.setHeader(
+      'WWW-Authenticate',
+      `Bearer realm="Nevent MCP Server", resource_metadata="${resourceMetadataUrl.toString()}"`
+    );
+    res.status(401).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32001,
+        message: 'Authentication required. Please authenticate via OAuth 2.1 to use this method.',
+      },
+      id: null,
+    });
+  }
+
+  /**
+   * Middleware that conditionally requires Bearer auth or allows anonymous
+   * discovery requests through to the POST / handler.
+   *
+   * See the decision tree in the block comment above.
+   */
+  const lazyAuthMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+    const hasAuth = Boolean(req.headers['authorization']);
+
+    if (hasAuth) {
+      // Authenticated path — delegate to the SDK's bearerAuth middleware.
+      // Cast next to satisfy the SDK's RequestHandler typing which uses the
+      // Express NextFunction under the hood.
+      bearerAuth(req, res, next as Parameters<typeof bearerAuth>[2]);
+      return;
+    }
+
+    // Unauthenticated path — check if this is a resuming anon session.
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (sessionId && anonSessions[sessionId]) {
+      // Scanner is resuming an existing anonymous session.
+      next();
+      return;
+    }
+
+    // New request without auth. Allow only discovery-safe methods.
+    if (isDiscoveryOnly(req.body)) {
+      // Apply the stricter anonymous rate limiter before allowing through.
+      discoveryRateLimiter(req, res, next);
+      return;
+    }
+
+    // Non-discovery method without a Bearer token → 401.
+    send401(res);
+  };
+
+  // -------------------------------------------------------------------------
+  // POST /mcp — Handle MCP JSON-RPC messages
+  // -------------------------------------------------------------------------
 
   app.post('/', (req: Request, _res: Response, next: () => void) => {
     logger.debug(
@@ -494,10 +665,83 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       'POST /mcp'
     );
     next();
-  }, bearerAuth, async (req: Request, res: Response): Promise<void> => {
+  }, lazyAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    const hasAuth = Boolean(req.headers['authorization']);
 
     try {
+      // ------------------------------------------------------------------
+      // Anonymous discovery path (NEV-1776)
+      //
+      // Requests that passed lazyAuthMiddleware without a Bearer token are
+      // handled here. They interact with lightweight anonymous sessions
+      // backed by stub clients — no user data, no side effects.
+      // ------------------------------------------------------------------
+      if (!hasAuth) {
+        // Resume an existing anonymous session.
+        if (sessionId && anonSessions[sessionId]) {
+          await anonSessions[sessionId].transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // New anonymous discovery session (initialize request).
+        if (!sessionId && isInitializeRequest(req.body)) {
+          logger.info({ mode: OPERATION_MODE }, 'Anonymous discovery session starting');
+
+          // Build a stub server with all tools registered using the same
+          // technique as getToolCount() — stub clients are never called
+          // during discovery (tools/list only reads metadata, not data).
+          const stubDataClient = new DataClient({ baseUrl: config.dataApiUrl, jwtToken: '' });
+          const stubPaidMediaClient = new PaidMediaClient({ baseUrl: config.neventApiUrl, jwtToken: '' });
+          const stubSessionClients = new SessionClients(
+            stubDataClient,
+            stubPaidMediaClient,
+            config.neventApiUrl,
+          );
+
+          const anonServer = createNeventServer({
+            dataClient: stubDataClient,
+            neventApiUrl: config.neventApiUrl,
+            mongoUri: config.mongoUri,
+            paidMediaClient: stubPaidMediaClient,
+            sessionClients: stubSessionClients,
+            // No userId/getSessionId — anonymous sessions have no attribution.
+          });
+
+          const anonTransport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (newSessionId: string) => {
+              logger.info({ sessionId: newSessionId, type: 'anonymous' }, 'Anonymous discovery session initialized');
+              anonSessions[newSessionId] = {
+                transport: anonTransport,
+                createdAt: new Date(),
+              };
+            },
+          });
+
+          anonTransport.onclose = () => {
+            const sid = anonTransport.sessionId;
+            if (sid && anonSessions[sid]) {
+              logger.info({ sessionId: sid, type: 'anonymous' }, 'Anonymous session closed');
+              delete anonSessions[sid];
+            }
+          };
+
+          await anonServer.connect(anonTransport);
+          await anonTransport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // Unauthenticated non-discovery request — should not reach here
+        // because lazyAuthMiddleware already blocked it, but guard for safety.
+        send401(res);
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // Authenticated path (unchanged behaviour)
+      // ------------------------------------------------------------------
+
       // Reuse existing session transport
       if (sessionId && activeSessions[sessionId]) {
         await activeSessions[sessionId].transport.handleRequest(req, res, req.body);
@@ -713,11 +957,15 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   /**
    * Periodic cleanup for sessions that were not closed via the transport
    * `onclose` event (e.g., clients that disconnected without a DELETE /mcp).
-   * Sessions older than 30 minutes are considered orphaned and removed.
+   * Authenticated sessions older than 30 minutes are considered orphaned.
+   * Anonymous discovery sessions use the shorter ANON_SESSION_MAX_AGE_MS TTL
+   * (5 minutes) since they hold no state worth preserving.
    */
   const SESSION_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
+
+    // Clean up orphaned authenticated sessions (30-minute TTL).
     const orphaned = Object.entries(activeSessions).filter(
       ([, { createdAt }]) => now - createdAt.getTime() > SESSION_MAX_AGE_MS
     );
@@ -731,6 +979,21 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     if (orphaned.length > 0) {
       logger.info({ count: orphaned.length }, 'Orphaned sessions cleaned up');
     }
+
+    // Clean up expired anonymous discovery sessions (5-minute TTL).
+    const expiredAnon = Object.entries(anonSessions).filter(
+      ([, { createdAt }]) => now - createdAt.getTime() > ANON_SESSION_MAX_AGE_MS
+    );
+    for (const [sid] of expiredAnon) {
+      logger.info({ sessionId: sid, type: 'anonymous' }, 'Cleaning up expired anonymous session');
+      anonSessions[sid].transport.close().catch(() => {
+        // Ignore errors during cleanup
+      });
+      delete anonSessions[sid];
+    }
+    if (expiredAnon.length > 0) {
+      logger.info({ count: expiredAnon.length }, 'Expired anonymous sessions cleaned up');
+    }
   }, SESSION_MAX_AGE_MS);
 
   // Prevent the interval from keeping the process alive on graceful shutdown
@@ -743,6 +1006,8 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   const shutdown = async (): Promise<void> => {
     logger.info('Shutting down HTTP transport...');
     clearInterval(cleanupInterval);
+
+    // Close all authenticated sessions.
     const sessionIds = Object.keys(activeSessions);
     await Promise.allSettled(
       sessionIds.map(async (sid) => {
@@ -754,6 +1019,20 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         }
       })
     );
+
+    // Close all anonymous discovery sessions.
+    const anonSessionIds = Object.keys(anonSessions);
+    await Promise.allSettled(
+      anonSessionIds.map(async (sid) => {
+        try {
+          await anonSessions[sid].transport.close();
+          delete anonSessions[sid];
+        } catch (err) {
+          logger.warn({ err, sessionId: sid }, 'Error closing anonymous session during shutdown');
+        }
+      })
+    );
+
     await stores.mongoClient.close();
     logger.info('HTTP transport shutdown complete');
   };
