@@ -596,15 +596,21 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   }
 
   /**
-   * 401 response that matches the WWW-Authenticate format emitted by the SDK's
-   * `requireBearerAuth`. Keeps the challenge consistent so real MCP clients
-   * (Claude.ai, ChatGPT) can parse it and launch the OAuth flow.
+   * 401 response whose `WWW-Authenticate` header matches the RFC 6750 §3.1
+   * "error" format expected by the MCP SDK's `requireBearerAuth` middleware.
+   *
+   * Using `error="invalid_token"` (not `realm=`) is the RFC-compliant way to
+   * signal that the resource requires a valid Bearer token and allows MCP
+   * clients (Claude.ai, ChatGPT) to parse the challenge and launch the OAuth
+   * flow. The `resource_metadata` field points to the OAuth Protected Resource
+   * Metadata document (RFC 9470) so clients can discover the authorization
+   * server automatically.
    */
   function send401(res: Response): void {
     const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(config.mcpServerUrl);
     res.setHeader(
       'WWW-Authenticate',
-      `Bearer realm="Nevent MCP Server", resource_metadata="${resourceMetadataUrl.toString()}"`
+      `Bearer error="invalid_token", error_description="Authentication required", resource_metadata="${resourceMetadataUrl.toString()}"`
     );
     res.status(401).json({
       jsonrpc: '2.0',
@@ -636,8 +642,10 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     // Unauthenticated path — check if this is a resuming anon session.
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (sessionId && anonSessions[sessionId]) {
-      // Scanner is resuming an existing anonymous session.
-      next();
+      // Scanner is resuming an existing anonymous session. Rate-limit applies
+      // here too: without it a scanner could bypass the 30 req/min cap by
+      // opening a session once and then hammering the resume path.
+      discoveryRateLimiter(req, res, next);
       return;
     }
 
@@ -688,9 +696,35 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         if (!sessionId && isInitializeRequest(req.body)) {
           logger.info({ mode: OPERATION_MODE }, 'Anonymous discovery session starting');
 
-          // Build a stub server with all tools registered using the same
-          // technique as getToolCount() — stub clients are never called
-          // during discovery (tools/list only reads metadata, not data).
+          // ----------------------------------------------------------------
+          // Anonymous server: stub clients + stub Mongo URI (no real I/O).
+          //
+          // Decision (NEV-1776 code review): we create ONE McpServer per
+          // anonymous request but intentionally pass 'mongodb://stub' instead
+          // of config.mongoUri. This is safe because:
+          //
+          //   1. Tool REGISTRATION is pure metadata — registerCampaignTools,
+          //      registerTemplateTools, registerDeliverabilityTools only
+          //      capture the URI string in their closure; they do NOT open a
+          //      MongoDB connection during registration.
+          //   2. Tool EXECUTION (tools/call) is blocked for anonymous sessions
+          //      at the lazyAuthMiddleware level — only DISCOVERY_METHODS pass
+          //      through — so the stub URI can never be used in a real query.
+          //   3. This eliminates the per-request createToolCallLogger(mongoUri)
+          //      + warmUp() calls that the previous code triggered, which
+          //      opened a real Mongo connection for EVERY anonymous initialize.
+          //
+          // All tool groups are still registered (same count as authenticated
+          // sessions) so that directory scanners see the full tool catalog.
+          //
+          // Note: we intentionally do NOT share a singleton anonymous server
+          // across requests because the MCP SDK's StreamableHTTPServerTransport
+          // cannot be safely shared between concurrent connections — it carries
+          // per-session SSE state. A new transport is needed per request; the
+          // server can conceptually be shared but the SDK's connect() call is
+          // one-to-one with a transport, so a fresh server is the cleanest
+          // approach and incurs no I/O overhead with stub clients.
+          // ----------------------------------------------------------------
           const stubDataClient = new DataClient({ baseUrl: config.dataApiUrl, jwtToken: '' });
           const stubPaidMediaClient = new PaidMediaClient({ baseUrl: config.neventApiUrl, jwtToken: '' });
           const stubSessionClients = new SessionClients(
@@ -702,15 +736,24 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           const anonServer = createNeventServer({
             dataClient: stubDataClient,
             neventApiUrl: config.neventApiUrl,
-            mongoUri: config.mongoUri,
+            // Use a stub URI so tool METADATA for campaign/template/deliverability
+            // tools is registered without opening any real MongoDB connection.
+            // Tool EXECUTION is blocked at middleware level for anon sessions.
+            mongoUri: config.mongoUri ? 'mongodb://stub' : undefined,
             paidMediaClient: stubPaidMediaClient,
             sessionClients: stubSessionClients,
             // No userId/getSessionId — anonymous sessions have no attribution.
           });
 
+          // Track whether onsessioninitialized fired so we can close the
+          // transport in the error path (Minor-4 fix: prevents orphaned transports
+          // when handleRequest fails before a session ID is assigned).
+          let sessionRegistered = false;
+
           const anonTransport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (newSessionId: string) => {
+              sessionRegistered = true;
               logger.info({ sessionId: newSessionId, type: 'anonymous' }, 'Anonymous discovery session initialized');
               anonSessions[newSessionId] = {
                 transport: anonTransport,
@@ -728,7 +771,17 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
           };
 
           await anonServer.connect(anonTransport);
-          await anonTransport.handleRequest(req, res, req.body);
+
+          try {
+            await anonTransport.handleRequest(req, res, req.body);
+          } finally {
+            // If handleRequest threw before onsessioninitialized fired, the
+            // transport has no session ID and its onclose handler cannot clean
+            // it up. We close it explicitly to release any open streams.
+            if (!sessionRegistered) {
+              anonTransport.close();
+            }
+          }
           return;
         }
 
