@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   publish-npm:
@@ -30,8 +31,14 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
+      - name: Publish to npm (skip if version already published)
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          if npm view "mcp-nevent@$VER" version >/dev/null 2>&1; then
+            echo "mcp-nevent@$VER already on npm — skipping publish."
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
