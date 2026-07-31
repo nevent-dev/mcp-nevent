@@ -121,6 +121,22 @@ export interface CreateNeventServerOptions {
    * When omitted, a SessionClients is constructed from dataClient + paidMediaClient.
    */
   sessionClients?: SessionClients;
+  /**
+   * Whether to enable tool call logging to MongoDB.
+   *
+   * When `true` (the default) and `mongoUri` is provided, a `ToolCallLogger` is
+   * instantiated and every tool handler is transparently wrapped to persist
+   * latency and outcome data to the `mcp_tool_calls` collection.
+   *
+   * Set to `false` for sessions that must not open a MongoDB connection — most
+   * importantly anonymous discovery sessions, which pass a stub URI so that
+   * tool METADATA is registered without real I/O.  Setting this flag avoids
+   * creating a `MongoClient` against the stub host and eliminates the background
+   * DNS/connection retries that `warmUp()` would otherwise trigger.
+   *
+   * @default true
+   */
+  enableToolCallLogging?: boolean;
 }
 
 /**
@@ -156,6 +172,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     userId = null,
     getSessionId,
     sessionClients: providedSessionClients,
+    enableToolCallLogging = true,
   } = options;
 
   const server = new McpServer(
@@ -174,7 +191,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   // time (the session ID is not available until after the first `initialize`
   // request is processed by the transport).
   // ---------------------------------------------------------------------------
-  if (mongoUri) {
+  if (mongoUri && enableToolCallLogging !== false) {
     const logger = createToolCallLogger(mongoUri);
     applyLoggingToServer(server, logger, dataClient, userId, getSessionId ?? null);
 
