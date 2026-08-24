@@ -45,7 +45,8 @@ nevent_paid_ads_status (provider) → nevent_paid_ads_health → nevent_list_pai
 nevent_segmentation_criteria → nevent_dimension_values (discover valid values for criteria) → nevent_segment_preview (validate + estimate size) → nevent_create_segment (persist)
 
 ## 3. "Email campaign performance last week"
-nevent_list_campaigns(channel=EMAIL, limit=10) → nevent_get_campaign_insights(campaign_id) OR nevent_campaign_report(campaignId)
+nevent_list_campaigns(channel=EMAIL, limit=10) → nevent_get_campaign_metrics(campaign_id) → nevent_list_campaign_recipients(campaign_id, status=BOUNCES) for the drill-down
+(or nevent_get_campaign_insights / nevent_campaign_report for AI insights and warehouse-side analysis)
 
 ## 4. "Compare analytics across two tenants"
 nevent_list_tenants → nevent_switch_tenant(tenant_id=A) → [run queries] → nevent_switch_tenant(tenant_id=B) → [run queries] → nevent_reset_tenant
@@ -54,7 +55,7 @@ nevent_list_tenants → nevent_switch_tenant(tenant_id=A) → [run queries] → 
 nevent_analytics_capabilities → nevent_analytics_table_schema(table=X) → nevent_analytics_query
 
 ## 6. "Create and schedule an email campaign"
-nevent_list_segments → nevent_list_templates → nevent_create_campaign(channel=EMAIL, ...) → nevent_schedule_campaign(campaign_id, confirmed=true, scheduled_time=...)
+nevent_list_segments → nevent_list_templates → nevent_create_campaign(channel=EMAIL, ...) → nevent_quote_campaign(channel, segment_ids) → [check affordable=true] → nevent_schedule_campaign(campaign_id, confirmed=true, scheduled_time=...)
 
 ## 7. "Deliverability health check"
 nevent_get_sending_profile → nevent_get_suppressions_summary
@@ -64,6 +65,9 @@ nevent_create_short_url(longUrl) → nevent_create_bulk_user_short_urls(parentSh
 
 ## 9. "Audit existing tracking links"
 nevent_list_short_urls(isActive=true) → nevent_get_short_url_metrics(id) → nevent_get_short_url_clicks(id)
+
+## 10. "How much traffic does this landing page get across all campaigns?"
+nevent_list_short_url_destinations(search="<page>") → [read totalClicks, linksCount, campaignsCount] → nevent_get_short_url_metrics(canonicalId) to drill into one link
 `.trim();
 
 const HELP_ERRORS = `
@@ -176,10 +180,17 @@ const HELP_CAMPAIGNS = `
 - nevent_get_campaign(campaign_id) — full campaign detail
 - nevent_get_campaign_insights(campaign_id) — AI insights + anomaly detection
 - nevent_campaign_report(campaignId, timeRange?) — 13 parallel analytics queries in one call
+- nevent_get_campaign_metrics(campaign_id) — operational delivery/engagement counters straight from nev-api
+- nevent_list_campaign_recipients(campaign_id, status?, segment_id?, search?, page?, page_size?) — per-recipient drill-down
+- nevent_quote_campaign(channel, segment_ids?, transactional?) — credit cost + eligible audience BEFORE sending (no debit, no send)
 
 ## Write tools (require STANDARD/FULL mode)
 - nevent_create_campaign(...) — creates in DRAFT state ONLY (cannot create as SENT)
 - nevent_schedule_campaign(campaign_id, scheduled_time, confirmed=true) — schedule a DRAFT
+
+## Which performance tool to use
+- nevent_get_campaign_metrics — operational source of truth (nev-api). Use right after a send; it wins when numbers disagree.
+- nevent_campaign_report / nevent_analytics_query — analytics warehouse (nev-data-api). Use to compare campaigns, slice by dimension, or join other data. Lags behind the send by the data pipeline.
 
 ## Channel values: EMAIL | SMS | WHATSAPP
 ## Status values: DRAFT | SCHEDULED | SENT | PAUSED | STOPPED | EXECUTED
@@ -187,6 +198,10 @@ const HELP_CAMPAIGNS = `
 ## Rate limits
 - create_campaign: max 5 per hour per tenant (in-memory sliding window)
 - schedule_campaign: requires confirmed=true (explicit confirmation gate)
+
+## Credits
+Sends debit a credit pool. Call nevent_quote_campaign before nevent_schedule_campaign:
+if affordable=false the send fails at delivery time with a 402 and recipients are abandoned.
 `.trim();
 
 const HELP_TEMPLATES = `
@@ -272,13 +287,14 @@ in the insights pilot. Tell the user to contact their Nevent admin.
 const HELP_SHORT_URLS = `
 # Short URL Tools Guide
 
-## Tools (9 total)
+## Tools (10 total)
 
 ### Tier 1 — Read essentials
 - nevent_list_short_urls(isActive?, search?, page?, pageSize?) — paginated list of all short URLs with click counts
 - nevent_get_short_url(id) — full detail of one short URL (use id from list)
 - nevent_get_short_url_metrics(id, days?) — aggregated analytics: totalClicks, uniqueVisitors, clicksByDay, clicksByDevice, clicksByCountry, topReferers
 - nevent_get_short_url_campaign_metrics(parentShortCode, days?, topN?) — campaign-wide CTR and per-user breakdown
+- nevent_list_short_url_destinations(origin?, search?, page?, pageSize?) — links grouped by destination URL: total clicks and campaign count PER LANDING PAGE, includes assistant links (readOnly)
 
 ### Tier 2 — Read drill-down
 - nevent_get_short_url_clicks(id, limit?) — individual click records (timestamp, device, country, UTMs, isPaidTraffic)

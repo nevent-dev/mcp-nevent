@@ -20,6 +20,7 @@ import type {
   CreateShortUrlRequest,
   UpdateShortUrlRequest,
   CreateBulkUserShortUrlRequest,
+  ShortUrlDestinationListResponse,
 } from '../types/short-urls.js';
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,37 @@ export class ShortUrlClient extends BaseClient {
     return this.post<BulkUserShortUrlResponse>(
       `/admin/short-url/${encodeURIComponent(parentShortCode)}/user-links`,
       request
+    );
+  }
+  /**
+   * List short URLs grouped by canonical destination URL.
+   * Maps to GET /admin/short-url/destinations.
+   *
+   * Unlike {@link listShortUrls}, campaign parents that share a destination
+   * collapse into a single row with aggregated click/campaign counts, and
+   * system-managed assistant links are included (flagged `readOnly`).
+   * Pagination is over groups, not documents.
+   *
+   * @param params.origin   - Optional: ALL | MANUAL | CAMPAIGN | ASSISTANT (default ALL).
+   * @param params.search   - Optional: search by destination URL, title, or short code.
+   * @param params.page     - Zero-based page number over groups (default 0).
+   * @param params.pageSize - Number of groups per page (default 20).
+   * @returns Paginated ShortUrlDestinationListResponse.
+   */
+  async listDestinations(params: {
+    origin?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<ShortUrlDestinationListResponse> {
+    const query: Record<string, string> = {};
+    if (params.origin) query['origin'] = params.origin;
+    if (params.search) query['search'] = params.search;
+    if (params.page !== undefined) query['page'] = String(params.page);
+    if (params.pageSize !== undefined) query['pageSize'] = String(params.pageSize);
+    return this.get<ShortUrlDestinationListResponse>(
+      '/admin/short-url/destinations',
+      Object.keys(query).length ? query : undefined
     );
   }
 }

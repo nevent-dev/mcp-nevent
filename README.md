@@ -7,7 +7,7 @@
 [![Help Center](https://img.shields.io/badge/docs-help.nevent.ai-8B5CF6)](https://help.nevent.ai/en/nevent-ai/)
 [![smithery badge](https://smithery.ai/badge/samuel-fraga/nevent-mcp)](https://smithery.ai/servers/samuel-fraga/nevent-mcp)
 
-Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 55 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
+Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 59 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
 
 📚 **Full documentation:** **<https://help.nevent.ai/en/nevent-ai/>**
 
@@ -117,7 +117,7 @@ Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claud
 | Overview, transports and architecture | <https://help.nevent.ai/en/nevent-ai/developers/> |
 | Local installation and env vars | <https://help.nevent.ai/en/nevent-ai/developers/local-installation/> |
 | Multi-tenant model | <https://help.nevent.ai/en/nevent-ai/developers/multi-tenant/> |
-| Reference of all 55 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
+| Reference of all 59 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
 | Troubleshooting and error codes | <https://help.nevent.ai/en/nevent-ai/developers/troubleshooting/> |
 
 ---

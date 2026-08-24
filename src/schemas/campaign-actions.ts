@@ -353,3 +353,71 @@ export const ScheduleCampaignSchema = {
       'Set confirmed=true to confirm you want to schedule this campaign for sending.'
     ),
 };
+
+// ---------------------------------------------------------------------------
+// Tool 3: nevent_quote_campaign (MCP 1.8.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum number of segments the backend can resolve into an audience estimate.
+ *
+ * Beyond this limit nev-api still returns cost and recipient count, but the
+ * `audience` block comes back `null`. Rejecting at the schema level keeps the
+ * agent from silently losing the audience half of the answer.
+ */
+export const QUOTE_MAX_SEGMENTS = 20;
+
+/**
+ * Input schema for `nevent_quote_campaign`.
+ *
+ * Read-only pre-flight quote via nev-api `POST /campaigns/quote` (NEV-1647 +
+ * NEV-audience-estimate C2). Returns credit cost vs available credits, the
+ * shortfall, the recipient count and an eligible-audience estimate. It never
+ * debits credits and never sends — this is the tool to call before
+ * `nevent_schedule_campaign` to avoid a 402 at send time.
+ */
+export const QuoteCampaignSchema = {
+  /**
+   * Delivery channel to quote. Same `CommunicationChannel` enum as
+   * `nevent_create_campaign`; legacy aliases EMAIL/SMS/WHATSAPP are mapped to
+   * their _ONLY variants in the handler.
+   *
+   * Note: any mix touching WhatsApp cannot be estimated — the backend returns
+   * cost and recipient count but a `null` audience block.
+   */
+  channel: z
+    .enum(COMMUNICATION_CHANNEL_VALUES)
+    .describe(
+      'Delivery channel to quote (nev-api CommunicationChannel enum). ' +
+      'Legacy values EMAIL/SMS/WHATSAPP are accepted and mapped to the _ONLY variants. ' +
+      'Channel mixes involving WhatsApp return a null audience block.'
+    ),
+
+  /**
+   * Segment IDs whose combined audience should be quoted.
+   * Omit to quote the tenant's full addressable audience for the channel.
+   */
+  segment_ids: z
+    .array(z.string())
+    .max(QUOTE_MAX_SEGMENTS)
+    .optional()
+    .describe(
+      `Segment IDs to quote (optional, max ${QUOTE_MAX_SEGMENTS}). ` +
+      'Omit to quote the full addressable audience for the channel. ' +
+      `More than ${QUOTE_MAX_SEGMENTS} segments makes the backend skip the audience estimate.`
+    ),
+
+  /**
+   * Whether the campaign is transactional. Drives the consent mode used to
+   * estimate the eligible audience (TRANSACTIONAL vs MARKETING).
+   * Defaults to false (marketing) on the backend when omitted.
+   */
+  transactional: z
+    .boolean()
+    .optional()
+    .describe(
+      'Whether this is a transactional campaign (default false). ' +
+      'Transactional uses the TRANSACTIONAL consent mode for the audience estimate, ' +
+      'which reaches recipients who have opted out of marketing.'
+    ),
+};
