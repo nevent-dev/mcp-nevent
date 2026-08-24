@@ -253,7 +253,7 @@ export function registerMediaTools(
     'Returns each image\'s CDN URL (src), file name, MIME type, and size in bytes. ' +
     'Use the src value in <img src="..."> in email template HTML, or pass it to nevent_delete_image to remove it.',
     ListImagesSchema,
-    { title: 'List media library images', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List media library images', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async () => {
       const denied = checkMode('nevent_list_images');
       if (denied) return err(denied);

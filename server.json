@@ -40,7 +40,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mcp.nevent.ai/mcp"
+      "url": "https://mcp.nevent.ai/"
     }
   ]
 }

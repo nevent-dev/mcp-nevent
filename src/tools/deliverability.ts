@@ -92,7 +92,7 @@ export function registerDeliverabilityTools(
     'nevent_get_sending_profile',
     'Call this before creating a campaign to verify the tenant is ready to send email. Returns: sender domain(s) and their validation status, warm-up phase (cold/warming/warmed), daily send rate cap, and throttle settings. If the sending profile is not validated or still in warm-up, warn the user before scheduling a large campaign. Combine with nevent_get_suppressions_summary for a full deliverability health check.',
     GetSendingProfileSchema,
-    { title: 'Get sending profile', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get sending profile', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       const denied = checkMode('nevent_get_sending_profile');
       if (denied) return err(denied);
@@ -185,7 +185,7 @@ export function registerDeliverabilityTools(
     'nevent_get_suppressions_summary',
     'Get a deliverability health snapshot for the active tenant: total suppressed emails (hard bounces + complaints + manual unsubscribes), 30-day trend, and breakdown by suppression reason. Call this when the user asks about list health, unsubscribe rates, or bounce issues. A suppression rate above 2% indicates deliverability risk — surface this as a warning before scheduling a large campaign.',
     GetSuppressionsSummarySchema,
-    { title: 'Get suppressions summary', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get suppressions summary', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       const denied = checkMode('nevent_get_suppressions_summary');
       if (denied) return err(denied);
