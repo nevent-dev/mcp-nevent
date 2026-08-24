@@ -182,7 +182,7 @@ describe('getToolCount — dynamic tool count', () => {
     expect(withPaid - withoutPaid).toBe(11);
   });
 
-  it('short URL tools add 9 tools when enabled', () => {
+  it('short URL tools add 10 tools when enabled', () => {
     const withoutShortUrl = getToolCount({
       hasNeventApiUrl: true,
       hasMongoUri: true,
@@ -195,10 +195,10 @@ describe('getToolCount — dynamic tool count', () => {
       hasPaidMediaClient: true,
       hasShortUrlClient: true,
     });
-    expect(withShortUrl - withoutShortUrl).toBe(9);
+    expect(withShortUrl - withoutShortUrl).toBe(10);
   });
 
-  it('full config returns exactly 55 tools (current tool set)', () => {
+  it('full config returns exactly 59 tools (current tool set)', () => {
     // This test is intentionally concrete: it pins the expected count so that
     // future tool additions are visible in CI. When new tools are added, update
     // this number and the description in package.json together.
@@ -208,7 +208,7 @@ describe('getToolCount — dynamic tool count', () => {
       hasPaidMediaClient: true,
       hasShortUrlClient: true,
     });
-    expect(count).toBe(55);
+    expect(count).toBe(59);
   });
 
   it('manifest tools_count matches getToolCount(full)', () => {

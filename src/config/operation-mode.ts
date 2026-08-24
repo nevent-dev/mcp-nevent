@@ -85,6 +85,10 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_list_campaigns: 'READ',
   nevent_get_campaign: 'READ',
   nevent_get_campaign_insights: 'READ',
+  nevent_get_campaign_metrics: 'READ',
+  nevent_list_campaign_recipients: 'READ',
+  // nevent_quote_campaign: READ — the quote never debits credits and never sends.
+  nevent_quote_campaign: 'READ',
 
   // Sprint 2: Template tools (read from MongoDB)
   nevent_list_templates: 'READ',
@@ -133,6 +137,7 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_get_short_url_campaign_metrics: 'READ',
   nevent_get_short_url_clicks: 'READ',
   nevent_list_short_url_user_links: 'READ',
+  nevent_list_short_url_destinations: 'READ',
 
   // Short URL tools (Tier 3): WRITE operations
   nevent_create_short_url: 'WRITE',

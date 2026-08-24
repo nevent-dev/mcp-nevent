@@ -54,7 +54,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import { CreateCampaignSchema, ScheduleCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
+import { CreateCampaignSchema, ScheduleCampaignSchema, QuoteCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
 import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -534,6 +534,77 @@ export function registerCampaignActionTools(
             `It will be sent at ${params.scheduled_time}. ` +
             `Campaign ID: ${params.campaign_id}. Status: ${updatedCampaign.status}.`,
         });
+      } catch (caught) {
+        return err(toErrorEnvelope(caught));
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool 3: nevent_quote_campaign (MCP 1.8.0)
+  // -------------------------------------------------------------------------
+  server.tool(
+    'nevent_quote_campaign',
+    'Estimate the credit cost and eligible audience of a campaign BEFORE sending it. Read-only pre-flight check against nev-api POST /campaigns/quote — it never debits credits and never sends. Call this after nevent_create_campaign and before nevent_schedule_campaign: scheduling a campaign the tenant cannot afford fails at send time with a 402. Returns cost (credits required), available (credits in the pool), missing (shortfall), recipientCount, affordable (boolean — the gate to check), blocked, unlimited, and an audience block with uniqueAudience, estimatedEligible per channel, eligibleAnyChannel and emailExclusions (no_email / invalid_email / opt_out / unknown). The audience block is null when the estimate could not be computed: any channel mix touching WhatsApp, more than 20 segments, or a data-api timeout — cost and recipientCount are still valid in that case. Use segment_ids from nevent_list_segments; omit them to quote the full addressable audience. Set transactional=true only for genuinely transactional sends (order confirmations, ticket delivery) — it estimates against the TRANSACTIONAL consent mode, which reaches recipients who opted out of marketing.',
+    QuoteCampaignSchema,
+    { title: 'Quote campaign cost and audience', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    async (params) => {
+      // --- Operation mode guard ---
+      // READ operation: quoting is side-effect free, so it works in READ_ONLY mode.
+      const denied = checkMode('nevent_quote_campaign');
+      if (denied) return err(denied);
+
+      try {
+        const jwtToken = dataClient.getJwtToken();
+        if (!jwtToken) {
+          return err({
+            error: {
+              type: 'authentication_error',
+              message: 'No JWT token available. Authentication is required to quote a campaign.',
+              code: 'missing_token',
+            },
+          });
+        }
+
+        // --- Resolve channel alias to canonical nev-api enum value (NEV-1669) ---
+        const resolvedChannel: string = CHANNEL_ALIAS_MAP[params.channel] ?? params.channel;
+
+        const payload: Record<string, unknown> = { channel: resolvedChannel };
+        if (params.segment_ids !== undefined) {
+          payload['segmentIds'] = params.segment_ids;
+        }
+        // Omitted rather than sent as false: the backend treats null as false
+        // already, and an absent key keeps the request shape honest.
+        if (params.transactional !== undefined) {
+          payload['transactional'] = params.transactional;
+        }
+
+        const response = await fetch(`${neventApiUrl}/campaigns/quote`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`,
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(TIMEOUTS.LONG_MS),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          return err({
+            error: {
+              type: response.status === 403 ? 'authentication_error' : 'api_error',
+              message:
+                response.status === 403
+                  ? 'Access denied. Quoting a campaign requires ADMIN, OWNER or SUPERADMIN.'
+                  : `Failed to quote campaign: HTTP ${response.status}. ${body}`,
+              code: response.status === 403 ? 'forbidden' : 'api_error',
+            },
+          });
+        }
+
+        const quote = await response.json();
+        return ok(quote);
       } catch (caught) {
         return err(toErrorEnvelope(caught));
       }

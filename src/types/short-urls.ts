@@ -308,3 +308,72 @@ export interface CreateBulkUserShortUrlRequest {
   /** List of user IDs to create individual short URLs for. */
   userIds: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Destination grouping (MCP 1.8.0 — GET /admin/short-url/destinations)
+// ---------------------------------------------------------------------------
+
+/**
+ * One member of a destination group: the Mongo id and short code of a short URL
+ * that points at the group's canonical destination.
+ * Maps to `es.nevent.api.model.shorturl.dto.ShortUrlDestinationDTO.Member`.
+ */
+export interface ShortUrlDestinationMember {
+  /** MongoDB ObjectId of the short URL — use with `nevent_get_short_url`. */
+  id: string;
+  /** Short code of the short URL, e.g. "Xj4K9a". */
+  shortCode: string;
+}
+
+/**
+ * A single row of the destination-grouped listing: every short link pointing at
+ * the same canonical destination collapsed into one entry with aggregated
+ * counters.
+ * Maps to `es.nevent.api.model.shorturl.dto.ShortUrlDestinationDTO`.
+ */
+export interface ShortUrlDestinationDTO {
+  /** Canonical destination key (`campaign-dest:v1:...`). Null for MANUAL/ASSISTANT — those never group. */
+  destinationKey: string | null;
+  /** Human-readable destination URL. */
+  displayUrl: string;
+  /** Group title — the canonical parent's, or the most recent member's. */
+  title: string | null;
+  /** Where the links came from: MANUAL | CAMPAIGN | ASSISTANT. */
+  origin: string;
+  /** Short code of the group's canonical parent (or the most recent member). */
+  canonicalShortCode: string;
+  /** Mongo id of the group's canonical parent — use with `nevent_get_short_url`. */
+  canonicalId: string;
+  /** Sum of click counts across every parent in the group. */
+  totalClicks: number;
+  /** Number of short_urls parents forming the group. */
+  linksCount: number;
+  /** Number of distinct campaigns that used this destination (no double counting). */
+  campaignsCount: number;
+  /** Most recent click across the group's members, ISO 8601 or null. */
+  lastClickAt: string | null;
+  /** Short codes of every member — kept for backwards compatibility; prefer `members`. */
+  memberShortCodes: string[];
+  /** Every member of the group (Mongo id + short code). */
+  members: ShortUrlDestinationMember[];
+  /** True for ASSISTANT and CAMPAIGN groups — they must not be edited or deleted. */
+  readOnly: boolean;
+}
+
+/**
+ * Paginated response of the destination-grouped listing. Pagination is over
+ * GROUPS, not documents.
+ * Maps to `es.nevent.api.model.shorturl.dto.ShortUrlDestinationListResponse`.
+ */
+export interface ShortUrlDestinationListResponse {
+  /** Destination groups for the current page. */
+  items: ShortUrlDestinationDTO[];
+  /** Total number of groups matching the query (not documents). */
+  total: number;
+  /** Current zero-based page number. */
+  page: number;
+  /** Number of groups per page. */
+  pageSize: number;
+  /** Total number of pages. */
+  totalPages: number;
+}

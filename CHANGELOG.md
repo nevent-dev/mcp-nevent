@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-24
+
+### Added
+- **`nevent_quote_campaign`** (READ) — read-only pre-flight quote via nev-api `POST /campaigns/quote`. Returns credit `cost`, `available`, `missing`, `recipientCount`, `affordable`, `blocked`, `unlimited` and an `audience` estimate (`uniqueAudience`, `estimatedEligible` per channel, `eligibleAnyChannel`, `emailExclusions`). Closes a real gap: the MCP could create and schedule campaigns with no way to check the credit pool, so an unaffordable send failed at delivery time with a 402 and abandoned its recipients (nev-api NEV-1647). Accepts the same 11 `CommunicationChannel` values as `nevent_create_campaign`, maps the legacy `EMAIL`/`SMS`/`WHATSAPP` aliases to their `_ONLY` variants, and caps `segment_ids` at 20 — beyond that the backend returns a `null` audience block. `transactional` selects the consent mode used for the estimate. Never debits, never sends, so it is a READ operation available in READ_ONLY mode.
+- **`nevent_list_short_url_destinations`** (READ) — `GET /admin/short-url/destinations`. Groups short links by canonical destination URL instead of one row per document, which is the only way to answer "how much traffic is this landing page getting across all my campaigns?" — every campaign send creates its own parent link, so `nevent_list_short_urls` splits that traffic across rows. Returns aggregated `totalClicks`, `linksCount` and `campaignsCount` per destination, plus `canonicalId` and `members[]` for drill-down. Unlike `nevent_list_short_urls`, it INCLUDES system-managed assistant links, flagged `readOnly: true`. Filterable by `origin` (ALL | MANUAL | CAMPAIGN | ASSISTANT). Pagination is over groups, not documents.
+- **`nevent_get_campaign_metrics`** (READ) — `GET /campaigns/{id}/metrics`. Operational delivery and engagement counters read straight from nev-api: `totalRecipients`, `totalSent`, `totalDelivered`, `totalBounces`, `totalComplaints`, `totalOpens`, `uniqueOpens`, `totalClicks`, `uniqueClicks`, `unsubscribes`, the derived rates, and the conversion counters (`carts`, `purchases`, `revenue`). Until now the only campaign performance path was `nevent_campaign_report`, which reads the analytics warehouse through nev-data-api and lags behind the send by the CDC/dbt pipeline. Tool descriptions state which source wins when the two disagree.
+- **`nevent_list_campaign_recipients`** (READ) — `GET /campaigns/{id}/recipients`. Per-recipient drill-down behind the aggregate numbers: who bounced, who clicked, who unsubscribed. Filterable by `status` (SCHEDULED | DELIVERED | OPENED | CLICKED | BOUNCES | UNSUBSCRIBES), `segment_id` and free-text `search`. `page_size` is capped at 100 — recipient rows carry personal data, and the tool description instructs the model to filter rather than paginate through everything.
+- New module `src/tools/campaign-metrics.ts` + `src/schemas/campaign-metrics.ts`, wired in `server.ts` behind the same `neventApiUrl` guard as the other nev-api tools.
+- New client method `ShortUrlClient.listDestinations()` and types `ShortUrlDestinationDTO` / `ShortUrlDestinationListResponse` / `ShortUrlDestinationMember`.
+- 60 new unit tests (17 quote, 16 destinations, 27 campaign performance) covering schema validation, HTTP request shape (method, path, query-param mapping, bearer token, URL encoding), response passthrough, and error mapping for 403/404.
+- `nevent_help` updated: campaign and short-URL guides list the new tools, workflow recipe 6 now routes through `nevent_quote_campaign` before scheduling, recipe 3 leads with the operational metrics, and a new recipe 10 covers per-landing-page traffic.
+
+### Changed
+- Tool count 55 → 59. Short URL group 9 → 10. `manifest.test.ts` expectations and the README updated to match.
+
+### Notes
+- All four tools are READ operations: they work in READ_ONLY mode, which is the point — an agent should be able to check affordability and read performance without being granted write access.
+- `nevent_quote_campaign` returns a `null` `audience` block, with `cost` and `recipientCount` still valid, whenever the backend cannot compute the estimate: any channel mix touching WhatsApp, more than 20 segments, or a data-api failure/timeout.
+
 ## [1.7.1] - 2026-06-02
 
 ### Fixed

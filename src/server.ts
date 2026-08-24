@@ -32,7 +32,7 @@ export interface ToolCountOptions {
   hasMongoUri: boolean;
   /** Whether a paidMediaClient is available (enables 11 paid media tools). */
   hasPaidMediaClient: boolean;
-  /** Whether a shortUrlClient is available (enables 9 short URL tools). */
+  /** Whether a shortUrlClient is available (enables 10 short URL tools). */
   hasShortUrlClient: boolean;
 }
 
@@ -46,6 +46,7 @@ import { registerCampaignTools } from './tools/campaigns.js';
 import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
+import { registerCampaignMetricsTools } from './tools/campaign-metrics.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
 import { registerShortUrlTools } from './tools/short-urls.js';
 import { registerMediaTools } from './tools/media.js';
@@ -224,8 +225,11 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     // Sprint 2: Segment management (list/get/create/update via nev-api)
     registerSegmentTools(server, dataClient, neventApiUrl);
 
-    // Sprint 2: Campaign actions (create/schedule via nev-api)
+    // Sprint 2: Campaign actions (create/schedule/quote via nev-api)
     registerCampaignActionTools(server, dataClient, neventApiUrl);
+
+    // 1.8.0: Campaign performance (metrics/recipients via nev-api)
+    registerCampaignMetricsTools(server, dataClient, neventApiUrl);
   }
 
   // Sprint 2: MongoDB-backed tools — registered when mongoUri is provided
@@ -321,6 +325,7 @@ export function getToolCount(opts: ToolCountOptions): number {
     registerTenantTools(probe, stubSessionClients, 'http://stub');
     registerSegmentTools(probe, stubDataClient, 'http://stub');
     registerCampaignActionTools(probe, stubDataClient, 'http://stub');
+    registerCampaignMetricsTools(probe, stubDataClient, 'http://stub');
   }
 
   if (hasMongoUri) {
