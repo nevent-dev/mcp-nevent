@@ -405,7 +405,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       description: 'Talk to your live-events CRM (campaigns, analytics, paid ads, segments) in Claude and ChatGPT',
       version: PKG_VERSION,
       homepage: 'https://nevent.ai/en/features/nevent-ai/',
-      documentation: 'https://docs.nevent.ai/mcp',
+      documentation: 'https://help.nevent.ai/en/nevent-ai/',
       repository: 'https://github.com/nevent-dev/mcp-nevent',
       license: 'MIT',
       publisher: { name: 'Nevent', url: 'https://nevent.ai' },
