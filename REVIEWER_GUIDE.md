@@ -11,7 +11,7 @@
 ## Step 1a — Connect the MCP in Claude.ai (Anthropic reviewers)
 
 1. Open Claude.ai → Settings → Connectors → Add custom MCP
-2. Server URL: `https://mcp.nevent.ai/mcp`
+2. Server URL: `https://mcp.nevent.ai/`
 3. Click Connect; an OAuth flow will open in a new window
 4. Log in with the credentials provided in the submission form
 5. If prompted for a tenant, select the one labeled as **demo** (the account has access to a single demo tenant with synthetic data)
@@ -20,7 +20,7 @@
 ## Step 1b — Connect the MCP in ChatGPT (OpenAI reviewers)
 
 1. Open ChatGPT → Settings → Connectors → Add MCP server
-2. Server URL: `https://mcp.nevent.ai/mcp`
+2. Server URL: `https://mcp.nevent.ai/`
 3. Click Connect; an OAuth flow should open
 4. Log in with the credentials provided in the submission form
 5. If prompted for a tenant, select **demo**
@@ -99,6 +99,6 @@ The reviewer account has `STANDARD` operation mode, which allows creating segmen
 
 ## Reference
 
-- Full tool inventory: README.md in the repo, section "Tools (52)"
+- Full tool inventory: <https://help.nevent.ai/en/nevent-ai/developers/tools/> (55 tools)
 - npm package: https://www.npmjs.com/package/mcp-nevent
 - MCP Registry entry: io.github.nevent-dev/mcp-nevent

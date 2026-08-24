@@ -63,7 +63,7 @@ import {
 const READ_ONLY_ANNOTATIONS_BASE = {
   readOnlyHint: true,
   destructiveHint: false,
-  openWorldHint: true,
+  openWorldHint: false,
 } as const;
 
 // ---------------------------------------------------------------------------

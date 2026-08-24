@@ -153,11 +153,13 @@ export interface CreateNeventServerOptions {
  * - Multi-tenant (3 tools): Registered when neventApiUrl is provided.
  * - Segment management (4 tools): Registered when neventApiUrl is provided.
  * - Campaign read tools (3 tools): Registered when mongoUri is provided.
- * - Template tools (2-4 tools): Registered when mongoUri is provided.
- *   create/update tools additionally require neventApiUrl.
+ * - Template tools (2-8 tools): list/get require mongoUri; create/update also
+ *   require neventApiUrl; clone/rename/preview/send-test require TemplateClient.
  * - Deliverability tools (2 tools): Registered when mongoUri is provided.
  * - Campaign actions (2 tools): Registered when neventApiUrl is provided.
  * - Paid media tools (11 tools): Registered when paidMediaClient is provided.
+ * - Short URL tools (9 tools): Registered when shortUrlClient is provided.
+ * - Media library tools (3 tools): Registered when neventApiUrl is provided.
  *
  * @param options - Server creation options.
  * @returns A ready-to-connect McpServer with all applicable tools registered.

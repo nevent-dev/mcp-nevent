@@ -120,7 +120,7 @@ export function registerTenantTools(
     'SUPERADMIN: returns all tenants in the platform. ' +
     'OWNER/ADMIN: returns only your tenant hierarchy subtree (up to 3 levels).',
     ListTenantsSchema,
-    { title: 'List accessible tenants', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List accessible tenants', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       try {
         // Call nev-api GET /tenants using the DataClient's JWT token.
@@ -231,7 +231,7 @@ export function registerTenantTools(
     'OWNER/ADMIN/STAFF: session-scoped only; you can only switch to tenants in your hierarchy subtree (max 3 levels deep). ' +
     'Use nevent_list_tenants to discover available tenant IDs.',
     SwitchTenantSchema,
-    { title: 'Switch active tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Switch active tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async (params) => {
       try {
         const jwtToken = sessionClients.dataClient.getJwtToken();
@@ -304,7 +304,7 @@ export function registerTenantTools(
     'For OWNER/ADMIN/STAFF users, this resets to the session\'s home tenant. ' +
     'No parameters needed.',
     ResetTenantSchema,
-    { title: 'Reset to home tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    { title: 'Reset to home tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       try {
         const homeTenantId = sessionClients.homeTenantId;

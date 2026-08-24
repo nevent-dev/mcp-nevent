@@ -69,7 +69,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     '(2) For BOOLEAN fields, use operator "is_true" or "is_false". NEVER use "eq" with string "true"/"false". ' +
     '(3) For enum fields (state, status), check the field description for valid values. Common values: purchases.state = SUCCEEDED|COMPLETE|PENDING|FAILED; campaigns.status = EXECUTED|DRAFT|PAUSED|STOPPED.',
     AnalyticsQuerySchema,
-    { title: 'Query analytics data', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Query analytics data', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_analytics_query');
       if (denied) return err(denied);
@@ -109,9 +109,9 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_capabilities',
-    'Discover all available analytics tables and their columns. Call this before nevent_analytics_query to learn valid table and field names.',
+    'Discover available analytics tables and their summary metadata. Call this before nevent_analytics_query, then use nevent_analytics_table_schema to learn valid field names for a selected table.',
     AnalyticsCapabilitiesSchema,
-    { title: 'Discover analytics capabilities', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Discover analytics capabilities', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       const denied = checkMode('nevent_analytics_capabilities');
       if (denied) return err(denied);
@@ -153,7 +153,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_analytics_table_schema',
     'Get the full column schema for a specific analytics table including column names, types, and descriptions.',
     AnalyticsTableSchemaInputSchema,
-    { title: 'Get analytics table schema', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get analytics table schema', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_analytics_table_schema');
       if (denied) return err(denied);
@@ -174,7 +174,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_analytics_filter_values',
     'Get distinct values available for a field in an analytics table. Useful for building valid filter values before querying.',
     AnalyticsFilterValuesSchema,
-    { title: 'Get analytics filter values', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get analytics filter values', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_analytics_filter_values');
       if (denied) return err(denied);
@@ -195,7 +195,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_campaign_report',
     'Generate a comprehensive analytics report for a single campaign. Executes 13 parallel queries in one call returning opens, clicks, bounces, unsubscribes, conversions, revenue, and other key performance metrics. Use nevent_list_campaigns to get valid campaign IDs.',
     CampaignReportSchema,
-    { title: 'Generate campaign analytics report', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Generate campaign analytics report', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_campaign_report');
       if (denied) return err(denied);
@@ -219,7 +219,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_segmentation_criteria',
     'List all available audience segmentation criteria including their IDs, operators, and value types.',
     SegmentationCriteriaSchema,
-    { title: 'List segmentation criteria', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'List segmentation criteria', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
       const denied = checkMode('nevent_segmentation_criteria');
       if (denied) return err(denied);
@@ -245,7 +245,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'KNOWN LIMITATION: Do NOT combine attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the SAME stanza. Put them in SEPARATE stanzas. ' +
     'Example: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] }.',
     SegmentPreviewSchema,
-    { title: 'Preview segment audience', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Preview segment audience', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_segment_preview');
       if (denied) return err(denied);
@@ -266,7 +266,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_segment_execute',
     'Execute a segment definition and retrieve matching contacts with pagination.',
     SegmentExecuteSchema,
-    { title: 'Execute segment and get contacts', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Execute segment and get contacts', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_segment_execute');
       if (denied) return err(denied);
@@ -291,7 +291,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
     'nevent_dimension_values',
     'Autocomplete values for a segmentation criterion. Useful for discovering valid values when building segment definitions.',
     DimensionValuesSchema,
-    { title: 'Get dimension values', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    { title: 'Get dimension values', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
       const denied = checkMode('nevent_dimension_values');
       if (denied) return err(denied);

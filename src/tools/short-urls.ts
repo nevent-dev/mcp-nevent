@@ -51,7 +51,7 @@ import type {
 const READ_ONLY_ANNOTATIONS_BASE = {
   readOnlyHint: true,
   destructiveHint: false,
-  openWorldHint: true,
+  openWorldHint: false,
 } as const;
 
 const WRITE_ANNOTATIONS_BASE = {
@@ -309,7 +309,7 @@ export function registerShortUrlTools(
     'WRITE operation — requires STANDARD or FULL operation mode. ' +
     'In READ_ONLY mode this tool returns an operation_not_permitted error immediately without making any API call.',
     UpdateShortUrlSchema,
-    { title: 'Update short URL', ...WRITE_ANNOTATIONS_BASE },
+    { title: 'Update short URL', ...WRITE_ANNOTATIONS_BASE, destructiveHint: true },
     async (params) => {
       const denied = checkMode('nevent_update_short_url');
       if (denied) return err(denied);

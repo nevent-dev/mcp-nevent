@@ -7,7 +7,7 @@
 [![Help Center](https://img.shields.io/badge/docs-help.nevent.ai-8B5CF6)](https://help.nevent.ai/en/nevent-ai/)
 [![smithery badge](https://smithery.ai/badge/samuel-fraga/nevent-mcp)](https://smithery.ai/servers/samuel-fraga/nevent-mcp)
 
-Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 52 tools across 9 categories (campaigns, analytics, segmentation, paid media, deliverability, short URLs, multi-tenant, templates) over **OAuth 2.1** (hosted) or **stdio** (local).
+Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 55 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
 
 📚 **Full documentation:** **<https://help.nevent.ai/en/nevent-ai/>**
 
@@ -17,7 +17,7 @@ Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platfor
 
 ### Hosted (recommended — no install needed)
 
-Add `https://mcp.nevent.ai/mcp` as a remote MCP server in your client. Works with Claude.ai, ChatGPT, Cursor, Cline, Continue and any compatible MCP client.
+Add `https://mcp.nevent.ai/` as a remote MCP server in your client. Works with Claude.ai, ChatGPT, Cursor, Cline, Continue and any compatible MCP client.
 
 → Step-by-step with screenshots: [Connect with Claude](https://help.nevent.ai/en/nevent-ai/connect-claude/) · [Connect with ChatGPT](https://help.nevent.ai/en/nevent-ai/connect-chatgpt/)
 
@@ -37,13 +37,13 @@ Required env: `NEVENT_JWT_TOKEN`. Optional: `NEVENT_OPERATION_MODE` (`READ_ONLY`
 
 ### Claude.ai · ChatGPT (hosted, no setup)
 
-Settings → Integrations / Connectors → Add custom MCP → URL `https://mcp.nevent.ai/mcp`. Authorize with your Nevent admin account.
+Settings → Integrations / Connectors → Add custom MCP → URL `https://mcp.nevent.ai/`. Authorize with your Nevent admin account.
 
 ### Claude Code
 
 ```bash
 # Hosted (OAuth)
-claude mcp add --transport http nevent https://mcp.nevent.ai/mcp
+claude mcp add --transport http nevent https://mcp.nevent.ai/
 
 # Or local (stdio)
 claude mcp add nevent -- node /path/to/mcp-nevent/dist/index.js
@@ -117,7 +117,7 @@ Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claud
 | Overview, transports and architecture | <https://help.nevent.ai/en/nevent-ai/developers/> |
 | Local installation and env vars | <https://help.nevent.ai/en/nevent-ai/developers/local-installation/> |
 | Multi-tenant model | <https://help.nevent.ai/en/nevent-ai/developers/multi-tenant/> |
-| Reference of all 52 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
+| Reference of all 55 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
 | Troubleshooting and error codes | <https://help.nevent.ai/en/nevent-ai/developers/troubleshooting/> |
 
 ---

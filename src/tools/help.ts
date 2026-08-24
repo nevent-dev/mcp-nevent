@@ -250,15 +250,15 @@ const HELP_PAID_MEDIA = `
 ## Tools (11 total)
 - nevent_paid_ads_status(provider) — connection status for META/GOOGLE/TIKTOK
 - nevent_paid_ads_health(provider) — account health, budget, spend pacing
-- nevent_get_paid_ad_group_insights(provider, ad_group_id) — performance insights for a specific ad group
-- nevent_list_paid_campaigns(provider, account_id?) — campaigns with performance
-- nevent_get_paid_campaign_insights(provider, campaign_id) — detailed metrics
-- nevent_paid_attribution(provider, campaign_id?) — attributed revenue + ROAS
-- nevent_list_paid_ad_groups(provider, campaign_id) — ad groups
-- nevent_get_paid_ad_group_comparative_stats(provider, ad_group_id) — period comparison
-- nevent_get_paid_ad_group_targeting(provider, ad_group_id) — targeting settings
-- nevent_list_paid_ads(provider, ad_group_id) — individual ads
-- nevent_get_paid_ad_creative(provider, ad_id) — creative details
+- nevent_get_paid_ad_group_insights(provider, adGroupId, from?, to?) — performance insights for a specific ad group
+- nevent_list_paid_campaigns(provider) — campaigns with performance
+- nevent_get_paid_campaign_insights(provider, campaignId, from?, to?) — detailed metrics
+- nevent_paid_attribution(provider) — attributed revenue + ROAS
+- nevent_list_paid_ad_groups(provider, campaignId?) — ad groups
+- nevent_get_paid_ad_group_comparative_stats(provider, adGroupId, from?, to?) — period comparison
+- nevent_get_paid_ad_group_targeting(provider, adGroupId) — targeting settings
+- nevent_list_paid_ads(provider, campaignId?, adGroupId?) — individual ads
+- nevent_get_paid_ad_creative(provider, adId) — creative details
 
 ## Providers: META | GOOGLE | TIKTOK
 
