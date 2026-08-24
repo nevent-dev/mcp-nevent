@@ -23,7 +23,9 @@
  *   │           → anonymous McpServer probe (stub clients, full tool metadata)
  *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth, always)
  *   ├── DELETE /mcp              — Session termination (requireBearerAuth, always)
- *   └── GET  /health             — Health check (no auth)
+ *   ├── GET  /health             — Health check (no auth)
+ *   ├── GET  /.well-known/mcp-manifest.json      — Client discovery (no auth)
+ *   └── GET  /.well-known/openai-apps-challenge  — ChatGPT domain check (no auth)
  * ```
  *
  * ## Lazy auth / public discovery (NEV-1776)
@@ -154,6 +156,34 @@ const PKG_VERSION: string = (() => {
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
   return pkg.version;
 })();
+
+// ---------------------------------------------------------------------------
+// OpenAI Apps domain verification
+// ---------------------------------------------------------------------------
+
+/**
+ * Domain verification token issued by the ChatGPT app submission portal for
+ * `mcp.nevent.ai`.
+ *
+ * Not a credential: it only proves control over the host that serves it, the
+ * same way a Google site-verification file does. Kept in source so the
+ * verification survives a redeploy without extra infra wiring, while
+ * `OPENAI_APPS_CHALLENGE_TOKEN` allows rotating it from the task definition if
+ * OpenAI re-issues a token.
+ */
+const DEFAULT_OPENAI_APPS_CHALLENGE_TOKEN = 'oz2XJxKzyvVmIZD2o656SgznA5ByXQxgUlININ9Thmw';
+
+/**
+ * Resolves the token served at `/.well-known/openai-apps-challenge`.
+ *
+ * Reads `OPENAI_APPS_CHALLENGE_TOKEN` at call time (not at module load) so the
+ * value can be changed in tests and so an env override applies on the next
+ * request rather than requiring a process restart.
+ */
+export function getOpenAiAppsChallengeToken(): string {
+  const fromEnv = process.env['OPENAI_APPS_CHALLENGE_TOKEN']?.trim();
+  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_OPENAI_APPS_CHALLENGE_TOKEN;
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -343,6 +373,24 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       },
     })
   );
+
+  // -------------------------------------------------------------------------
+  // OpenAI Apps domain verification — publicly accessible, no auth required.
+  //
+  // The ChatGPT app submission flow issues a challenge token and does a plain
+  // GET against `https://<mcp-host>/.well-known/openai-apps-challenge`. The
+  // body must be the token verbatim as `text/plain` — no JSON wrapper, no
+  // surrounding markup, no extra whitespace — or verification fails.
+  //
+  // Registered before the rate limiter and the request logger: OpenAI retries
+  // the probe during submission and a 429 would abort the verification.
+  // `no-store` keeps a rotated token from being served from an edge cache.
+  // -------------------------------------------------------------------------
+
+  app.get('/.well-known/openai-apps-challenge', (_req: Request, res: Response): void => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/plain').send(getOpenAiAppsChallengeToken());
+  });
 
   // -------------------------------------------------------------------------
   // MCP manifest — publicly accessible, no auth required.
