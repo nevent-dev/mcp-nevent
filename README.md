@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/mcp-nevent.svg)](https://www.npmjs.com/package/mcp-nevent)
 [![Help Center](https://img.shields.io/badge/docs-help.nevent.ai-8B5CF6)](https://help.nevent.ai/en/nevent-ai/)
-[![smithery badge](https://smithery.ai/badge/samuel-fraga/nevent-mcp)](https://smithery.ai/servers/samuel-fraga/nevent-mcp)
+[![59 T · 0 R · 0 P on LightNow](https://lightnow.ai/badge/io.github.nevent-dev/mcp-nevent)](https://lightnow.ai/servers/io.github.nevent-dev/mcp-nevent)
 
 Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 59 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
 
