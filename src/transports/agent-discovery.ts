@@ -176,7 +176,14 @@ export function buildRobotsTxt(baseUrl: URL): string {
     );
   }
 
-  lines.push('', `Sitemap: ${absoluteUrl(baseUrl, '/sitemap.xml')}`, '');
+  lines.push(
+    '',
+    `Sitemap: ${absoluteUrl(baseUrl, '/sitemap.xml')}`,
+    // Secondary ARD discovery mechanism (spec §6.1): points agents at the
+    // capability manifest without them having to guess the well-known path.
+    `Agentmap: ${absoluteUrl(baseUrl, '/.well-known/ai-catalog.json')}`,
+    ''
+  );
 
   return lines.join('\n');
 }
@@ -319,9 +326,13 @@ export function buildMcpServerCard(
 /**
  * Builds `/.well-known/ai-catalog.json` per agenticresourcediscovery.org.
  *
- * Each entry gets a `urn:air:` identifier, an IANA media type, exactly one of
- * `url`/`data`, and `representativeQueries` — short natural-language phrases
- * registries embed to decide when this server is relevant to a user's request.
+ * Each entry gets a `urn:air:` **identifier** (the field is `identifier`, not
+ * `id` — an entry keyed `id` is read as having no identifier at all), an IANA
+ * media type, exactly one of `url`/`data`, and `representativeQueries` — short
+ * natural-language phrases registries embed to decide when this server is
+ * relevant to a user's request.
+ *
+ * `specVersion` refers to the ai-catalog data model, not to the ARD draft.
  */
 export function buildArdCatalog(
   baseUrl: URL,
@@ -331,9 +342,10 @@ export function buildArdCatalog(
   const urn = (namespace: string, name: string): string => `urn:air:${host}:${namespace}:${name}`;
 
   return {
-    specVersion: '0.1',
+    specVersion: '1.0',
     host: {
-      name: 'Nevent',
+      identifier: `did:web:${host}`,
+      displayName: 'Nevent',
       domain: host,
       description:
         'Marketing platform for live event promoters — campaigns, audience segmentation, paid media and attribution.',
@@ -342,10 +354,10 @@ export function buildArdCatalog(
     },
     entries: [
       {
-        id: urn('mcp', 'nevent'),
+        identifier: urn('mcp', 'nevent'),
         displayName: 'Nevent MCP server',
         description: `Model Context Protocol server exposing ${options.toolsCount} tools over Streamable HTTP with OAuth 2.1: campaign analytics, audience segmentation, email/SMS/WhatsApp campaigns, templates, deliverability, paid media and short URLs.`,
-        type: 'application/json',
+        type: 'application/mcp-server-card+json',
         url: absoluteUrl(baseUrl, '/.well-known/mcp/server-card.json'),
         version: options.version,
         representativeQueries: [
@@ -357,7 +369,7 @@ export function buildArdCatalog(
         ],
       },
       {
-        id: urn('docs', 'help-center'),
+        identifier: urn('docs', 'help-center'),
         displayName: 'Nevent MCP documentation',
         description:
           'Setup guides for connecting Nevent to Claude, ChatGPT, Claude Code and other MCP clients, plus a reference for every tool.',
@@ -370,7 +382,7 @@ export function buildArdCatalog(
         ],
       },
       {
-        id: urn('auth', 'agent-registration'),
+        identifier: urn('auth', 'agent-registration'),
         displayName: 'Agent authentication instructions',
         description:
           'How an autonomous agent registers an OAuth 2.1 client (dynamic client registration) and obtains an access token for the Nevent MCP server.',
@@ -400,7 +412,7 @@ export function buildArdCatalog(
 export function buildAuthMarkdown(baseUrl: URL): string {
   const url = (path: string): string => absoluteUrl(baseUrl, path);
 
-  return `# Authentication — Nevent MCP server
+  return `# auth.md — Nevent MCP server
 
 The Nevent MCP server is an OAuth 2.1 protected resource. Every tool call
 requires an access token issued to a Nevent admin account. Discovery calls
@@ -485,16 +497,36 @@ Full documentation: ${DOCS_URL}
  *
  * RFC 8414 allows additional members, and the auth.md convention expects an
  * `agent_auth` block there so an agent can learn the registration story from
- * the document it already fetches for OAuth.
+ * the document it already fetches for OAuth. The block must carry `skill`
+ * (the human/agent-readable instructions), `register_uri` and at least one
+ * complete registration method.
+ *
+ * Nevent issues no machine-to-machine credential: a token always represents a
+ * real Nevent user, so the only identity type advertised is `human` and the
+ * only registration method is OAuth 2.1 dynamic client registration.
  */
 export function buildAgentAuthMetadata(baseUrl: URL): Record<string, unknown> {
   return {
+    skill: absoluteUrl(baseUrl, '/auth.md'),
     register_uri: absoluteUrl(baseUrl, '/register'),
-    instructions_uri: absoluteUrl(baseUrl, '/auth.md'),
-    identity_types: ['human'],
-    credential_types: ['oauth2_access_token'],
-    supported_grant_types: ['authorization_code', 'refresh_token'],
-    pkce_required: true,
+    identity_types_supported: ['human'],
+    credential_types_supported: ['oauth2_access_token'],
+    registration_methods: [
+      {
+        type: 'oauth2_dynamic_client_registration',
+        register_uri: absoluteUrl(baseUrl, '/register'),
+        authorization_uri: absoluteUrl(baseUrl, '/authorize'),
+        token_uri: absoluteUrl(baseUrl, '/token'),
+        grant_types_supported: ['authorization_code', 'refresh_token'],
+        credential_types_supported: ['oauth2_access_token'],
+        identity_types_supported: ['human'],
+        token_endpoint_auth_methods_supported: ['none'],
+        code_challenge_methods_supported: ['S256'],
+        scopes_supported: ['mcp:tools'],
+        pkce_required: true,
+      },
+    ],
+    revocation_uri: absoluteUrl(baseUrl, '/revoke'),
     revocation_contact: `mailto:${SUPPORT_EMAIL}`,
     documentation_uri: DOCS_URL,
   };
@@ -561,6 +593,7 @@ export function buildLandingHtml(baseUrl: URL, options: { version: string; tools
 <title>Nevent MCP server</title>
 <meta name="description" content="Official Model Context Protocol server for Nevent — talk to your live-events CRM (campaigns, analytics, paid ads, segments) from Claude and ChatGPT.">
 <link rel="canonical" href="${absoluteUrl(baseUrl, '/')}">
+<link rel="ai-catalog" href="/.well-known/ai-catalog.json">
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }

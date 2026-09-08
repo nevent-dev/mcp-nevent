@@ -115,6 +115,10 @@ describe('buildRobotsTxt', () => {
     expect(robots).toContain('Sitemap: https://mcp.nevent.ai/sitemap.xml');
   });
 
+  it('points at the ARD capability manifest via the Agentmap directive', () => {
+    expect(robots).toContain('Agentmap: https://mcp.nevent.ai/.well-known/ai-catalog.json');
+  });
+
   it('every directive line is a `field: value` pair or a comment', () => {
     for (const line of robots.split('\n')) {
       if (line === '' || line.startsWith('#')) continue;
@@ -239,14 +243,19 @@ describe('buildArdCatalog', () => {
     entries: Array<Record<string, unknown>>;
   };
 
-  it('declares a spec version and a host block', () => {
+  it('declares a spec version and a host block with a stable identifier', () => {
     expect(ard.specVersion).toBeTruthy();
     expect(ard.host['domain']).toBe('mcp.nevent.ai');
+    expect(ard.host['displayName']).toBe('Nevent');
+    expect(ard.host['identifier']).toBe('did:web:mcp.nevent.ai');
   });
 
+  // The field is `identifier`, not `id`: an entry keyed `id` is read as having
+  // no identifier at all, which fails validation for the whole catalog.
   it('gives every entry a urn:air identifier scoped to the host', () => {
     for (const entry of ard.entries) {
-      expect(entry['id']).toMatch(/^urn:air:mcp\.nevent\.ai:[a-z-]+:[a-z-]+$/);
+      expect(entry['identifier']).toMatch(/^urn:air:mcp\.nevent\.ai:[a-z-]+:[a-z-]+$/);
+      expect('id' in entry).toBe(false);
     }
   });
 
@@ -275,6 +284,10 @@ describe('buildArdCatalog', () => {
 describe('buildAuthMarkdown', () => {
   const authMd = buildAuthMarkdown(BASE_URL);
 
+  it('opens with an H1 naming the standard, which is how scanners detect it', () => {
+    expect(authMd.split('\n')[0]).toMatch(/^# .*auth\.md/i);
+  });
+
   it('documents the registration, authorization and token endpoints', () => {
     expect(authMd).toContain('https://mcp.nevent.ai/register');
     expect(authMd).toContain('https://mcp.nevent.ai/authorize');
@@ -296,15 +309,28 @@ describe('buildAuthMarkdown', () => {
 describe('buildAgentAuthMetadata', () => {
   const agentAuth = buildAgentAuthMetadata(BASE_URL);
 
-  it('exposes the registration URI and the instructions document', () => {
+  it('exposes the skill document and the registration URI', () => {
+    expect(agentAuth['skill']).toBe('https://mcp.nevent.ai/auth.md');
     expect(agentAuth['register_uri']).toBe('https://mcp.nevent.ai/register');
-    expect(agentAuth['instructions_uri']).toBe('https://mcp.nevent.ai/auth.md');
   });
 
-  it('declares identity types, credential types and a revocation contact', () => {
-    expect(agentAuth['identity_types']).toEqual(['human']);
-    expect(agentAuth['credential_types']).toEqual(['oauth2_access_token']);
+  it('declares identity types, credential types and a revocation path', () => {
+    expect(agentAuth['identity_types_supported']).toEqual(['human']);
+    expect(agentAuth['credential_types_supported']).toEqual(['oauth2_access_token']);
+    expect(agentAuth['revocation_uri']).toBe('https://mcp.nevent.ai/revoke');
     expect(agentAuth['revocation_contact']).toBe(`mailto:${SUPPORT_EMAIL}`);
+  });
+
+  it('carries at least one complete registration method', () => {
+    const methods = agentAuth['registration_methods'] as Array<Record<string, unknown>>;
+    expect(methods.length).toBeGreaterThanOrEqual(1);
+
+    const [oauth] = methods;
+    expect(oauth?.['type']).toBe('oauth2_dynamic_client_registration');
+    expect(oauth?.['register_uri']).toBe('https://mcp.nevent.ai/register');
+    expect(oauth?.['authorization_uri']).toBe('https://mcp.nevent.ai/authorize');
+    expect(oauth?.['token_uri']).toBe('https://mcp.nevent.ai/token');
+    expect(oauth?.['pkce_required']).toBe(true);
   });
 });
 
@@ -324,6 +350,10 @@ describe('buildLandingHtml', () => {
 
   it('renders the live version and tool count', () => {
     expect(html).toContain('59 tools, version 1.8.0');
+  });
+
+  it('advertises the ARD capability manifest from the document head', () => {
+    expect(html).toContain('<link rel="ai-catalog" href="/.well-known/ai-catalog.json">');
   });
 
   it('links the discovery documents so a crawler can follow them', () => {
