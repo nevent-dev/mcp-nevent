@@ -404,12 +404,18 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // receives — so an agent that bounces off auth still learns where the API
   // catalog, the docs and the auth instructions live. Registered right after
   // Helmet so it also covers responses produced by downstream middleware.
+  //
+  // Skipped once a client holds an `Mcp-Session-Id`: that traffic is the bulk
+  // of the request volume and its client has already discovered the server, so
+  // there is no reason to repeat ~600 bytes of header on every JSON-RPC reply.
   // -------------------------------------------------------------------------
 
   const discoveryLinkHeader = buildLinkHeader(config.mcpServerUrl);
 
-  app.use((_req: Request, res: Response, next: NextFunction): void => {
-    res.setHeader('Link', discoveryLinkHeader);
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    if (!req.headers['mcp-session-id']) {
+      res.setHeader('Link', discoveryLinkHeader);
+    }
     next();
   });
 
@@ -473,6 +479,9 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // built by a pure function in `agent-discovery.ts` (unit-tested there) and
   // cached for an hour — they only change on deploy.
   //
+  // Rendered once at startup, not per request: none of them depends on the
+  // request, and these are unauthenticated endpoints a scanner may hammer.
+  //
   // Registered before the rate limiter for the same reason as /health: these
   // are probed in bursts by scanners and a 429 reads as "not supported".
   // -------------------------------------------------------------------------
@@ -488,33 +497,42 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   /** Deploy date, used as `lastmod` in the sitemap. */
   const discoveryLastmod = new Date().toISOString().slice(0, 10);
 
+  const robotsTxt = buildRobotsTxt(config.mcpServerUrl);
+  const sitemapXml = buildSitemapXml(config.mcpServerUrl, discoveryLastmod);
+  const authMarkdown = buildAuthMarkdown(config.mcpServerUrl);
+  const apiCatalogJson = JSON.stringify(buildApiCatalog(config.mcpServerUrl), null, 2);
+  const mcpServerCard = buildMcpServerCard(config.mcpServerUrl, discoveryOptions);
+  const ardCatalog = buildArdCatalog(config.mcpServerUrl, discoveryOptions);
+  const landingHtml = buildLandingHtml(config.mcpServerUrl, discoveryOptions);
+  const landingMarkdown = buildLandingMarkdown(config.mcpServerUrl, discoveryOptions);
+
   const cacheForAnHour = (res: Response): void => {
     res.setHeader('Cache-Control', 'public, max-age=3600');
   };
 
   app.get('/robots.txt', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
-    res.type('text/plain').send(buildRobotsTxt(config.mcpServerUrl));
+    res.type('text/plain').send(robotsTxt);
   });
 
   app.get('/sitemap.xml', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
-    res.type('application/xml').send(buildSitemapXml(config.mcpServerUrl, discoveryLastmod));
+    res.type('application/xml').send(sitemapXml);
   });
 
   app.get('/auth.md', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
-    res.type('text/markdown').send(buildAuthMarkdown(config.mcpServerUrl));
+    res.type('text/markdown').send(authMarkdown);
   });
 
   app.get('/.well-known/api-catalog', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
-    res.type('application/linkset+json').send(JSON.stringify(buildApiCatalog(config.mcpServerUrl), null, 2));
+    res.type('application/linkset+json').send(apiCatalogJson);
   });
 
   app.get('/.well-known/mcp/server-card.json', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
-    res.json(buildMcpServerCard(config.mcpServerUrl, discoveryOptions));
+    res.json(mcpServerCard);
   });
 
   // ARD requires the catalog to be readable from any origin so registries and
@@ -522,7 +540,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   app.get('/.well-known/ai-catalog.json', (_req: Request, res: Response): void => {
     cacheForAnHour(res);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.json(buildArdCatalog(config.mcpServerUrl, discoveryOptions));
+    res.json(ardCatalog);
   });
 
   // -------------------------------------------------------------------------
@@ -1152,11 +1170,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     res.setHeader('Vary', 'Accept');
 
     if (accept.includes('text/markdown')) {
-      res.type('text/markdown').send(buildLandingMarkdown(config.mcpServerUrl, discoveryOptions));
+      res.type('text/markdown').send(landingMarkdown);
       return;
     }
 
-    res.type('text/html').send(buildLandingHtml(config.mcpServerUrl, discoveryOptions));
+    res.type('text/html').send(landingHtml);
   });
 
   app.get('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
