@@ -419,9 +419,9 @@ requires an access token issued to a Nevent admin account. Discovery calls
 (\`initialize\`, \`tools/list\`, \`ping\`) are served without a token so clients can
 inspect capabilities before asking a user to log in.
 
-- **MCP endpoint:** \`${url('/')}\` (Streamable HTTP)
-- **Authorization server metadata:** \`${url('/.well-known/oauth-authorization-server')}\`
-- **Protected resource metadata:** \`${url('/.well-known/oauth-protected-resource')}\`
+- **MCP endpoint:** ${url('/')} (Streamable HTTP)
+- **Authorization server metadata:** ${url('/.well-known/oauth-authorization-server')}
+- **Protected resource metadata:** ${url('/.well-known/oauth-protected-resource')}
 - **Scopes:** \`mcp:tools\`
 - **Support:** ${SUPPORT_EMAIL}
 
@@ -459,12 +459,12 @@ The response contains the \`client_id\` to use in the authorization request.
 
 ## Obtain a token
 
-1. Redirect the user to \`${url('/authorize')}\` with \`response_type=code\`,
+1. Redirect the user to ${url('/authorize')} with \`response_type=code\`,
    your \`client_id\`, \`redirect_uri\`, \`code_challenge\` and
    \`code_challenge_method=S256\`.
 2. The user signs in with their Nevent admin credentials on a Nevent-hosted page.
    Credentials are never seen by the client.
-3. Exchange the returned \`code\` at \`${url('/token')}\` together with the
+3. Exchange the returned \`code\` at ${url('/token')} together with the
    \`code_verifier\`.
 4. Send the access token as \`Authorization: Bearer <token>\` on every MCP request.
 

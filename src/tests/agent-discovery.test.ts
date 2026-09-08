@@ -300,6 +300,22 @@ describe('buildAuthMarkdown', () => {
     expect(authMd).toContain('Dynamic Client Registration');
   });
 
+  // A naive URL extractor swallows the closing backtick of an inline code
+  // span, turning the endpoint into a 404 (…oauth-protected-resource%60).
+  it('presents endpoint URLs bare, so extractors do not swallow a delimiter', () => {
+    for (const path of [
+      '/',
+      '/.well-known/oauth-authorization-server',
+      '/.well-known/oauth-protected-resource',
+      '/authorize',
+      '/token',
+    ]) {
+      const target = `https://mcp.nevent.ai${path === '/' ? '/' : path}`;
+      expect(authMd).toContain(target);
+      expect(authMd).not.toContain(`\`${target}\``);
+    }
+  });
+
   it('gives a revocation path and a support contact', () => {
     expect(authMd).toContain('## Revocation');
     expect(authMd).toContain(SUPPORT_EMAIL);

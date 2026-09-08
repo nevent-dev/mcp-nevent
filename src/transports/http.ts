@@ -544,28 +544,44 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // `agent_auth` on the OAuth authorization server metadata
+  // Extra members on the SDK-generated OAuth metadata documents
   //
-  // The metadata document is produced by the SDK's `mcpAuthRouter()`. RFC 8414
-  // allows additional members, and the auth.md convention expects an
-  // `agent_auth` block there, so wrap `res.json` for that one path and merge
-  // the block into whatever the SDK emits. Wrapping (rather than re-declaring
-  // the route) keeps the SDK as the single source of truth for the OAuth
-  // fields themselves.
+  // Both documents are produced by the SDK's `mcpAuthRouter()`. Rather than
+  // re-declaring those routes — which would make this file the source of truth
+  // for the OAuth fields themselves — wrap `res.json` for the specific path and
+  // merge the extra members into whatever the SDK emits.
   // -------------------------------------------------------------------------
 
-  app.get('/.well-known/oauth-authorization-server', (_req: Request, res: Response, next: NextFunction): void => {
-    const originalJson = res.json.bind(res);
-    res.json = (body: unknown): Response => {
-      if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
-        return originalJson({
-          ...(body as Record<string, unknown>),
-          agent_auth: buildAgentAuthMetadata(config.mcpServerUrl),
-        });
-      }
-      return originalJson(body);
-    };
-    next();
+  /**
+   * Merges `extra` into the JSON body the downstream handler produces for
+   * `path`. Non-object bodies (an error string, an array) pass through
+   * untouched.
+   */
+  const mergeIntoJsonResponse = (path: string, extra: Record<string, unknown>): void => {
+    app.get(path, (_req: Request, res: Response, next: NextFunction): void => {
+      const originalJson = res.json.bind(res);
+      res.json = (body: unknown): Response => {
+        if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+          return originalJson({ ...(body as Record<string, unknown>), ...extra });
+        }
+        return originalJson(body);
+      };
+      next();
+    });
+  };
+
+  // RFC 8414 allows additional members, and the auth.md convention expects an
+  // `agent_auth` block here so an agent can learn the registration story from
+  // the document it already fetches for OAuth.
+  mergeIntoJsonResponse('/.well-known/oauth-authorization-server', {
+    agent_auth: buildAgentAuthMetadata(config.mcpServerUrl),
+  });
+
+  // RFC 9728 §2: the SDK omits `bearer_methods_supported`, leaving clients to
+  // guess how to present the token. This server accepts it only in the
+  // Authorization header, which is what `requireBearerAuth` enforces.
+  mergeIntoJsonResponse('/.well-known/oauth-protected-resource', {
+    bearer_methods_supported: ['header'],
   });
 
   // -------------------------------------------------------------------------
