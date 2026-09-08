@@ -24,9 +24,20 @@
  *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth, always)
  *   ├── DELETE /mcp              — Session termination (requireBearerAuth, always)
  *   ├── GET  /health             — Health check (no auth)
+ *   ├── GET  /                   — Public landing page (HTML/Markdown, no auth)
  *   ├── GET  /.well-known/mcp-manifest.json      — Client discovery (no auth)
- *   └── GET  /.well-known/openai-apps-challenge  — ChatGPT domain check (no auth)
+ *   ├── GET  /.well-known/openai-apps-challenge  — ChatGPT domain check (no auth)
+ *   └── Agent discovery (no auth, see `transports/agent-discovery.ts`)
+ *         ├── GET /robots.txt                       — RFC 9309 + Content Signals
+ *         ├── GET /sitemap.xml                      — Public URL list
+ *         ├── GET /auth.md                          — Agent registration guide
+ *         ├── GET /.well-known/api-catalog          — RFC 9727 linkset
+ *         ├── GET /.well-known/mcp/server-card.json — SEP-1649 server card
+ *         └── GET /.well-known/ai-catalog.json      — ARD capability manifest
  * ```
+ *
+ * Every response also carries an RFC 8288 `Link` header pointing at those
+ * documents, so an agent that only ever sees a `401` still finds them.
  *
  * ## Lazy auth / public discovery (NEV-1776)
  *
@@ -107,6 +118,18 @@ import { NeventOAuthProvider } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+import {
+  buildAgentAuthMetadata,
+  buildApiCatalog,
+  buildArdCatalog,
+  buildAuthMarkdown,
+  buildLandingHtml,
+  buildLandingMarkdown,
+  buildLinkHeader,
+  buildMcpServerCard,
+  buildRobotsTxt,
+  buildSitemapXml,
+} from './agent-discovery.js';
 
 // ---------------------------------------------------------------------------
 // Lazy auth — public discovery constants
@@ -375,6 +398,28 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   );
 
   // -------------------------------------------------------------------------
+  // Agent discovery (RFC 8288 Link header)
+  //
+  // Emitted on every response — including the 401 an unauthenticated MCP call
+  // receives — so an agent that bounces off auth still learns where the API
+  // catalog, the docs and the auth instructions live. Registered right after
+  // Helmet so it also covers responses produced by downstream middleware.
+  //
+  // Skipped once a client holds an `Mcp-Session-Id`: that traffic is the bulk
+  // of the request volume and its client has already discovered the server, so
+  // there is no reason to repeat ~600 bytes of header on every JSON-RPC reply.
+  // -------------------------------------------------------------------------
+
+  const discoveryLinkHeader = buildLinkHeader(config.mcpServerUrl);
+
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    if (!req.headers['mcp-session-id']) {
+      res.setHeader('Link', discoveryLinkHeader);
+    }
+    next();
+  });
+
+  // -------------------------------------------------------------------------
   // OpenAI Apps domain verification — publicly accessible, no auth required.
   //
   // The ChatGPT app submission flow issues a challenge token and does a plain
@@ -424,6 +469,103 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         hasShortUrlClient: true,
       }),
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Agent-readable discovery documents — publicly accessible, no auth required.
+  //
+  // `mcp.nevent.ai` is an API host: without these, a crawler or an agent-
+  // readiness scanner sees only the 401 from the MCP endpoint. Each document is
+  // built by a pure function in `agent-discovery.ts` (unit-tested there) and
+  // cached for an hour — they only change on deploy.
+  //
+  // Rendered once at startup, not per request: none of them depends on the
+  // request, and these are unauthenticated endpoints a scanner may hammer.
+  //
+  // Registered before the rate limiter for the same reason as /health: these
+  // are probed in bursts by scanners and a 429 reads as "not supported".
+  // -------------------------------------------------------------------------
+
+  const discoveryToolsCount = getToolCount({
+    hasNeventApiUrl: true,
+    hasMongoUri: true,
+    hasPaidMediaClient: true,
+    hasShortUrlClient: true,
+  });
+  const discoveryOptions = { version: PKG_VERSION, toolsCount: discoveryToolsCount };
+
+  /** Deploy date, used as `lastmod` in the sitemap. */
+  const discoveryLastmod = new Date().toISOString().slice(0, 10);
+
+  const robotsTxt = buildRobotsTxt(config.mcpServerUrl);
+  const sitemapXml = buildSitemapXml(config.mcpServerUrl, discoveryLastmod);
+  const authMarkdown = buildAuthMarkdown(config.mcpServerUrl);
+  const apiCatalogJson = JSON.stringify(buildApiCatalog(config.mcpServerUrl), null, 2);
+  const mcpServerCard = buildMcpServerCard(config.mcpServerUrl, discoveryOptions);
+  const ardCatalog = buildArdCatalog(config.mcpServerUrl, discoveryOptions);
+  const landingHtml = buildLandingHtml(config.mcpServerUrl, discoveryOptions);
+  const landingMarkdown = buildLandingMarkdown(config.mcpServerUrl, discoveryOptions);
+
+  const cacheForAnHour = (res: Response): void => {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+  };
+
+  app.get('/robots.txt', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.type('text/plain').send(robotsTxt);
+  });
+
+  app.get('/sitemap.xml', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.type('application/xml').send(sitemapXml);
+  });
+
+  app.get('/auth.md', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.type('text/markdown').send(authMarkdown);
+  });
+
+  app.get('/.well-known/api-catalog', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.type('application/linkset+json').send(apiCatalogJson);
+  });
+
+  app.get('/.well-known/mcp/server-card.json', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.json(mcpServerCard);
+  });
+
+  // ARD requires the catalog to be readable from any origin so registries and
+  // browser-based agents can fetch it directly.
+  app.get('/.well-known/ai-catalog.json', (_req: Request, res: Response): void => {
+    cacheForAnHour(res);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(ardCatalog);
+  });
+
+  // -------------------------------------------------------------------------
+  // `agent_auth` on the OAuth authorization server metadata
+  //
+  // The metadata document is produced by the SDK's `mcpAuthRouter()`. RFC 8414
+  // allows additional members, and the auth.md convention expects an
+  // `agent_auth` block there, so wrap `res.json` for that one path and merge
+  // the block into whatever the SDK emits. Wrapping (rather than re-declaring
+  // the route) keeps the SDK as the single source of truth for the OAuth
+  // fields themselves.
+  // -------------------------------------------------------------------------
+
+  app.get('/.well-known/oauth-authorization-server', (_req: Request, res: Response, next: NextFunction): void => {
+    const originalJson = res.json.bind(res);
+    res.json = (body: unknown): Response => {
+      if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+        return originalJson({
+          ...(body as Record<string, unknown>),
+          agent_auth: buildAgentAuthMetadata(config.mcpServerUrl),
+        });
+      }
+      return originalJson(body);
+    };
+    next();
   });
 
   // -------------------------------------------------------------------------
@@ -1009,6 +1151,31 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   // -------------------------------------------------------------------------
   // GET /mcp — SSE stream for server-initiated messages
   // -------------------------------------------------------------------------
+
+  // A browser or a crawler hitting `https://mcp.nevent.ai/` is not opening an
+  // SSE stream: it has no `Mcp-Session-Id` and does not ask for
+  // `text/event-stream`. Those requests used to get a 401 (or a 400 once
+  // authenticated), which is what made the host look dead to agent-readiness
+  // scanners. Serve the public landing page instead — as Markdown when the
+  // client asks for it, HTML otherwise. Requests that look like MCP traffic
+  // fall through to the SSE handler untouched.
+  app.get('/', (req: Request, res: Response, next: NextFunction): void => {
+    const accept = (req.headers.accept ?? '').toLowerCase();
+    if (req.headers['mcp-session-id'] || accept.includes('text/event-stream')) {
+      next();
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Vary', 'Accept');
+
+    if (accept.includes('text/markdown')) {
+      res.type('text/markdown').send(landingMarkdown);
+      return;
+    }
+
+    res.type('text/html').send(landingHtml);
+  });
 
   app.get('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
