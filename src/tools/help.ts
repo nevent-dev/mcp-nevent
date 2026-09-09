@@ -152,17 +152,30 @@ const HELP_SEGMENTS = `
 - nevent_update_segment(segment_id, ...) — update name/definition (WRITE)
 
 ## Segment definition DSL
+Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches.
+Stanzas are AND-combined: a fan must match EVERY stanza.
+
 {
   stanzas: [
+    // stanza 1 — attended EVENT_A or EVENT_B (same stanza = OR)
     {
       criteria: [
-        { criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }
+        { criterion_id: "attended_event", operator: "is", value: "EVENT_A" },
+        { criterion_id: "attended_event", operator: "is", value: "EVENT_B" }
+      ]
+    },
+    // stanza 2 — and also spent at least 200 (separate stanza = AND)
+    {
+      criteria: [
+        { criterion_id: "total_spent", operator: "gte", value: 200 }
       ]
     }
   ]
 }
+// Reads as: attended EVENT_A or EVENT_B, and spent >= 200.
 
 ## Rules
+- Same stanza = OR (any criterion). Separate stanzas = AND (all stanzas).
 - ENTITY operators (is/is_not): value can be string OR array of strings.
 - Do NOT combine attendance criteria with spending criteria in the same stanza — use separate stanzas.
 - Always preview before creating: nevent_segment_preview(definition) → check estimatedCount.

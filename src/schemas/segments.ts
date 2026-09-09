@@ -78,7 +78,8 @@ export const CreateSegmentSchema = {
 
   /**
    * Segment DSL definition (stanzas and criteria).
-   * Stanzas are OR-combined; criteria within a stanza are AND-combined.
+   * Criteria in the same stanza are OR-combined — a fan matches the stanza if ANY criterion matches.
+   * Stanzas are AND-combined — a fan must match EVERY stanza.
    * Must contain at least one stanza with at least one criterion.
    *
    * Call `nevent_segmentation_criteria` first to discover valid criterion_ids
@@ -86,7 +87,9 @@ export const CreateSegmentSchema = {
    * definition and estimate audience size before persisting.
    */
   definition: SegmentDefinitionSchema.describe(
-    'Segment DSL: stanzas are OR-combined, criteria within each stanza are AND-combined. ' +
+    'Segment DSL. Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined: a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza. ' +
     'Must have at least one stanza with at least one criterion. ' +
     'Use nevent_segment_preview first to validate the definition.'
   ),
@@ -148,6 +151,8 @@ export const UpdateSegmentSchema = {
    */
   definition: SegmentDefinitionSchema.optional().describe(
     'Replacement segment DSL. The full definition is replaced when provided. ' +
+    'Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined: a fan must match EVERY stanza. ' +
     'Omit to leave the existing definition unchanged.'
   ),
 };

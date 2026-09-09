@@ -258,7 +258,7 @@ describe('SegmentDefinitionSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts multiple stanzas (OR logic)', () => {
+  it('accepts multiple stanzas (AND between stanzas)', () => {
     const result = SegmentDefinitionSchema.safeParse({
       stanzas: [
         {

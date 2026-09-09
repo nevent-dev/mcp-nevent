@@ -39,6 +39,10 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - BOOLEAN fields: use operator "is_true" or "is_false". NEVER "eq" with "true"/"false".
 - Enum fields (state, status): check field description for valid values.
 
+## Segment definition rules
+- Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches.
+- Stanzas are AND-combined: a fan must match EVERY stanza. To AND conditions, use separate stanzas.
+
 ## Tenant switching (IMPORTANT)
 - Tenant comes from the JWT — it is STATEFUL for the whole session.
 - nevent_switch_tenant reissues the JWT; ALL subsequent tools use the new tenant.

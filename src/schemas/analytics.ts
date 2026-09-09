@@ -248,37 +248,51 @@ const SegmentCriterionSchema = z.object({
   ),
 });
 
-/** A stanza groups criteria with AND logic; stanzas are OR-combined. */
+/** A stanza groups criteria that are OR-combined. Stanzas are AND-combined. */
 const SegmentStanzaSchema = z.object({
   id: z.string().optional().describe('Optional stable ID for the stanza. If omitted, the MCP client auto-generates one before sending to the API. Provide your own only if you need stable references across requests.'),
-  criteria: z.array(SegmentCriterionSchema).min(1).describe('Criteria combined with AND logic within this stanza.'),
+  criteria: z.array(SegmentCriterionSchema).min(1).describe(
+    'Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined, so a fan must match EVERY stanza.'
+  ),
 });
 
 /**
  * Full segment definition DSL.
  *
  * Structure: { stanzas: [ { criteria: [ { criterion_id, operator, value } ] } ] }
- * - Stanzas are OR-combined (match ANY stanza)
- * - Criteria within a stanza are AND-combined (match ALL criteria)
+ * - Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches.
+ * - Stanzas are AND-combined: a fan must match EVERY stanza to enter the segment.
+ *
+ * To require A AND B, put A and B in separate stanzas.
+ * To accept A OR B, put both in the same stanza.
  *
  * Simple example (users who spent > 100):
  *   { "stanzas": [{ "criteria": [{ "criterion_id": "total_spent", "operator": "gt", "value": 100 }] }] }
  *
- * Combined example (females aged 18-35 who attended an event):
- *   { "stanzas": [{
- *       "criteria": [
- *         { "criterion_id": "user_gender", "operator": "is", "value": "female" },
- *         { "criterion_id": "user_age", "operator": "gte", "value": 18 },
- *         { "criterion_id": "user_age", "operator": "lte", "value": 35 },
- *         { "criterion_id": "attended_event", "operator": "is", "value": "EVENT_ID" }
- *       ]
- *   }] }
+ * Intersection example (females aged 18-35 who attended an event) — one stanza per
+ * required condition, so each age bound needs its own stanza:
+ *   { "stanzas": [
+ *       { "criteria": [{ "criterion_id": "user_gender", "operator": "is", "value": "female" }] },
+ *       { "criteria": [{ "criterion_id": "user_age", "operator": "gte", "value": 18 }] },
+ *       { "criteria": [{ "criterion_id": "user_age", "operator": "lte", "value": 35 }] },
+ *       { "criteria": [{ "criterion_id": "attended_event", "operator": "is", "value": "EVENT_ID" }] }
+ *   ] }
+ *
+ * Union example (attended EVENT_A or EVENT_B) — both criteria in ONE stanza:
+ *   { "stanzas": [{ "criteria": [
+ *       { "criterion_id": "attended_event", "operator": "is", "value": "EVENT_A" },
+ *       { "criterion_id": "attended_event", "operator": "is", "value": "EVENT_B" }
+ *   ] }] }
  */
 export const SegmentDefinitionSchema = z.object({
   stanzas: z
     .array(SegmentStanzaSchema)
     .min(1)
-    .describe('Array of stanzas (OR logic). Each stanza contains criteria (AND logic).'),
+    .describe(
+      'Array of stanzas. Stanzas are AND-combined: a fan must match EVERY stanza. ' +
+      'Criteria inside one stanza are OR-combined, so a fan matching ANY of them matches that stanza.'
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -463,11 +477,14 @@ export const SegmentationCriteriaSchema = {};
  */
 export const SegmentPreviewSchema = {
   /**
-   * Segment DSL definition (stanzas = OR groups, criteria = AND within group).
+   * Segment DSL definition. Criteria in the same stanza are OR-combined.
+   * Stanzas are AND-combined — a fan must match EVERY stanza.
    * Call nevent_segmentation_criteria first to get valid criterion_ids and operators.
    */
   definition: SegmentDefinitionSchema.describe(
-    'Segment DSL: stanzas are OR-combined, criteria within each stanza are AND-combined'
+    'Segment DSL. Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined: a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza.'
   ),
 };
 
@@ -481,7 +498,9 @@ export const SegmentPreviewSchema = {
 export const SegmentExecuteSchema = {
   /** Segment DSL definition (same shape as nevent_segment_preview). */
   definition: SegmentDefinitionSchema.describe(
-    'Segment DSL: stanzas are OR-combined, criteria within each stanza are AND-combined'
+    'Segment DSL. Criteria in the same stanza are OR-combined: a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined: a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza.'
   ),
   /** Zero-based page index for pagination. */
   page: z
