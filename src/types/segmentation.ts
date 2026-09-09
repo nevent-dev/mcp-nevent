@@ -78,7 +78,7 @@ export interface CriterionModifiers {
 
 /**
  * A single criterion within a stanza.
- * All criteria in a stanza are AND-combined; stanzas are OR-combined.
+ * Criteria in the same stanza are OR-combined. Stanzas are AND-combined.
  */
 export interface SegmentCriterion {
   /** Optional stable identifier for UI correlation. */
@@ -95,8 +95,9 @@ export interface SegmentCriterion {
 }
 
 /**
- * A stanza groups one or more criteria with AND logic.
- * Multiple stanzas are OR-combined to form the overall segment.
+ * A stanza groups one or more criteria that are OR-combined:
+ * a fan matches the stanza if ANY of its criteria match.
+ * Multiple stanzas are AND-combined — a fan must match EVERY stanza.
  */
 export interface SegmentStanza {
   /** Optional stable identifier for UI correlation. */
@@ -106,7 +107,8 @@ export interface SegmentStanza {
 
 /**
  * Top-level segment definition used as input to preview and execute endpoints.
- * The DSL is an array of stanzas (OR), each containing an array of criteria (AND).
+ * The DSL is an array of stanzas. Criteria inside one stanza are OR-combined.
+ * Stanzas are AND-combined: a fan must match EVERY stanza.
  */
 export interface SegmentDefinition {
   stanzas: SegmentStanza[];

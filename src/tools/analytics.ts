@@ -239,11 +239,14 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   server.tool(
     'nevent_segment_preview',
     'Preview estimated audience size for a segment definition without saving it. Returns fan count and sample contacts. ' +
+    'SEMANTICS: criteria in the same stanza are OR-combined — a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined — a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza. ' +
     'MANDATORY RULES: ' +
     '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings (e.g. value: "EVENT_ID" or value: ["EVENT_1","EVENT_2"]). ' +
     '(2) Do NOT include modifiers unless specifically asked for frequency or recency filtering. If included, time_range.value MUST be > 0. ' +
     'KNOWN LIMITATION: Do NOT combine attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the SAME stanza. Put them in SEPARATE stanzas. ' +
-    'Example: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] }.',
+    'Example — attended EVENT_ID AND spent >= 200, because a fan must match EVERY stanza: { stanzas: [{ criteria: [{ criterion_id: "attended_event", operator: "is", value: "EVENT_ID" }] }, { criteria: [{ criterion_id: "total_spent", operator: "gte", value: 200 }] }] }.',
     SegmentPreviewSchema,
     { title: 'Preview segment audience', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
@@ -264,7 +267,10 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_segment_execute',
-    'Execute a segment definition and retrieve matching contacts with pagination.',
+    'Execute a segment definition and retrieve matching contacts with pagination. ' +
+    'SEMANTICS: criteria in the same stanza are OR-combined — a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined — a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza.',
     SegmentExecuteSchema,
     { title: 'Execute segment and get contacts', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {

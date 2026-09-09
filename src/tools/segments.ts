@@ -280,12 +280,16 @@ export function registerSegmentTools(
   server.tool(
     'nevent_create_segment',
     'Create and persist a new audience segment from a filter definition. ' +
+    'SEMANTICS: criteria in the same stanza are OR-combined — a fan matches the stanza if ANY criterion matches. ' +
+    'Stanzas are AND-combined — a fan must match EVERY stanza. ' +
+    'To require A AND B, put them in separate stanzas; to accept A OR B, put both in the same stanza. ' +
     'PREREQUISITE: call nevent_segmentation_criteria first to discover valid criterion_ids and operators. ' +
     'MANDATORY RULES: ' +
     '(1) ENTITY operators (is/is_not) accept a single string OR an array of strings — e.g. value: "EVENT_ID" or value: ["E1","E2"]. ' +
     '(2) Omit modifiers unless the user explicitly requests frequency/recency filtering; if included, time_range.value MUST be > 0. ' +
     '(3) Criteria fields: only criterion_id, operator, value — omit id, timeframe, type. ' +
     '(4) KNOWN LIMITATION: do NOT mix attendance criteria (attended_event, ticket_type) with spending criteria (total_spent, ticket_spent, cashless_recharge_amount) in the same stanza — put them in separate stanzas. ' +
+    'Separate stanzas are AND-combined, so a fan must match both. ' +
     'After creation, call nevent_segment_preview to count the audience, then nevent_create_campaign to send to this segment.',
     CreateSegmentSchema,
     { title: 'Create segment', readOnlyHint: false, destructiveHint: false, openWorldHint: false },

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Segment DSL boolean semantics — every consumer-facing description was inverted.** Schemas, tool descriptions, `nevent_help`, server instructions and the TypeScript JSDoc all claimed "criteria within a stanza are AND-combined; stanzas are OR-combined". The canonical engine does the opposite: nev-data-api `SegmentExecutionService` runs `UNION DISTINCT` between the criteria of one stanza and `INTERSECT DISTINCT` between stanzas, and the admin segment builder states the same ("criteria with OR", "Add group (AND)"). An agent following the old text produced a union where it wanted an intersection: asking for "females aged 18-35 who attended EVENT_ID" as a single stanza matched every fan who was female **or** over 18 **or** under 35 **or** attended, silently inflating audiences. The `SegmentDefinitionSchema` "Combined example" taught exactly that mistake and has been replaced with a correct one-stanza-per-condition intersection plus a separate union example. Contract text only — no code behaviour changed: `DataClient.previewSegment`/`executeSegment` still POST the definition unchanged apart from `addAutoIds`, no operator is rewritten, and no DSL is transformed. New `src/tests/segment-definition-semantics.test.ts` pins the wording on every surface (Zod descriptions, the tool definitions the MCP SDK actually serves, and a source-text guard) and the canonical set algebra with deterministic fixtures.
+
 ## [1.8.0] - 2026-08-24
 
 ### Added
