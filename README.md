@@ -142,6 +142,72 @@ LLM (Claude / ChatGPT / Cursor / …)
 
 ---
 
+## Advanced: bearer-passthrough mode (internal, trusted callers only)
+
+`MCP_AUTH_MODE=bearer-passthrough` is a second HTTP auth mode for trusted
+internal services that already hold a per-user nev-api JWT and want to call
+MCP tools on that user's behalf — for example `nev-helpbot`, the Chatwoot
+support bot, answering as the promoter currently chatting.
+
+```bash
+MCP_AUTH_MODE=bearer-passthrough node dist/index.js --transport=http --port=3000
+```
+
+Every request must carry the calling user's own nev-api JWT:
+
+```
+Authorization: Bearer <the promoter's nev-api JWT>
+```
+
+- **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.**
+  `MONGODB_URI` stays optional: set it to also enable the Mongo-backed read
+  tools (campaigns/templates/deliverability), each still scoped by the
+  caller's own JWT tenant.
+- **Every request is verified against nev-api before anything is exposed.**
+  On every request — `initialize`, `tools/list`, `tools/call`, not only at
+  session start — this server calls `GET {NEVENT_API_URL}/auth/me` with the
+  forwarded token. A `200` confirms the session is live and the request
+  proceeds; `401`, `403`, a network error, or a timeout are all treated the
+  same way — the MCP request is rejected with `401` and **no tool, no
+  `tools/list`, and no session is ever created or advanced** from it. There
+  is no permissive fallback: if nev-api cannot be reached to confirm the
+  token, the request is refused, it is never let through anyway.
+  - A successful check is cached briefly (~60 s) by a hash of the token so a
+    single session does not call `/auth/me` on every message, but the cache
+    never serves an entry past the token's own expiry.
+  - **The token's signature is still never checked locally by this server.**
+    nev-api signs session JWTs with a symmetric secret (HMAC256); shipping
+    that secret here so it could be verified offline would mean compromising
+    this process could forge a session for *any* Nevent user, not just read
+    their data. Introspecting against nev-api avoids that trade-off entirely
+    and is the only mechanism this mode uses to confirm a token is real,
+    live, and unexpired. nev-data-api and nev-api additionally validate the
+    token themselves on every downstream call they receive, exactly as they
+    do for `stdio` mode's shared `NEVENT_JWT_TOKEN`.
+- **Read-only, tenant-locked.** Only READ tools are exposed, minus
+  `nevent_segment_execute` (returns raw contact PII) and the tenant-switching
+  tools (`nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant`)
+  — a bearer-passthrough caller always operates in the tenant its own JWT
+  carries. Excluded and write/delete tools never appear in `tools/list`.
+- **Session isolation.** Every MCP session gets its own client instances,
+  built fresh from that session's own JWT — two sessions started with
+  different tokens never share a client or cached data.
+- **Not for the public internet — and no caller identity of its own.** This
+  mode has no login page, no client registration, and no API key or
+  internal-client header identifying the caller — verification only ever
+  confirms the *forwarded token* is currently valid at nev-api, never who is
+  presenting it. Restricting **which processes can reach this port at all**
+  is entirely the deployment's job, not this server's: run it only on an
+  internal network reachable by trusted callers (e.g. a container on the
+  same Docker network as its caller, with no port published to the host) —
+  never point a public hostname (like `mcp.nevent.ai`) at a process started
+  this way.
+
+Full design rationale: `src/transports/http-bearer-passthrough.ts` and
+`src/auth/session-verifier.ts`.
+
+---
+
 ## Privacy
 
 The Nevent MCP server processes tenant data on Nevent's own infrastructure
