@@ -142,6 +142,46 @@ LLM (Claude / ChatGPT / Cursor / …)
 
 ---
 
+## Advanced: bearer-passthrough mode (internal, trusted callers only)
+
+`MCP_AUTH_MODE=bearer-passthrough` is a second HTTP auth mode for trusted
+internal services that already hold a per-user nev-api JWT and want to call
+MCP tools on that user's behalf — for example `nev-helpbot`, the Chatwoot
+support bot, answering as the promoter currently chatting.
+
+```bash
+MCP_AUTH_MODE=bearer-passthrough node dist/index.js --transport=http --port=3000
+```
+
+Every request must carry the calling user's own nev-api JWT:
+
+```
+Authorization: Bearer <the promoter's nev-api JWT>
+```
+
+- **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.** The
+  forwarded JWT is not verified by this server — exactly like `stdio` mode's
+  shared `NEVENT_JWT_TOKEN` — because nev-data-api and nev-api validate it on
+  every call they receive. `MONGODB_URI` stays optional: set it to also
+  enable the Mongo-backed read tools (campaigns/templates/deliverability),
+  each still scoped by the caller's own JWT tenant.
+- **Read-only, tenant-locked.** Only READ tools are exposed, minus
+  `nevent_segment_execute` (returns raw contact PII) and the tenant-switching
+  tools (`nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant`)
+  — a bearer-passthrough caller always operates in the tenant its own JWT
+  carries. Excluded and write/delete tools never appear in `tools/list`.
+- **Session isolation.** Every MCP session gets its own client instances,
+  built fresh from that session's own JWT — two sessions started with
+  different tokens never share a client or cached data.
+- **Not for the public internet.** There is no login page, no client
+  registration, and no signature check on the forwarded token. Run this mode
+  only on an internal network reachable by trusted callers — never point a
+  public hostname (like `mcp.nevent.ai`) at a process started this way.
+
+Full design rationale: `src/transports/http-bearer-passthrough.ts`.
+
+---
+
 ## Privacy
 
 The Nevent MCP server processes tenant data on Nevent's own infrastructure
