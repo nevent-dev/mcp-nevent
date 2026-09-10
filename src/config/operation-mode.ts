@@ -56,7 +56,8 @@ if (rawMode && !VALID_MODES.has(rawMode as OperationMode)) {
 
 /**
  * Maps each tool name to its operation type.
- * All tools must be listed here. Unknown tools are fail-open (logged as warnings).
+ * All tools must be listed here. Unknown tools are fail-closed (denied, and a
+ * warning is logged) — a tool must be explicitly classified before it can run.
  */
 const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 1: Analytics
@@ -74,6 +75,11 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 1: Multi-tenant
   nevent_list_tenants: 'READ',
   nevent_switch_tenant: 'READ',
+  // nevent_reset_tenant: DELETE-equivalent — for SUPERADMIN users this call
+  // mutates the user record in the database (same endpoint as switch_tenant).
+  // Treated with the same caution as a destructive operation so it is blocked
+  // in READ_ONLY and STANDARD, and only permitted in FULL.
+  nevent_reset_tenant: 'DELETE',
 
   // Sprint 2: Segment management
   nevent_list_segments: 'READ',
@@ -159,13 +165,30 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Returns the `OperationType` registered for a tool, or `undefined` when the
+ * tool is not in the registry.
+ *
+ * Exposed so other modules (e.g. the bearer-passthrough tool allowlist) can
+ * classify a tool without duplicating the `TOOL_OPERATIONS` table.
+ *
+ * @param toolName — The MCP tool name to look up.
+ */
+export function getToolOperationType(toolName: string): OperationType | undefined {
+  return TOOL_OPERATIONS[toolName];
+}
+
+/**
  * Returns `true` if the given tool is permitted in the current operation mode.
  *
  * - `READ_ONLY` permits only READ tools.
  * - `STANDARD` permits READ and WRITE tools.
  * - `FULL` permits all tools.
  *
- * Unknown tools are allowed and a warning is logged (fail-open for future tools).
+ * Unknown tools are DENIED (fail-closed). A tool must be explicitly classified
+ * in `TOOL_OPERATIONS` before it can run — this prevents a newly added tool
+ * from silently bypassing the operation-mode guard (or, in bearer-passthrough
+ * mode, the read-only tool allowlist) simply because nobody remembered to
+ * register it here.
  *
  * @param toolName — The MCP tool name to check.
  */
@@ -173,8 +196,8 @@ export function isOperationAllowed(toolName: string): boolean {
   const operationType = TOOL_OPERATIONS[toolName];
 
   if (!operationType) {
-    logger.warn({ toolName }, 'Unknown tool — allowing operation (fail-open).');
-    return true;
+    logger.warn({ toolName }, 'Unknown tool — denying operation (fail-closed).');
+    return false;
   }
 
   switch (OPERATION_MODE) {
@@ -194,7 +217,14 @@ export function isOperationAllowed(toolName: string): boolean {
  * @param toolName — The MCP tool name that was blocked.
  */
 export function getOperationDeniedMessage(toolName: string): string {
-  const operationType = TOOL_OPERATIONS[toolName] ?? 'WRITE';
+  const operationType = TOOL_OPERATIONS[toolName];
+
+  if (!operationType) {
+    return (
+      `Tool '${toolName}' is not registered in the operation-mode registry and is denied by default ` +
+      `(fail-closed policy). Add it to TOOL_OPERATIONS in src/config/operation-mode.ts to permit it.`
+    );
+  }
 
   if (OPERATION_MODE === 'READ_ONLY' && operationType === 'WRITE') {
     return (
