@@ -54,10 +54,17 @@
  *     `nevent_switch_tenant` / `nevent_reset_tenant` — tenant is always the
  *     one carried by the caller's own JWT). See
  *     `src/config/bearer-passthrough.ts`.
- *   - The forwarded JWT is NOT signature-verified by this server — exactly
- *     like stdio mode's shared `NEVENT_JWT_TOKEN`, nev-data-api/nev-api
- *     validate it on every call they receive. **Not meant to be reachable
- *     from the public internet** — run it on an internal network only.
+ *   - Every request is checked against nev-api's `GET /auth/me` before
+ *     anything is exposed (`src/auth/session-verifier.ts`) — fail-closed on
+ *     `401`/`403`/network error/timeout, briefly cached, never past the
+ *     token's own `exp`. The token's SIGNATURE is still never verified
+ *     locally by this server — that would require sharing nev-api's
+ *     symmetric signing secret, rejected as a design choice — nev-data-api
+ *     and nev-api also continue to validate the token on every call they
+ *     receive, exactly like stdio mode's shared `NEVENT_JWT_TOKEN`.
+ *     **Not meant to be reachable from the public internet** — run it on an
+ *     internal network only; caller confinement is a deployment concern,
+ *     not something this server enforces on its own.
  *
  * ```bash
  * MCP_AUTH_MODE=bearer-passthrough \

@@ -17,16 +17,31 @@
  * `MCP_AUTH_MODE=bearer-passthrough` (selected in `index.ts`) mounts THIS
  * transport instead of `transports/http.ts`'s OAuth transport:
  *
- *   - The caller's JWT arrives as `Authorization: Bearer <jwt>` on the
- *     `initialize` request and is used, UNVERIFIED by this server, to build
- *     that session's `DataClient` / `PaidMediaClient` — exactly like `stdio`
- *     mode's `NEVENT_JWT_TOKEN`, except the token comes from the request
- *     instead of an env var, and a fresh session (and fresh clients) is
- *     created per caller instead of one shared token for the whole process.
- *   - Signature verification is intentionally NOT performed here: nev-data-api
- *     and nev-api validate the token on every call they receive from this
- *     server, exactly as they do for stdio mode's shared token. This server
- *     never decides who the token belongs to — it just forwards it.
+ *   - The caller's JWT arrives as `Authorization: Bearer <jwt>` on every
+ *     request. Before ANYTHING else happens with it — including exposing
+ *     `tools/list` or allowing a single `tools/call` — it is checked against
+ *     nev-api's `GET /auth/me` via `verifySession()`
+ *     (`src/auth/session-verifier.ts`). A `200` confirms the session is
+ *     live; `401`/`403`/a network error/a timeout are all treated the same:
+ *     the MCP request is rejected with `401` and no tool, no `tools/list`,
+ *     and no session is ever created or advanced from it. This check runs
+ *     on EVERY request (`initialize`, `tools/list`, `tools/call`, ...), not
+ *     only at session start, though a short-lived cache
+ *     (`session-verifier.ts`, ~60s, bounded by the token's own `exp`) avoids
+ *     calling nev-api on every single message within that window.
+ *   - Once verified, the SAME token is used, still WITHOUT local signature
+ *     verification, to build that session's `DataClient` / `PaidMediaClient`
+ *     — exactly like `stdio` mode's `NEVENT_JWT_TOKEN`, except the token
+ *     comes from the request instead of an env var, and a fresh session
+ *     (and fresh clients) is created per caller instead of one shared token
+ *     for the whole process. The signature itself is intentionally never
+ *     checked locally — nev-api's session JWTs are HMAC256-signed with a
+ *     symmetric secret (`jwt.secret.key`); shipping that secret to this
+ *     server would let anyone who compromises it forge any user's session,
+ *     which is why liveness is instead confirmed by asking nev-api directly
+ *     (see `session-verifier.ts` module doc). nev-data-api and nev-api also
+ *     continue to validate the token on every call they receive from this
+ *     server, exactly as they do for stdio mode's shared token.
  *   - Only tools that pass `isToolAllowedInBearerPassthrough()` are
  *     registered (`toolFilter` on `createNeventServer`): READ tools minus a
  *     short exclusion list (PII-bearing `nevent_segment_execute`, and the
@@ -57,12 +72,20 @@
  * ## NOT exposed to the internet
  *
  * There is no OAuth challenge, no login page, no client registration, and no
- * signature check on the forwarded token — anyone who can reach this port and
- * knows (or steals) a valid nev-api JWT can use it. This transport is meant
- * to run on an internal network reachable only by trusted callers (e.g.
- * `nev-helpbot` calling a sidecar/internal ALB listener), never on the public
- * internet. Do not point `MCP_SERVER_URL`/public DNS such as `mcp.nevent.ai`
- * at a process started with `MCP_AUTH_MODE=bearer-passthrough`.
+ * LOCAL signature check on the forwarded token — every token is checked
+ * against nev-api instead (see above), which rejects anything invalid,
+ * expired, or revoked, but this server still trusts whoever holds the
+ * connection to only ever forward tokens on behalf of the user actually
+ * chatting, never a mix-and-match of caller and token. Confining WHO can
+ * reach this port at all is therefore left entirely to the deployment: this
+ * transport is meant to run on an internal network reachable only by
+ * trusted callers (e.g. `nev-helpbot` calling a sidecar/internal listener on
+ * the `chatwoot_default` Docker network, with no port published to the
+ * host), never on the public internet. Do not point `MCP_SERVER_URL`/public
+ * DNS such as `mcp.nevent.ai` at a process started with
+ * `MCP_AUTH_MODE=bearer-passthrough`. No API key or internal-client header
+ * is layered on top of this — network isolation is the only caller
+ * confinement this mode has, by design.
  *
  * @module transports/http-bearer-passthrough
  */
@@ -82,6 +105,7 @@ import { SessionClients } from '../clients/session-clients.js';
 import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+import { verifySession, SessionVerificationError } from '../auth/session-verifier.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -258,8 +282,10 @@ export async function createBearerPassthroughApp(
 
   /**
    * Requires a well-formed `Authorization: Bearer <token>` header. Does NOT
-   * verify the token — see module doc. Responds 401 (matching the shape the
-   * MCP SDK's `requireBearerAuth` uses) when absent or malformed.
+   * verify the token — that is `verifyIntrospectedSession()`'s job, which
+   * always runs immediately after this middleware. Responds 401 (matching
+   * the shape the MCP SDK's `requireBearerAuth` uses) when absent or
+   * malformed.
    */
   function requireBearerHeader(req: Request, res: Response, next: () => void): void {
     const authHeader = req.headers['authorization'];
@@ -279,7 +305,44 @@ export async function createBearerPassthroughApp(
     next();
   }
 
-  app.post('/', mcpRateLimiter, requireBearerHeader, async (req: Request, res: Response): Promise<void> => {
+  /**
+   * Confirms the bearer token is currently accepted by nev-api
+   * (`GET /auth/me`, via `verifySession()`) before letting the request reach
+   * session dispatch. Runs on EVERY request — `initialize`, `tools/list`,
+   * `tools/call`, session close — not only when a session is first created,
+   * so a token that is later revoked or expires mid-session stops working
+   * (bounded by the short verification cache TTL) rather than continuing to
+   * work for up to 30 minutes on the strength of a check made at
+   * `initialize` time.
+   *
+   * MUST run after `requireBearerHeader` (which guarantees a well-formed
+   * `Bearer <token>` header is present). Fail-closed: any rejection —
+   * `401`/`403` from nev-api, a network error, or a timeout — is answered
+   * with `401` here and `next()` is never called, so no tool, no
+   * `tools/list`, and no session progress ever results from an unverified
+   * token.
+   */
+  async function verifyIntrospectedSession(req: Request, res: Response, next: () => void): Promise<void> {
+    const authHeader = req.headers['authorization'] as string;
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    try {
+      await verifySession(token, config.neventApiUrl);
+      next();
+    } catch (err) {
+      const message = err instanceof SessionVerificationError ? err.message : 'Session verification failed';
+      logger.warn({ err: message }, 'bearer-passthrough request rejected — session verification failed');
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Invalid, expired, or unverifiable session. Re-authenticate with nev-api and retry.',
+        },
+        id: null,
+      });
+    }
+  }
+
+  app.post('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
@@ -291,7 +354,7 @@ export async function createBearerPassthroughApp(
       if (!sessionId && isInitializeRequest(req.body)) {
         const authHeader = req.headers['authorization'] ?? '';
         const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
-        const { sub, tenantId } = decodeJwtClaims(bearerToken);
+        const { tenantId } = decodeJwtClaims(bearerToken);
 
         // Fresh clients for THIS session, built from THIS request's token.
         // No shared state with any other session — see module doc.
@@ -310,8 +373,20 @@ export async function createBearerPassthroughApp(
           tenantId
         );
 
+        // `verifyIntrospectedSession` middleware already confirmed this
+        // exact token against nev-api /auth/me for this request (cache hit
+        // here in the common case) — reuse that authoritative identity for
+        // the "session starting" log line instead of the unverified JWT
+        // `sub` claim. The token itself is never logged.
+        const verified = await verifySession(bearerToken, config.neventApiUrl);
+
         logger.info(
-          { userId: sub ?? 'unknown', tenantId: tenantId ?? 'unknown', mode: OPERATION_MODE },
+          {
+            userId: verified.userId,
+            email: verified.email ?? 'unknown',
+            tenantId: verified.tenantId ?? tenantId ?? 'unknown',
+            mode: OPERATION_MODE,
+          },
           'bearer-passthrough session starting'
         );
 
@@ -337,7 +412,7 @@ export async function createBearerPassthroughApp(
           mongoUri: config.mongoUri,
           paidMediaClient,
           sessionClients,
-          userId: sub,
+          userId: verified.userId,
           getSessionId: () => transport.sessionId ?? null,
           // Only READ tools minus the PII/tenant-switching exclusions — see
           // src/config/bearer-passthrough.ts.
@@ -366,7 +441,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.get('/', mcpRateLimiter, requireBearerHeader, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions[sessionId]) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
@@ -382,7 +457,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.delete('/', mcpRateLimiter, requireBearerHeader, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions[sessionId]) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
