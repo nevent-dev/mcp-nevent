@@ -65,6 +65,10 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_analytics_capabilities: 'READ',
   nevent_analytics_table_schema: 'READ',
   nevent_analytics_filter_values: 'READ',
+  // nevent_campaign_report (v3.19.0) — READ. Runs 13 parallel read-only
+  // queries against a single campaign and returns aggregated metrics; it
+  // never mutates any resource.
+  nevent_campaign_report: 'READ',
 
   // Sprint 1: Segmentation
   nevent_segmentation_criteria: 'READ',
@@ -158,6 +162,13 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_upload_image: 'WRITE',
   nevent_list_images: 'READ',
   nevent_delete_image: 'DELETE',
+
+  // Meta tool: nevent_help — read-only, in-session guidance. Does not call
+  // checkMode() itself (it has no external dependencies to gate), but is
+  // classified here so it is discoverable in bearer-passthrough mode, which
+  // filters the registered tool set by TOOL_OPERATIONS rather than by
+  // whether the tool happens to call checkMode().
+  nevent_help: 'READ',
 };
 
 // ---------------------------------------------------------------------------
