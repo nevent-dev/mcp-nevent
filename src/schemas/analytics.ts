@@ -85,25 +85,24 @@ export const TimeRangeSchema = z.object({
  * A single WHERE filter predicate.
  *
  * The `operator` field accepts any string recognised by the API. Known valid
- * values (v3.19.0):
- *   eq | neq | gt | gte | lt | lte | in | not_in | like |
- *   contains | not_contains | starts_with | ends_with | regex | between |
- *   is_null | is_not_null | is_true | is_false | array_contains | array_contains_any
+ * values (nev-data-api 3.34.0, the same list GET /analytics/capabilities announces per type):
+ *   eq | neq | gt | gte | lt | lte | in | nin | contains | not_contains | starts_with | ends_with |
+ *   regex | regex_i | before | after | between | in_range | not_in_range | is_empty | is_not_empty | exists
+ * BOOLEAN fields take eq/neq with true or false (or exists).
  */
 export const FilterSchema = z.object({
   field: z.string().describe('Field name to filter on'),
   /**
    * Comparison operator.
-   * Known values: eq | neq | gt | gte | lt | lte | in | not_in | like |
-   *   contains | not_contains | starts_with | ends_with | regex | between |
-   *   is_null | is_not_null | is_true | is_false | array_contains | array_contains_any
+   * Known values: see FilterSchema above; the per-type list comes from nevent_analytics_capabilities.
    */
   operator: z
     .string()
     .describe(
-      'Comparison operator. Known values: eq | neq | gt | gte | lt | lte | in | not_in | like | ' +
-      'contains | not_contains | starts_with | ends_with | regex | between | ' +
-      'is_null | is_not_null | is_true | is_false | array_contains | array_contains_any'
+      'Comparison operator. Valid values depend on the field type (nevent_analytics_capabilities lists them): ' +
+      'eq | neq | gt | gte | lt | lte | in | nin | contains | not_contains | starts_with | ends_with | ' +
+      'regex | regex_i | before | after | between | in_range | not_in_range | is_empty | is_not_empty | exists. ' +
+      'BOOLEAN fields: eq or neq with true/false.'
     ),
   /** The filter value. For "in" / "not_in" operators, provide an array. For "between", provide [min, max]. */
   value: z.unknown().describe('Filter value; use array for "in" / "not_in" / "between" operators'),
@@ -243,7 +242,7 @@ const SegmentCriterionSchema = z.object({
   }).optional().describe(
     'ADVANCED: Usually OMIT this field entirely. Only include when the user explicitly asks for:\n' +
     '- "at least X times" → { frequency: { count: X, operator: "gte" } }\n' +
-    '- "in the last X days" → { time_range: { value: X, unit: "day" } } (value MUST be > 0)\n' +
+    '- "in the last X days" → { time_range: { value: X, unit: "days" } } (value MUST be > 0; unit is one of days, weeks, months, years)\n' +
     'If not asked for frequency or recency, DO NOT include modifiers.'
   ),
 });
@@ -549,20 +548,20 @@ export const DimensionValuesSchema = {
  * conversions, revenue, etc.).
  */
 export const CampaignReportSchema = {
-  /**
-   * Campaign ID to generate the report for.
-   * Use nevent_list_campaigns to get valid campaign IDs.
-   */
-  campaignId: z
-    .string()
-    .describe('Campaign ID to generate the analytics report for'),
-  /**
-   * Optional time range to restrict the report data.
-   * When omitted, the full campaign lifetime is used.
-   */
-  timeRange: TimeRangeSchema.optional().describe(
-    'Optional time range to restrict report data. Defaults to full campaign lifetime.'
-  ),
-  // NOTE: tenant_id is NOT accepted here — nev-data-api resolves tenant from
-  // the JWT claim. Use nevent_switch_tenant to change tenant context.
+  /** Calendar year of the report (e.g. 2026). */
+  year: z
+    .number()
+    .int()
+    .min(2000)
+    .max(2100)
+    .describe('Calendar year of the monthly report, e.g. 2026'),
+  /** Calendar month of the report, 1-12. */
+  month: z
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .describe('Calendar month of the report, 1 (January) to 12 (December)'),
+  // NOTE: tenant_id is NOT accepted here — nev-data-api resolves the tenant from
+  // the bearer JWT (the selected brand when one is selected).
 };

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-09-25
+
+### Fixed
+- **`nevent_campaign_report` always failed with 400.** It sent `{ campaignId, timeRange }`, but nev-data-api `POST /analytics/campaign-report` takes `{ year, month }` and returns the tenant's monthly campaign report (13 queries: marketing metrics for the month and the previous one, ROI, attribution, revenue, variable costs, 24-month history, transactional campaigns, segments, benchmarks). The tool now takes `year` and `month`; per-campaign numbers remain in `nevent_get_campaign_insights`.
+- **Analytics BOOLEAN filters.** The mandatory rule told the model to use `is_true`/`is_false`, which `/analytics/query` rejects; analytics takes `eq`/`neq` with `true`/`false`. Server instructions, the analytics tool, `nevent_help` and `FilterSchema` now list the operators nev-data-api validates (3.34.0, the same list `nevent_analytics_capabilities` returns). Segmentation keeps `is_true`/`is_false`.
+- Segmentation `time_range` example: unit `days` (was `day`, which nev-data-api rejects).
+- The analytics tool description no longer mentions the `users` table, which is not served.
+
 ## [1.8.1] - 2026-09-09
 
 ### Fixed
