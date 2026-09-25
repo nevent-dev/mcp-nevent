@@ -36,7 +36,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 
 ## MANDATORY: Analytics query rules
 - ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess.
-- BOOLEAN fields: use operator "is_true" or "is_false". NEVER "eq" with "true"/"false".
+- BOOLEAN fields: use operator "eq" (or "neq") with the boolean value true or false. "is_true"/"is_false" are segmentation operators, not analytics ones.
 - Enum fields (state, status): check field description for valid values.
 
 ## Segment definition rules

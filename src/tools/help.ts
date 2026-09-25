@@ -124,7 +124,7 @@ const HELP_ANALYTICS = `
 
 ## Mandatory rules
 - ALWAYS call table_schema before querying. NEVER guess field names.
-- BOOLEAN fields: operator must be "is_true" or "is_false". Never "eq" with "true"/"false".
+- BOOLEAN fields: operator "eq" (or "neq") with the boolean value true or false. "is_true"/"is_false" only exist in segmentation.
 - Enum fields (e.g. purchases.state): valid values are SUCCEEDED, COMPLETE, PENDING, FAILED.
 
 ## Query parameters
