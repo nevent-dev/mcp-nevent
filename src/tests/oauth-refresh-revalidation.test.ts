@@ -26,7 +26,7 @@ function makeStores() {
     },
     refreshTokens: {
       find: async (t: string) => refresh.get(t),
-      consume: async (t: string) => { refresh.delete(t); },
+      consume: async (t: string) => refresh.delete(t),
       save: async (d: RefreshTokenDocument) => { refresh.set(d.token, d); },
       findNeventAccessTokenByUserId: async () => undefined,
     },
@@ -185,6 +185,41 @@ describe('exchangeRefreshToken — maximum chain lifetime', () => {
     const doc2 = refresh.get(t2.refresh_token!)!;
     expect(doc2.chainCreatedAt!.getTime()).toBe(start.getTime());
     expect(doc2.createdAt.getTime()).toBeGreaterThan(start.getTime()); // sliding TTL field still moves
+  });
+});
+
+describe('exchangeRefreshToken — atomic rotation', () => {
+  it('two concurrent refreshes with the same token: exactly one succeeds', async () => {
+    const { stores, refresh } = makeStores();
+    refresh.set('rt-1', refreshDoc());
+    // Both requests get past find() + revalidation before either consumes.
+    fetchMock.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return ok();
+    });
+    const provider = makeProvider(stores);
+
+    const results = await Promise.allSettled([
+      provider.exchangeRefreshToken(client, 'rt-1'),
+      provider.exchangeRefreshToken(client, 'rt-1'),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(InvalidGrantError);
+    // Only one new refresh token was stored.
+    expect(refresh.size).toBe(1);
+  });
+
+  it('a token that was already consumed cannot be replayed', async () => {
+    const { stores, refresh } = makeStores();
+    refresh.set('rt-1', refreshDoc());
+    fetchMock.mockResolvedValue(ok());
+    const provider = makeProvider(stores);
+    await provider.exchangeRefreshToken(client, 'rt-1');
+    await expect(provider.exchangeRefreshToken(client, 'rt-1')).rejects.toThrow();
   });
 });
 

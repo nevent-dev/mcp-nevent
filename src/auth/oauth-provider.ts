@@ -678,8 +678,14 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       throw new ServerError('Unable to validate the user right now; please retry');
     }
 
-    // Consume old refresh token (token rotation)
-    await this.stores.refreshTokens.consume(refreshToken);
+    // Consume old refresh token (token rotation). The delete is atomic: of two
+    // concurrent exchanges of the same token only one sees `true`; the loser
+    // must not receive tokens (NEV-1848).
+    const consumed = await this.stores.refreshTokens.consume(refreshToken);
+    if (!consumed) {
+      logger.warn({ userId: refreshDoc.userId, clientId: client.client_id }, 'Refresh token already consumed (concurrent or replayed exchange)');
+      throw new InvalidGrantError('Refresh token has already been used');
+    }
 
     // Issue new refresh token (rotation)
     const { refreshToken: newRefreshToken } = this.tokenService.generateRefreshToken();

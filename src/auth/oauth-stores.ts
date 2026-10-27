@@ -314,12 +314,18 @@ export class MongoRefreshTokenStore {
   }
 
   /**
-   * Deletes a refresh token (called after exchange for a new access token).
+   * Atomically deletes a refresh token (rotation / revocation).
+   *
+   * MongoDB's `deleteOne` is atomic per document, so when two requests race
+   * with the same token exactly one gets `deletedCount === 1`. Callers that
+   * rotate MUST check the result before issuing new tokens (NEV-1848).
    *
    * @param token - The refresh token to delete.
+   * @returns `true` if this call deleted the token, `false` if it was already gone.
    */
-  async consume(token: string): Promise<void> {
-    await this.collection.deleteOne({ token });
+  async consume(token: string): Promise<boolean> {
+    const result = await this.collection.deleteOne({ token });
+    return result.deletedCount === 1;
   }
 
   /**
