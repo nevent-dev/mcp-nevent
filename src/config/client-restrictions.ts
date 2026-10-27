@@ -43,15 +43,17 @@ import { logger } from '../logger.js';
 /**
  * Tools denied to restricted clients even though they are classified `READ`:
  *
- * - `nevent_segment_execute` — returns the full paginated contact list of a
- *   segment (PII); `nevent_segment_preview` (counts only) stays available.
  * - `nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant` —
  *   the tenant is fixed by the caller's JWT; a restricted client must never
  *   discover or switch to another tenant. `switch`/`reset` also mutate the
  *   user record for SUPERADMINs.
+ *
+ * `nevent_segment_execute` (full paginated contact list, PII) is deliberately
+ * NOT excluded: the product owner decided on 2026-10-27 that restricted
+ * clients may use it. To revert, add `'nevent_segment_execute'` back to this
+ * set; `client-restrictions.test.ts` has a test that pins the current decision.
  */
 export const EXCLUDED_TOOLS_READONLY_CLIENT: ReadonlySet<string> = new Set([
-  'nevent_segment_execute',
   'nevent_list_tenants',
   'nevent_switch_tenant',
   'nevent_reset_tenant',
@@ -100,6 +102,20 @@ export function getClientRestrictionPolicy(
   };
 }
 
+/**
+ * Returns human-readable configuration problems, to be logged once at startup.
+ *
+ * Each `MCP_READONLY_REDIRECT_PREFIXES` entry must end with `/`. Matching is a
+ * plain `startsWith`, so `https://support.nevent.ai/helpbot` would also match
+ * `https://support.nevent.ai/helpbot-evil/cb`; the trailing slash anchors the
+ * prefix to a path segment.
+ */
+export function validateClientRestrictionPolicy(policy: ClientRestrictionPolicy): string[] {
+  return policy.redirectPrefixes
+    .filter((p) => !p.endsWith('/'))
+    .map((p) => `MCP_READONLY_REDIRECT_PREFIXES entry "${p}" does not end with "/" and may match unrelated paths (e.g. "${p}-other/..."); add a trailing "/".`);
+}
+
 /** `true` when at least one restriction rule is configured. */
 export function hasClientRestrictions(policy: ClientRestrictionPolicy): boolean {
   return policy.clientIds.size > 0 || policy.redirectPrefixes.length > 0;
@@ -128,37 +144,66 @@ export function isReadOnlyClient(
   return uris.some((uri) => policy.redirectPrefixes.some((prefix) => uri.startsWith(prefix)));
 }
 
+/** How long a successfully loaded client is cached by {@link resolveToolFilterForClient}. */
+export const CLIENT_LOOKUP_CACHE_TTL_MS = 30_000;
+
+const clientLookupCache = new Map<string, { client: RestrictableClient; expiresAt: number }>();
+
+/** Clears the short-lived client lookup cache (used by tests). */
+export function clearClientLookupCache(): void {
+  clientLookupCache.clear();
+}
+
 /**
  * Resolves the tool allowlist to apply to a new session (NEV-1848).
  *
  * - No rule configured: returns `undefined` WITHOUT calling `getClient`, so
  *   every client behaves exactly as before and no extra DB read happens.
- * - A rule is configured: the client is loaded; a matching client gets
+ * - A rule is configured: the client is loaded (successful lookups are cached
+ *   for {@link CLIENT_LOOKUP_CACHE_TTL_MS} so a burst of sessions does not
+ *   hit MongoDB each time); a matching client gets
  *   {@link isToolAllowedForReadOnlyClient}, any other client `undefined`.
  * - Fail-closed: if the client is unknown or cannot be loaded while rules are
- *   configured, the session is limited to read-only tools.
+ *   configured, the session is limited to read-only tools, EVEN for a normal
+ *   client (a warning with its `client_id` is logged). Failures are never
+ *   cached, so the next session retries the lookup.
  *
  * @param clientId  — `clientId` claim of the session's access token.
  * @param getClient — Loader for the registered client (e.g. `clientsStore.getClient`).
  * @param policy    — Restriction policy; defaults to the environment.
+ * @param now       — Clock (ms), injectable for tests.
  */
 export async function resolveToolFilterForClient(
   clientId: string | undefined,
   getClient: (clientId: string) => Promise<RestrictableClient | undefined> | RestrictableClient | undefined,
-  policy: ClientRestrictionPolicy = getClientRestrictionPolicy()
+  policy: ClientRestrictionPolicy = getClientRestrictionPolicy(),
+  now: () => number = Date.now
 ): Promise<((toolName: string) => boolean) | undefined> {
   if (!hasClientRestrictions(policy)) {
     return undefined;
   }
   try {
-    const client = clientId ? await getClient(clientId) : undefined;
+    let client: RestrictableClient | undefined;
+    if (clientId) {
+      const cached = clientLookupCache.get(clientId);
+      if (cached && cached.expiresAt > now()) {
+        client = cached.client;
+      } else {
+        client = await getClient(clientId);
+        if (client) {
+          clientLookupCache.set(clientId, { client, expiresAt: now() + CLIENT_LOOKUP_CACHE_TTL_MS });
+        } else {
+          clientLookupCache.delete(clientId);
+        }
+      }
+    }
     if (!client) {
-      logger.warn({ clientId: clientId ?? 'none' }, 'OAuth client not found while client restrictions are active — read-only tools only (fail-closed)');
+      logger.warn({ client_id: clientId ?? 'none' }, 'OAuth client not found while client restrictions are active — read-only tools only (fail-closed)');
       return isToolAllowedForReadOnlyClient;
     }
     return isReadOnlyClient(client, policy) ? isToolAllowedForReadOnlyClient : undefined;
   } catch (err) {
-    logger.error({ err, clientId }, 'Could not resolve OAuth client for tool restrictions — read-only tools only (fail-closed)');
+    logger.warn({ err, client_id: clientId }, 'Could not load OAuth client while client restrictions are active — read-only tools only (fail-closed)');
     return isToolAllowedForReadOnlyClient;
   }
 }

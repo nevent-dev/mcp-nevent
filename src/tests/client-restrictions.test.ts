@@ -6,7 +6,9 @@
  * neither list nor call write / delete / tenant tools, even by name; a normal
  * client is unchanged.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -15,6 +17,9 @@ import {
   isReadOnlyClient,
   isToolAllowedForReadOnlyClient,
   resolveToolFilterForClient,
+  clearClientLookupCache,
+  CLIENT_LOOKUP_CACHE_TTL_MS,
+  validateClientRestrictionPolicy,
 } from '../config/client-restrictions.js';
 import { getToolOperationType } from '../config/operation-mode.js';
 import { createNeventServer, getToolCount } from '../server.js';
@@ -67,6 +72,7 @@ describe('client restriction policy', () => {
 });
 
 describe('resolveToolFilterForClient', () => {
+  beforeEach(() => clearClientLookupCache());
   const rules = getClientRestrictionPolicy({ MCP_READONLY_REDIRECT_PREFIXES: 'https://support.nevent.ai/helpbot/' });
   const none = getClientRestrictionPolicy({});
 
@@ -91,6 +97,72 @@ describe('resolveToolFilterForClient', () => {
   });
 });
 
+describe('resolveToolFilterForClient — lookup cache', () => {
+  const rules = getClientRestrictionPolicy({ MCP_READONLY_REDIRECT_PREFIXES: 'https://support.nevent.ai/helpbot/' });
+  beforeEach(() => clearClientLookupCache());
+
+  it('caches a successful lookup for a short time, then reloads', async () => {
+    let calls = 0;
+    let t = 1_000;
+    const load = async () => { calls++; return { client_id: 'c', redirect_uris: ['https://claude.ai/cb'] }; };
+    await resolveToolFilterForClient('c', load, rules, () => t);
+    await resolveToolFilterForClient('c', load, rules, () => t + 1);
+    expect(calls).toBe(1);
+    t += CLIENT_LOOKUP_CACHE_TTL_MS + 1;
+    await resolveToolFilterForClient('c', load, rules, () => t);
+    expect(calls).toBe(2);
+  });
+
+  it('never caches failures: the next session retries', async () => {
+    let calls = 0;
+    const f1 = await resolveToolFilterForClient('c', async () => { calls++; throw new Error('mongo down'); }, rules);
+    expect(f1).toBe(isToolAllowedForReadOnlyClient);
+    const f2 = await resolveToolFilterForClient('c', async () => { calls++; return { client_id: 'c', redirect_uris: ['https://claude.ai/cb'] }; }, rules);
+    expect(f2).toBeUndefined();
+    expect(calls).toBe(2);
+  });
+});
+
+describe('validateClientRestrictionPolicy', () => {
+  it('warns about prefixes that do not end with "/"', () => {
+    const warnings = validateClientRestrictionPolicy(getClientRestrictionPolicy({
+      MCP_READONLY_REDIRECT_PREFIXES: 'https://support.nevent.ai/helpbot, https://ok.example/bot/',
+    }));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('https://support.nevent.ai/helpbot');
+  });
+
+  it('no warnings when every prefix ends with "/" or nothing is configured', () => {
+    expect(validateClientRestrictionPolicy(getClientRestrictionPolicy({ MCP_READONLY_REDIRECT_PREFIXES: 'https://a.example/b/' }))).toEqual([]);
+    expect(validateClientRestrictionPolicy(getClientRestrictionPolicy({}))).toEqual([]);
+  });
+});
+
+describe('every tool goes through server.tool() (so the filter cannot be bypassed)', () => {
+  it('no source file registers tools/resources/prompts through other SDK entry points', () => {
+    const root = join(__dirname, '..');
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== 'tests') walk(full); }
+        else if (e.name.endsWith('.ts')) files.push(full);
+      }
+    };
+    walk(root);
+    const offenders = files.filter((f) =>
+      /\.(registerTool|registerResource|registerPrompt|resource|prompt)\s*\(/.test(readFileSync(f, 'utf8'))
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('the restricted tool count equals the number of unfiltered tools that pass the predicate', async () => {
+    const all = (await (await connect()).listTools()).tools.map((t) => t.name);
+    const restricted = (await (await connect(isToolAllowedForReadOnlyClient)).listTools()).tools.map((t) => t.name);
+    expect(restricted.sort()).toEqual(all.filter(isToolAllowedForReadOnlyClient).sort());
+  });
+});
+
 describe('read-only tool allowlist', () => {
   it('allows READ tools and denies WRITE / DELETE tools', () => {
     expect(isToolAllowedForReadOnlyClient('nevent_list_campaigns')).toBe(true);
@@ -105,10 +177,14 @@ describe('read-only tool allowlist', () => {
     }
   });
 
-  it('denies tenant tools and PII segment export even though they are classified READ', () => {
-    for (const t of ['nevent_list_tenants', 'nevent_switch_tenant', 'nevent_reset_tenant', 'nevent_segment_execute']) {
+  it('denies the tenant tools even though they are classified READ', () => {
+    for (const t of ['nevent_list_tenants', 'nevent_switch_tenant', 'nevent_reset_tenant']) {
       expect(isToolAllowedForReadOnlyClient(t), t).toBe(false);
     }
+  });
+
+  it('allows nevent_segment_execute (product decision 2026-10-27; revert by re-adding it to EXCLUDED_TOOLS_READONLY_CLIENT)', () => {
+    expect(isToolAllowedForReadOnlyClient('nevent_segment_execute')).toBe(true);
   });
 
   it('is fail-closed: an unclassified tool is denied', () => {
@@ -155,11 +231,12 @@ describe('restricted session over MCP', () => {
     }
     for (const hidden of [
       'nevent_create_campaign', 'nevent_schedule_campaign', 'nevent_delete_image',
-      'nevent_list_tenants', 'nevent_switch_tenant', 'nevent_reset_tenant', 'nevent_segment_execute',
+      'nevent_list_tenants', 'nevent_switch_tenant', 'nevent_reset_tenant',
     ]) {
       expect(names).not.toContain(hidden);
     }
     expect(names).toContain('nevent_list_campaigns');
+    expect(names).toContain('nevent_segment_execute');
   });
 
   it('rejects tools/call by name for write, delete, tenant and unknown tools', async () => {

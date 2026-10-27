@@ -117,7 +117,12 @@ import { TokenService } from '../auth/token-service.js';
 import { NeventOAuthProvider, parseRefreshMaxLifetimeDays, parseRefreshRevalidateMode } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
-import { resolveToolFilterForClient } from '../config/client-restrictions.js';
+import {
+  getClientRestrictionPolicy,
+  hasClientRestrictions,
+  resolveToolFilterForClient,
+  validateClientRestrictionPolicy,
+} from '../config/client-restrictions.js';
 import { logger } from '../logger.js';
 import {
   buildAgentAuthMetadata,
@@ -706,6 +711,21 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     refreshMaxLifetimeDays: parseRefreshMaxLifetimeDays(process.env['MCP_REFRESH_MAX_LIFETIME_DAYS']),
     refreshRevalidate: parseRefreshRevalidateMode(process.env['MCP_REFRESH_REVALIDATE']),
   });
+
+  // Startup report of the per-client restriction rules (NEV-1848).
+  const restrictionPolicy = getClientRestrictionPolicy();
+  if (hasClientRestrictions(restrictionPolicy)) {
+    logger.info(
+      {
+        readOnlyRedirectPrefixes: restrictionPolicy.redirectPrefixes,
+        readOnlyClientIds: restrictionPolicy.clientIds.size,
+      },
+      'Read-only OAuth client restrictions active'
+    );
+    for (const warning of validateClientRestrictionPolicy(restrictionPolicy)) {
+      logger.warn(warning);
+    }
+  }
 
   const resolveToolFilter = (clientId: string | undefined) =>
     resolveToolFilterForClient(clientId, (id) => provider.clientsStore.getClient(id));
