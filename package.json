@@ -68,7 +68,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/jsonwebtoken": "^9.0.10",
     "cors": "^2.8.6",
     "express": "^4.21.0",
