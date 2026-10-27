@@ -254,6 +254,15 @@ export function registerEventTools(
             invalidRequest('level and parent only apply to dimension=marketing.', 'invalid_level', 'level')
           );
         }
+        if (marketing && (params.level ?? 'source') === 'source' && params.parent !== undefined) {
+          return err(
+            invalidRequest(
+              'parent does not apply to level=source (the top level). Use level=medium or level=campaign with the key of the group one level up.',
+              'invalid_parent',
+              'parent'
+            )
+          );
+        }
         if (marketing && params.level !== undefined && params.level !== 'source' && params.parent === undefined) {
           return err(
             invalidRequest(

@@ -75,12 +75,34 @@ async function toHttpErrorEnvelope(response: Response, action: string): Promise<
       },
     };
   }
+  if (response.status === 401) {
+    return {
+      error: {
+        type: 'authentication_error',
+        message: `Authentication failed. ${action} needs a valid session; the JWT may be expired or invalid.`,
+        code: 'unauthorized',
+      },
+    };
+  }
   if (response.status === 403) {
     return {
       error: {
         type: 'authentication_error',
         message: `Access denied. ${action} requires ADMIN, OWNER or SUPERADMIN.`,
         code: 'forbidden',
+      },
+    };
+  }
+  if (response.status === 400 && body.includes('DELIVERABILITY_NOT_APPLICABLE')) {
+    return {
+      error: {
+        type: 'invalid_request',
+        message:
+          'Deliverability does not apply to this campaign: it is not an email campaign. ' +
+          'These metrics only exist for EMAIL campaigns and multichannel campaigns that include email ' +
+          '(for example EMAIL_ONLY, EMAIL_AND_SMS, ALL_CHANNELS). ' +
+          'Check the channel with nevent_get_campaign; for SMS or WhatsApp use nevent_get_campaign_metrics.',
+        code: 'deliverability_not_applicable',
       },
     };
   }

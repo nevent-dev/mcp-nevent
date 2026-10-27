@@ -36,6 +36,20 @@ const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD');
 /** Event natures nev-api filters on. */
 export const EVENT_NATURE_VALUES = ['TICKETED', 'WAITLIST', 'REGISTRATION', 'UNKNOWN'] as const;
 
+/**
+ * Sort fields nev-api's EventService.validateSortField accepts. Any other value silently
+ * falls back to venue.startDate there, so it is rejected here instead.
+ */
+export const EVENT_SORT_FIELDS = [
+  'venue.startDate',
+  'venue.endDate',
+  'description.name',
+  'venue.location.name',
+  'ticketsAvailable',
+  'ticketsSold',
+  'state',
+] as const;
+
 /** Default and maximum page size of `nevent_list_events`. */
 export const LIST_EVENTS_DEFAULT_SIZE = 25;
 export const LIST_EVENTS_MAX_SIZE = 100;
@@ -76,10 +90,12 @@ export const ListEventsSchema = {
     .describe('true returns only active events.'),
 
   sort: z
-    .string()
-    .regex(/^[A-Za-z0-9_.]{1,64}$/, 'Must be a field name such as venue.startDate or name')
+    .enum(EVENT_SORT_FIELDS)
     .optional()
-    .describe('Field to sort by. Default venue.startDate.'),
+    .describe(
+      'Field to sort by. Default venue.startDate. description.name sorts by event name. ' +
+      'Any other value is not accepted (nev-api would silently fall back to venue.startDate).'
+    ),
 
   order: z
     .enum(['asc', 'desc'])

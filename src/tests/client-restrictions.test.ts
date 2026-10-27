@@ -187,6 +187,18 @@ describe('read-only tool allowlist', () => {
     expect(isToolAllowedForReadOnlyClient('nevent_segment_execute')).toBe(true);
   });
 
+  it('keeps read-only clients (helpbot) on the event, sales provenance and campaign health READ tools (product decision 2026-10-27)', () => {
+    for (const t of [
+      'nevent_list_events',
+      'nevent_event_sales_provenance',
+      'nevent_get_campaign_deliverability',
+      'nevent_get_campaign_unsubscribes',
+    ]) {
+      expect(getToolOperationType(t), t).toBe('READ');
+      expect(isToolAllowedForReadOnlyClient(t), t).toBe(true);
+    }
+  });
+
   it('is fail-closed: an unclassified tool is denied', () => {
     expect(getToolOperationType('nevent_brand_new_tool')).toBeUndefined();
     expect(isToolAllowedForReadOnlyClient('nevent_brand_new_tool')).toBe(false);

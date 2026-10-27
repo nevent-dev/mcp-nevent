@@ -149,6 +149,13 @@ describe('schemas', () => {
     expect(events.safeParse({ page: -1 }).success).toBe(false);
     expect(events.safeParse({ nature: 'TICKETED', order: 'desc' }).success).toBe(true);
     expect(events.safeParse({ sort: 'venue.startDate; drop' }).success).toBe(false);
+    expect(events.safeParse({ sort: 'name' }).success).toBe(false);
+    for (const field of [
+      'venue.startDate', 'venue.endDate', 'description.name', 'venue.location.name',
+      'ticketsAvailable', 'ticketsSold', 'state',
+    ]) {
+      expect(events.safeParse({ sort: field }).success, field).toBe(true);
+    }
   });
 
   it('deliverability and unsubscribes accept only their own views', () => {
@@ -209,7 +216,7 @@ describe('nevent_list_events', () => {
       future: false,
       nature: 'TICKETED',
       active_only: true,
-      sort: 'name',
+      sort: 'description.name',
       order: 'desc',
       page: 1,
       page_size: 10,
@@ -220,7 +227,7 @@ describe('nevent_list_events', () => {
     expect(q.get('future')).toBe('false');
     expect(q.get('nature')).toBe('TICKETED');
     expect(q.get('activeOnly')).toBe('true');
-    expect(q.get('sort')).toBe('name');
+    expect(q.get('sort')).toBe('description.name');
     expect(q.get('order')).toBe('-1');
     expect(q.get('page')).toBe('1');
     expect(q.get('size')).toBe('10');
@@ -375,6 +382,20 @@ describe('nevent_event_sales_provenance', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('summary refuses parent on the top marketing level (explicit or default)', async () => {
+    const fetchMock = vi.fn();
+    const server = setup(fetchMock);
+
+    const explicit = errorOf(
+      await server.invoke('nevent_event_sales_provenance', { ...RANGE, level: 'source', parent: 'abc' })
+    );
+    const implicit = errorOf(await server.invoke('nevent_event_sales_provenance', { ...RANGE, parent: 'abc' }));
+
+    expect(explicit).toMatchObject({ code: 'invalid_parent', param: 'parent' });
+    expect(implicit.code).toBe('invalid_parent');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('summary needs parent for medium/campaign and refuses level on non-marketing dimensions', async () => {
     const fetchMock = vi.fn();
     const server = setup(fetchMock);
@@ -474,6 +495,25 @@ describe('nevent_get_campaign_deliverability', () => {
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/campaigns/a%2Fb%20c/deliverability/summary');
   });
 
+  it('maps 401 to authentication_error / unauthorized, like nevent_list_events', async () => {
+    const server = setup(vi.fn(async () => jsonResponse({}, 401)));
+
+    const error = errorOf(await server.invoke('nevent_get_campaign_deliverability', { campaign_id: CAMPAIGN_ID }));
+
+    expect(error).toMatchObject({ type: 'authentication_error', code: 'unauthorized' });
+  });
+
+  it('explains DELIVERABILITY_NOT_APPLICABLE for a non-email campaign', async () => {
+    const server = setup(vi.fn(async () => jsonResponse({ message: 'DELIVERABILITY_NOT_APPLICABLE' }, 400)));
+
+    const error = errorOf(await server.invoke('nevent_get_campaign_deliverability', { campaign_id: CAMPAIGN_ID }));
+
+    expect(error.code).toBe('deliverability_not_applicable');
+    expect(error.message).toContain('not an email campaign');
+    expect(error.message).toContain('EMAIL');
+    expect(error.message).toContain('nevent_get_campaign_metrics');
+  });
+
   it('maps 404, 403 and 400 to actionable errors', async () => {
     for (const [status, code] of [
       [404, 'campaign_not_found'],
@@ -515,6 +555,14 @@ describe('nevent_get_campaign_unsubscribes', () => {
 
     expect(urlOf(fetchMock).pathname).toBe(`/campaigns/${CAMPAIGN_ID}/unsubscribes/summary`);
     expect((initOf(fetchMock).headers as Record<string, string>)['Authorization']).toBe('Bearer test-jwt');
+  });
+
+  it('maps 401 to authentication_error / unauthorized', async () => {
+    const server = setup(vi.fn(async () => jsonResponse({}, 401)));
+    expect(errorOf(await server.invoke('nevent_get_campaign_unsubscribes', { campaign_id: CAMPAIGN_ID }))).toMatchObject({
+      type: 'authentication_error',
+      code: 'unauthorized',
+    });
   });
 
   it('maps 404 and 403', async () => {
