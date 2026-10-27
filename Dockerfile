@@ -47,6 +47,10 @@ RUN npm prune --omit=dev
 # -----------------------------------------------------------------------------
 FROM node:22-alpine AS runner
 
+# Commit SHA of the build, surfaced by GET /health (read as GIT_COMMIT_SHA).
+# Pass with: docker build --build-arg COMMIT_SHA=$(git rev-parse HEAD) .
+ARG COMMIT_SHA=unknown
+
 # Security hardening: run as non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S mcp -u 1001 -G nodejs
@@ -74,7 +78,8 @@ COPY --from=builder --chown=mcp:nodejs /app/package.json ./package.json
 USER mcp
 
 # Default to HTTP transport. Override via environment or ECS task definition.
-ENV NODE_ENV=production \
+ENV GIT_COMMIT_SHA=${COMMIT_SHA} \
+    NODE_ENV=production \
     MCP_TRANSPORT=http \
     MCP_PORT=3000 \
     NEVENT_DATA_API_URL=https://data.nevent.es \

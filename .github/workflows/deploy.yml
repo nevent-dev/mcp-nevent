@@ -59,7 +59,7 @@ jobs:
         run: |
           IMAGE_TAG=$(date +'%Y-%m-%d-%H-%M')-$(git rev-parse --short HEAD)
           IMAGE=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker build -t $IMAGE .
+          docker build --build-arg COMMIT_SHA=${{ github.sha }} -t $IMAGE .
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
           echo "Built: $IMAGE"
 
