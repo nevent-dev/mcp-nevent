@@ -52,6 +52,7 @@ import type {
 } from './oauth-stores.js';
 import { TokenService } from './token-service.js';
 import { renderLoginPage } from './login-page.js';
+import { isReadOnlyClient } from '../config/client-restrictions.js';
 
 // ---------------------------------------------------------------------------
 // Nevent API credential validator
@@ -171,6 +172,30 @@ export function parseRefreshMaxLifetimeDays(raw: string | undefined): number | u
   return n;
 }
 
+/**
+ * Which refresh exchanges are revalidated against nev-api (`MCP_REFRESH_REVALIDATE`):
+ *
+ * - `restricted` (default): only read-only restricted clients (e.g. the helpbot).
+ *   Every other client (claude.ai, ChatGPT...) keeps the pre-NEV-1848 behaviour,
+ *   so a nev-api that rejects the MCP-signed token on `/auth/me` cannot log
+ *   them out.
+ * - `all`: every client.
+ * - `off`: nobody.
+ *
+ * The maximum chain lifetime is NOT governed by this flag (see
+ * `refreshMaxLifetimeDays`).
+ */
+export type RefreshRevalidateMode = 'restricted' | 'all' | 'off';
+
+/** Parses `MCP_REFRESH_REVALIDATE`; unset or invalid values fall back to `restricted`. */
+export function parseRefreshRevalidateMode(raw: string | undefined): RefreshRevalidateMode {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '') return 'restricted';
+  if (v === 'restricted' || v === 'all' || v === 'off') return v;
+  logger.warn({ raw }, 'Invalid MCP_REFRESH_REVALIDATE (expected restricted|all|off) — using restricted');
+  return 'restricted';
+}
+
 /** Outcome of asking nev-api whether a user is still valid. */
 type UserRevalidation =
   | { status: 'active' }
@@ -188,9 +213,13 @@ type UserRevalidation =
  * 404, and a removed/invalid role yields 403.
  *
  * - 200 whose body `id` matches `userId`: active.
- * - 401 / 403 / 404 (or an `id` mismatch): rejected (revoke).
- * - Network error, timeout, 429, 5xx or any other status: unavailable
- *   (fail-closed for the refresh, but the refresh token is NOT revoked).
+ * - 401 / 404 (or an `id` mismatch): rejected (revoke the refresh token).
+ * - Network error, timeout, 403, 429, 5xx or any other status: unavailable
+ *   (fail-closed for the refresh, but the refresh token is NOT revoked, so
+ *   the client can retry). 403 is transient on purpose: it can come from
+ *   gateway/WAF/IP rules unrelated to the user. 429 means nev-api is
+ *   rate-limiting us: the refresh answers `server_error` and standard OAuth
+ *   clients retry later, there is no in-process retry.
  */
 async function revalidateUserWithNevApi(
   neventApiUrl: string,
@@ -208,7 +237,7 @@ async function revalidateUserWithNevApi(
     return { status: 'unavailable', reason: err instanceof Error ? err.name : 'fetch_error' };
   }
 
-  if (response.status === 401 || response.status === 403 || response.status === 404) {
+  if (response.status === 401 || response.status === 404) {
     return { status: 'rejected', httpStatus: response.status };
   }
   if (!response.ok) {
@@ -245,6 +274,11 @@ export interface NeventOAuthProviderOptions {
    * from the original login. Default: {@link DEFAULT_REFRESH_MAX_LIFETIME_DAYS}.
    */
   refreshMaxLifetimeDays?: number;
+  /**
+   * Which refresh exchanges are revalidated against nev-api. Default `restricted`.
+   * See {@link RefreshRevalidateMode}.
+   */
+  refreshRevalidate?: RefreshRevalidateMode;
 }
 
 /**
@@ -272,6 +306,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
   private readonly neventApiUrl: string;
   readonly mcpServerUrl: URL;
   private readonly refreshMaxLifetimeMs: number;
+  private readonly refreshRevalidate: RefreshRevalidateMode;
 
   /** Exposed so the SDK router can use it for DCR. */
   readonly clientsStore: OAuthRegisteredClientsStore;
@@ -283,6 +318,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     this.mcpServerUrl = options.mcpServerUrl;
     this.refreshMaxLifetimeMs =
       (options.refreshMaxLifetimeDays ?? DEFAULT_REFRESH_MAX_LIFETIME_DAYS) * 24 * 60 * 60 * 1000;
+    this.refreshRevalidate = options.refreshRevalidate ?? 'restricted';
     this.clientsStore = options.stores.clients;
   }
 
@@ -664,10 +700,16 @@ export class NeventOAuthProvider implements OAuthServerProvider {
 
     // Revalidate the user against nev-api BEFORE rotating (NEV-1848), using the
     // access token we just minted (nev-api accepts it: same secret/issuer/type).
+    //  Applies to restricted clients by default (MCP_REFRESH_REVALIDATE).
     //  - rejected  -> the user is gone/disabled: revoke the refresh token.
     //  - unavailable -> fail closed for this refresh (no tokens issued) but keep
     //    the refresh token so the client can retry (server_error = HTTP 500).
-    const validation = await revalidateUserWithNevApi(this.neventApiUrl, accessToken, refreshDoc.userId);
+    const revalidate =
+      this.refreshRevalidate === 'all' ||
+      (this.refreshRevalidate === 'restricted' && isReadOnlyClient(client));
+    const validation: UserRevalidation = revalidate
+      ? await revalidateUserWithNevApi(this.neventApiUrl, accessToken, refreshDoc.userId)
+      : { status: 'active' };
     if (validation.status === 'rejected') {
       await this.stores.refreshTokens.consume(refreshToken);
       logger.warn({ userId: refreshDoc.userId, clientId: client.client_id, httpStatus: validation.httpStatus }, 'User revalidation rejected by nev-api — refresh token revoked');

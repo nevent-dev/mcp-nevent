@@ -114,7 +114,7 @@ import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
 import { TokenService } from '../auth/token-service.js';
-import { NeventOAuthProvider, parseRefreshMaxLifetimeDays } from '../auth/oauth-provider.js';
+import { NeventOAuthProvider, parseRefreshMaxLifetimeDays, parseRefreshRevalidateMode } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { resolveToolFilterForClient } from '../config/client-restrictions.js';
@@ -704,6 +704,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     neventApiUrl: config.neventApiUrl,
     mcpServerUrl: config.mcpServerUrl,
     refreshMaxLifetimeDays: parseRefreshMaxLifetimeDays(process.env['MCP_REFRESH_MAX_LIFETIME_DAYS']),
+    refreshRevalidate: parseRefreshRevalidateMode(process.env['MCP_REFRESH_REVALIDATE']),
   });
 
   const resolveToolFilter = (clientId: string | undefined) =>
