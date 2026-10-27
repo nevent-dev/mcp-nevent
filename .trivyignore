@@ -1,0 +1,11 @@
+# Trivy ignore list. Every entry MUST carry a justification and a review trigger.
+# Picked up automatically by trivy-action via the `trivyignores` input in
+# .github/workflows/deploy.yml.
+
+# zod 3.25.x - memory exhaustion validating oversized constrained collections.
+# No fix exists in the zod 3.x line (fixed only in zod >= 4.6.6, a breaking
+# migration, and @modelcontextprotocol/sdk 1.x depends on zod 3). Exposure is
+# bounded: request bodies are capped by express.json() (100 KB default), so an
+# attacker cannot send a collection large enough to exhaust memory.
+# Review when: the SDK supports zod 4, or a zod 3.x backport is released.
+CVE-2023-54404

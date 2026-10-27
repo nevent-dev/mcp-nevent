@@ -51,6 +51,19 @@ FROM node:22-alpine AS runner
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S mcp -u 1001 -G nodejs
 
+# Supply-chain hardening: the app only runs `node dist/index.js` and the
+# healthcheck uses wget, so the package manager shipped with the base image
+# (npm, npx, corepack and their bundled dependencies) is dead weight that only
+# adds CVE surface. Remove it from the final image.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+           /opt/yarn* \
+           /usr/local/bin/yarn \
+           /usr/local/bin/yarnpkg
+
 WORKDIR /app
 
 # Copy compiled output and production node_modules only
