@@ -68,6 +68,10 @@ jobs:
       - name: Scan image with Trivy (report)
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Ordered mirrors with fallback so a registry rate limit while
+          # downloading the vulnerability DB cannot block a production deploy.
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
@@ -92,6 +96,10 @@ jobs:
       # written justification.
       - name: Scan image with Trivy (gate on CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Ordered mirrors with fallback so a registry rate limit while
+          # downloading the vulnerability DB cannot block a production deploy.
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'table'

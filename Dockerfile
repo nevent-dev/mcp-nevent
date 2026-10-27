@@ -47,10 +47,6 @@ RUN npm prune --omit=dev
 # -----------------------------------------------------------------------------
 FROM node:22-alpine AS runner
 
-# Commit SHA of the build, surfaced by GET /health (read as GIT_COMMIT_SHA).
-# Pass with: docker build --build-arg COMMIT_SHA=$(git rev-parse HEAD) .
-ARG COMMIT_SHA=unknown
-
 # Security hardening: run as non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S mcp -u 1001 -G nodejs
@@ -76,6 +72,12 @@ COPY --from=builder --chown=mcp:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=mcp:nodejs /app/package.json ./package.json
 
 USER mcp
+
+# Commit SHA of the build, surfaced by GET /health (read as GIT_COMMIT_SHA).
+# Declared right before its use so a changing SHA does not invalidate the
+# cache of the earlier layers.
+# Pass with: docker build --build-arg COMMIT_SHA=$(git rev-parse HEAD) .
+ARG COMMIT_SHA=unknown
 
 # Default to HTTP transport. Override via environment or ECS task definition.
 ENV GIT_COMMIT_SHA=${COMMIT_SHA} \
