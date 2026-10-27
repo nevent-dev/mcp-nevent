@@ -52,7 +52,7 @@
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
-import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { ok, err, toErrorEnvelope, checkMode, senderIneligibleEnvelope } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { CreateCampaignSchema, ScheduleCampaignSchema, QuoteCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
 import { logger } from '../logger.js';
@@ -364,7 +364,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_schedule_campaign',
-    'Schedule an existing DRAFT campaign for delivery at a specific ISO-8601 datetime. IMPORTANT: this is a DESTRUCTIVE action — the campaign will be queued for sending to real contacts. You MUST set confirmed=true in the call, which requires explicit user consent. Call nevent_get_campaign first to verify the draft content and recipient segment. scheduled_time must be in the future (ISO-8601, e.g. 2025-06-01T10:00:00Z). The campaign transitions from DRAFT to SCHEDULED status on success.',
+    'Schedule an existing DRAFT campaign for delivery at a specific ISO-8601 datetime. IMPORTANT: this is a DESTRUCTIVE action — the campaign will be queued for sending to real contacts. You MUST set confirmed=true in the call, which requires explicit user consent. Call nevent_get_campaign first to verify the draft content and recipient segment. scheduled_time must be in the future (ISO-8601, e.g. 2025-06-01T10:00:00Z). The campaign transitions from DRAFT to SCHEDULED status on success. If the sender identity or sending domain is not eligible, nev-api refuses with 409 SENDER_INELIGIBLE and the campaign stays DRAFT: check nevent_get_sending_profile, fix the sender or domain, then schedule again. A scheduled campaign can also be paused later by the same check (status PAUSED, pause code AUTO_PAUSED_SENDER_INELIGIBLE).',
     ScheduleCampaignSchema,
     { title: 'Schedule campaign for delivery', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async (params) => {
@@ -495,6 +495,10 @@ export function registerCampaignActionTools(
 
         if (!scheduleResponse.ok) {
           const body = await scheduleResponse.text();
+          if (scheduleResponse.status === 409) {
+            const senderConflict = senderIneligibleEnvelope(body);
+            if (senderConflict) return err(senderConflict);
+          }
           return err({
             error: {
               type: scheduleResponse.status === 403 ? 'authentication_error' : 'api_error',
@@ -545,7 +549,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_quote_campaign',
-    'Estimate the credit cost and eligible audience of a campaign BEFORE sending it. Read-only pre-flight check against nev-api POST /campaigns/quote — it never debits credits and never sends. Call this after nevent_create_campaign and before nevent_schedule_campaign: scheduling a campaign the tenant cannot afford fails at send time with a 402. Returns cost (credits required), available (credits in the pool), missing (shortfall), recipientCount, affordable (boolean — the gate to check), blocked, unlimited, and an audience block with uniqueAudience, estimatedEligible per channel, eligibleAnyChannel and emailExclusions (no_email / invalid_email / opt_out / unknown). The audience block is null when the estimate could not be computed: any channel mix touching WhatsApp, more than 20 segments, or a data-api timeout — cost and recipientCount are still valid in that case. Use segment_ids from nevent_list_segments; omit them to quote the full addressable audience. Set transactional=true only for genuinely transactional sends (order confirmations, ticket delivery) — it estimates against the TRANSACTIONAL consent mode, which reaches recipients who opted out of marketing.',
+    'Estimate the credit cost and eligible audience of a campaign BEFORE sending it. Read-only pre-flight check against nev-api POST /campaigns/quote — it never debits credits and never sends. Call this after nevent_create_campaign and before nevent_schedule_campaign: scheduling a campaign the tenant cannot afford fails at send time with a 402. Returns cost (credits required), available (credits in the pool), missing (shortfall), recipientCount, affordable (boolean — the gate to check), blocked, unlimited, and an audience block with uniqueAudience, estimatedEligible per channel, eligibleAnyChannel and emailExclusions (no_email / invalid_email / opt_out / unknown). The audience block is null when the estimate could not be computed: a channel mix that combines WhatsApp with another channel (for example EMAIL_AND_WHATSAPP or ALL_CHANNELS), more than 20 segments, a WhatsApp selection too large for the segmentation budget, or a data-api failure/timeout — cost and recipientCount are still valid in that case. A WHATSAPP_ONLY quote IS estimated (by nev-api, with the same eligibility the send applies: consent of the tenant or its descendants, opt-outs, Meta stops and cooldowns, one recipient per phone) and fills extra audience fields: estimatedEligible.whatsapp (recipients that will receive the message), whatsappExclusions (why audience users do NOT receive it, one count per reason) and whatsappConsentSources (list of {tenantId, tenantName, relation SELF|DESCENDANT, recipients}: whose WhatsApp consent authorises the recipients, sending tenant first). Those three are null/absent for every other channel. Use segment_ids from nevent_list_segments; omit them to quote the full addressable audience. Set transactional=true only for genuinely transactional sends (order confirmations, ticket delivery) — it estimates against the TRANSACTIONAL consent mode, which reaches recipients who opted out of marketing.',
     QuoteCampaignSchema,
     { title: 'Quote campaign cost and audience', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {

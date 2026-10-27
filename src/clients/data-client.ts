@@ -25,6 +25,7 @@
 
 import { BaseClient } from './base-client.js';
 import type { BaseClientConfig } from './base-client.js';
+import type { QueryParamValue } from '../types/common.js';
 import type {
   AnalyticsQueryRequest,
   AnalyticsQueryResponse,
@@ -233,6 +234,43 @@ export class DataClient extends BaseClient {
    */
   async getCampaignReport(year: number, month: number): Promise<CampaignReportResponse> {
     return this.post<CampaignReportResponse>('/analytics/campaign-report', { year, month });
+  }
+
+  // -------------------------------------------------------------------------
+  // Event sales provenance endpoints
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sales provenance of one event.
+   * Maps to GET /events/{eventId}/overview (view `overview`) or
+   * GET /events/{eventId}/sales-provenance/{summary|daily|campaigns}.
+   *
+   * Tenant scope comes only from the bearer JWT (the selected tenant and its
+   * descendants) — do NOT pass tenant_id. nev-data-api wraps successful responses in
+   * `{ success, data, message, timestamp }`; this method returns the unwrapped `data`.
+   *
+   * @param eventId - Event ID (24-char hex).
+   * @param view    - Which endpoint to call.
+   * @param params  - Query parameters already mapped to nev-data-api names.
+   */
+  async getEventSalesProvenance(
+    eventId: string,
+    view: 'overview' | 'summary' | 'daily' | 'campaigns',
+    params: Record<string, QueryParamValue>
+  ): Promise<unknown> {
+    const id = encodeURIComponent(eventId);
+    const path =
+      view === 'overview' ? `/events/${id}/overview` : `/events/${id}/sales-provenance/${view}`;
+    const raw = await this.get<unknown>(path, params);
+    if (
+      raw !== null &&
+      typeof raw === 'object' &&
+      (raw as Record<string, unknown>)['success'] === true &&
+      'data' in (raw as Record<string, unknown>)
+    ) {
+      return (raw as Record<string, unknown>)['data'];
+    }
+    return raw;
   }
 
   // -------------------------------------------------------------------------

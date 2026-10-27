@@ -31,6 +31,7 @@ Available topics:
 - **paid_media** — Meta/Google/TikTok paid ads tools guide
 - **short_urls** — Short URL tracking and campaign link tools guide
 - **media** — Image upload, list, and delete tools guide
+- **events** — Event list and event sales provenance guide
 
 Call nevent_help with topic="<name>" for detailed guidance on any category.
 `.trim();
@@ -59,6 +60,7 @@ nevent_list_segments → nevent_list_templates → nevent_create_campaign(channe
 
 ## 7. "Deliverability health check"
 nevent_get_sending_profile → nevent_get_suppressions_summary
+(for one campaign: nevent_get_campaign_deliverability(campaign_id) → view=bounce_reasons with bounce_type=hard|soft; nevent_get_campaign_unsubscribes(campaign_id))
 
 ## 8. "Create and track campaign short URLs"
 nevent_create_short_url(longUrl) → nevent_create_bulk_user_short_urls(parentShortCode, userIds) → [send campaign] → nevent_get_short_url_campaign_metrics(parentShortCode)
@@ -68,6 +70,9 @@ nevent_list_short_urls(isActive=true) → nevent_get_short_url_metrics(id) → n
 
 ## 10. "How much traffic does this landing page get across all campaigns?"
 nevent_list_short_url_destinations(search="<page>") → [read totalClicks, linksCount, campaignsCount] → nevent_get_short_url_metrics(canonicalId) to drill into one link
+
+## 11. "Where do the ticket sales of this event come from?"
+nevent_list_events(search="<name>", nature=TICKETED, future=false if it already happened) → nevent_event_sales_provenance(event_id, view=overview, from, to) → view=summary (dimension=marketing, then level=medium/campaign with parent) → view=daily → view=campaigns
 `.trim();
 
 const HELP_ERRORS = `
@@ -195,7 +200,9 @@ const HELP_CAMPAIGNS = `
 - nevent_campaign_report(campaignId, timeRange?) — 13 parallel analytics queries in one call
 - nevent_get_campaign_metrics(campaign_id) — operational delivery/engagement counters straight from nev-api
 - nevent_list_campaign_recipients(campaign_id, status?, segment_id?, search?, page?, page_size?) — per-recipient drill-down
-- nevent_quote_campaign(channel, segment_ids?, transactional?) — credit cost + eligible audience BEFORE sending (no debit, no send)
+- nevent_quote_campaign(channel, segment_ids?, transactional?) — credit cost + eligible audience BEFORE sending (no debit, no send). WHATSAPP_ONLY adds estimatedEligible.whatsapp, whatsappExclusions and whatsappConsentSources; the audience block is null for WhatsApp mixed with another channel, more than 20 segments or a data-api failure
+- nevent_get_campaign_deliverability(campaign_id, view?, bounce_type?) — bounces/complaints of one email campaign (summary | bounce_reasons | segment_breakdown)
+- nevent_get_campaign_unsubscribes(campaign_id, view?) — unsubscribes/complaints of one email campaign (summary | reasons | segment_breakdown)
 
 ## Write tools (require STANDARD/FULL mode)
 - nevent_create_campaign(...) — creates in DRAFT state ONLY (cannot create as SENT)
@@ -211,6 +218,7 @@ const HELP_CAMPAIGNS = `
 ## Rate limits
 - create_campaign: max 5 per hour per tenant (in-memory sliding window)
 - schedule_campaign: requires confirmed=true (explicit confirmation gate)
+- schedule_campaign 409 SENDER_INELIGIBLE: the sender or domain is not eligible; the campaign stays DRAFT. Check nevent_get_sending_profile, fix the sender/domain, schedule again. A scheduled campaign can be paused later with AUTO_PAUSED_SENDER_INELIGIBLE
 
 ## Credits
 Sends debit a credit pool. Call nevent_quote_campaign before nevent_schedule_campaign:
@@ -260,6 +268,8 @@ const HELP_DELIVERABILITY = `
 ## Tools
 - nevent_get_sending_profile — warm-up state, throttle settings, validated domains
 - nevent_get_suppressions_summary — suppression counts by reason (lifetime + 30-day rolling)
+- nevent_get_campaign_deliverability(campaign_id, view?, bounce_type?) — per campaign: sent/delivered/bounces/complaints, bounce reasons (soft|hard) and per-segment breakdown
+- nevent_get_campaign_unsubscribes(campaign_id, view?) — per campaign: unsubscribes, reasons and per-segment breakdown
 
 ## When to use
 - Before creating/scheduling a campaign: check sending_profile for domain validation issues.
@@ -270,6 +280,27 @@ const HELP_DELIVERABILITY = `
 - COMPLAINT: spam reports
 - UNSUBSCRIBE: user unsubscribes
 - MANUAL: manually suppressed by admin
+`.trim();
+
+const HELP_EVENTS = `
+# Events Tools Guide
+
+## Tools (read-only, available in every operation mode)
+- nevent_list_events(search?, future?, nature?, active_only?, sort?, order?, page?, page_size?) — events of the active tenant, paginated (default 25, max 100). future=false for past events
+- nevent_event_sales_provenance(event_id, from, to, view?, tz?, currency?, population?, dimension?, level?, parent?, top?, search?) — where the ticket sales of one event come from
+
+## Sales provenance views
+- overview — totals, coverage and freshness per block. Read it first
+- summary (default) — grouped by provider | distribution | purchaseChannel | promoCode | marketing (UTM). Marketing drills down: level=source, then medium (parent = source group key), then campaign (parent = medium group key)
+- daily — day-by-day series stacked by provider | distribution | purchaseChannel | promoCode (top 1-10)
+- campaigns — sales attributed to Nevent campaigns through tracking links
+
+## Rules
+- from/to (YYYY-MM-DD) are required. Currencies are never added together: omit currency for one block per currency, or pass EUR
+- population defaults to SETTLED_SALES. ALL_REPORTED includes refunded purchases: it is not collected revenue
+- Amounts are gross as reported by the source, never net. Missing provenance is reported as coverage / unknown buckets, not as zero
+- Params that do not apply to the chosen view are rejected (param_not_applicable)
+- Scope is the active tenant and its descendants, from the session JWT (nevent_switch_tenant to change)
 `.trim();
 
 const HELP_PAID_MEDIA = `
@@ -394,7 +425,7 @@ Maximum decoded size: 5 MB.
 // ---------------------------------------------------------------------------
 
 type HelpTopic = 'workflows' | 'errors' | 'tenants' | 'analytics' | 'segments' |
-  'campaigns' | 'templates' | 'deliverability' | 'paid_media' | 'short_urls' | 'media';
+  'campaigns' | 'templates' | 'deliverability' | 'paid_media' | 'short_urls' | 'media' | 'events';
 
 function getHelpContent(topic?: string): string {
   switch (topic as HelpTopic | undefined) {
@@ -409,6 +440,7 @@ function getHelpContent(topic?: string): string {
     case 'paid_media':    return HELP_PAID_MEDIA;
     case 'short_urls':    return HELP_SHORT_URLS;
     case 'media':         return HELP_MEDIA;
+    case 'events':        return HELP_EVENTS;
     default:              return HELP_INDEX;
   }
 }
@@ -431,11 +463,12 @@ const HelpSchema = {
       'paid_media',
       'short_urls',
       'media',
+      'events',
     ])
     .optional()
     .describe(
       'Topic to get guidance on. Omit to get an index of all available topics. ' +
-      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media | short_urls | media'
+      'Values: workflows | errors | tenants | analytics | segments | campaigns | templates | deliverability | paid_media | short_urls | media | events'
     ),
 };
 

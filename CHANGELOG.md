@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`nevent_list_events`** (READ) — nev-api `GET /events`. Always paginated (`page`, `page_size` max 100; nev-api would otherwise answer a legacy unpaginated format with every event and its full ticket tree) with `search`, `future`, `nature`, `active_only`, `sort`, `order`. Returns a compact projection of each event.
+- **`nevent_event_sales_provenance`** (READ) — nev-data-api event sales provenance, one tool with a `view`: `overview` (`GET /events/{id}/overview`), `summary`, `daily` and `campaigns` (`GET /events/{id}/sales-provenance/...`). `from`/`to` required; `tz`, `currency`, `population`, `dimension`, `level`/`parent` (marketing drill-down), `top` and `search` where they apply. Params that the chosen view ignores are rejected. The purchase drill-down and CSV export are not exposed (they carry per-purchase rows).
+- **`nevent_get_campaign_deliverability`** (READ) — nev-api `GET /campaigns/{id}/deliverability/...`, `view` = `summary` | `bounce_reasons` (needs `bounce_type` soft|hard) | `segment_breakdown`.
+- **`nevent_get_campaign_unsubscribes`** (READ) — nev-api `GET /campaigns/{id}/unsubscribes/...`, `view` = `summary` | `reasons` | `segment_breakdown`.
+- `nevent_help` topic `events`; the campaigns, deliverability and workflows topics list the new tools.
+
+### Fixed
+- **`nevent_quote_campaign` description.** It claimed the audience block is null for any channel mix touching WhatsApp. nev-api now estimates `WHATSAPP_ONLY` itself and returns `estimatedEligible.whatsapp`, `whatsappExclusions` and `whatsappConsentSources`; the audience is still null for WhatsApp combined with another channel, more than 20 segments, a WhatsApp selection too large for the segmentation budget, or a data-api failure.
+- **`nevent_schedule_campaign` 409 `SENDER_INELIGIBLE`** is now an actionable `sender_ineligible` error (the campaign stays DRAFT; check `nevent_get_sending_profile`, fix the sender or domain) and mentions the `AUTO_PAUSED_SENDER_INELIGIBLE` pause code, instead of a generic `HTTP 409` dump.
+- **`nevent_update_template` 409 `template_edit_conflict`** (nev-api compare-and-set on template writes) is now an actionable error telling the caller to re-read the template with `nevent_get_template` and apply the change again. Nothing is retried automatically.
+
 ### Security
 - **Read-only OAuth clients (NEV-1848).** `MCP_READONLY_REDIRECT_PREFIXES` (comma-separated `redirect_uri` prefixes, e.g. `https://support.nevent.ai/helpbot/`) and/or `MCP_READONLY_CLIENT_IDS` mark OAuth clients that may only use READ tools. For those clients write, delete and tenant (`nevent_list_tenants`, `nevent_switch_tenant`, `nevent_reset_tenant`) tools are not registered, so they are absent from `tools/list` and rejected on `tools/call`. `nevent_segment_execute` (contact list) is allowed for them by product decision; to revert, add it back to `EXCLUDED_TOOLS_READONLY_CLIENT`. Unclassified tools are denied (fail-closed). With neither variable set nothing changes for any client.
   - **Each prefix must end with `/`.** Matching is a plain prefix match, so `https://support.nevent.ai/helpbot` would also match `https://support.nevent.ai/helpbot-evil/...`. The server logs a warning at startup for entries that do not end with `/`.
