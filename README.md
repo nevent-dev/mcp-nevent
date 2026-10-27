@@ -142,6 +142,19 @@ LLM (Claude / ChatGPT / Cursor / …)
 
 ---
 
+## Restricting OAuth clients (self-hosted HTTP)
+
+Optional environment variables for the HTTP server:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_READONLY_REDIRECT_PREFIXES` | unset | Comma-separated `redirect_uri` prefixes. A client that registered a matching redirect URI only gets read-only tools. **Every prefix must end with `/`**, for example `https://support.nevent.ai/helpbot/`. |
+| `MCP_READONLY_CLIENT_IDS` | unset | Comma-separated `client_id` values restricted the same way. |
+| `MCP_REFRESH_REVALIDATE` | `restricted` | `restricted`, `all` or `off`: which clients are revalidated against nev-api (`GET /auth/me`) when they refresh a token. |
+| `MCP_REFRESH_MAX_LIFETIME_DAYS` | `90` | Maximum total lifetime of a refresh-token chain, counted from the original login. |
+
+See `CHANGELOG.md` for the exact behaviour.
+
 ## Privacy
 
 The Nevent MCP server processes tenant data on Nevent's own infrastructure
