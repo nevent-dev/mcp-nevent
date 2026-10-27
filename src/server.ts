@@ -52,6 +52,8 @@ import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
 import { registerCampaignMetricsTools } from './tools/campaign-metrics.js';
+import { registerEventTools } from './tools/events.js';
+import { registerCampaignHealthTools } from './tools/campaign-health.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
 import { registerShortUrlTools } from './tools/short-urls.js';
 import { registerMediaTools } from './tools/media.js';
@@ -271,6 +273,10 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
 
     // 1.8.0: Campaign performance (metrics/recipients via nev-api)
     registerCampaignMetricsTools(server, dataClient, neventApiUrl);
+
+    // 1.9.0: Events + sales provenance, campaign deliverability + unsubscribes
+    registerEventTools(server, dataClient, neventApiUrl);
+    registerCampaignHealthTools(server, dataClient, neventApiUrl);
   }
 
   // Sprint 2: MongoDB-backed tools — registered when mongoUri is provided
@@ -371,6 +377,8 @@ export function getToolCount(opts: ToolCountOptions): number {
     registerSegmentTools(probe, stubDataClient, 'http://stub');
     registerCampaignActionTools(probe, stubDataClient, 'http://stub');
     registerCampaignMetricsTools(probe, stubDataClient, 'http://stub');
+    registerEventTools(probe, stubDataClient, 'http://stub');
+    registerCampaignHealthTools(probe, stubDataClient, 'http://stub');
   }
 
   if (hasMongoUri) {

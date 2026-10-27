@@ -98,6 +98,14 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // nevent_quote_campaign: READ — the quote never debits credits and never sends.
   nevent_quote_campaign: 'READ',
 
+  // Per-campaign deliverability and unsubscribe breakdowns (nev-api GET only)
+  nevent_get_campaign_deliverability: 'READ',
+  nevent_get_campaign_unsubscribes: 'READ',
+
+  // Events (nev-api GET /events) and event sales provenance (nev-data-api GET only)
+  nevent_list_events: 'READ',
+  nevent_event_sales_provenance: 'READ',
+
   // Sprint 2: Template tools (read from MongoDB)
   nevent_list_templates: 'READ',
   nevent_get_template: 'READ',
