@@ -52,21 +52,26 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to ECR
+      - name: Build and tag image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           IMAGE_TAG=$(date +'%Y-%m-%d-%H-%M')-$(git rev-parse --short HEAD)
           IMAGE=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker build -t $IMAGE .
-          docker push $IMAGE
+          docker build --build-arg COMMIT_SHA=${{ github.sha }} -t $IMAGE .
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "Built and pushed: $IMAGE"
+          echo "Built: $IMAGE"
 
-      - name: Scan image with Trivy
+      # Reporting scan (non-blocking): CRITICAL + HIGH findings are uploaded to
+      # the GitHub Security tab for triage. Never stops the deploy.
+      - name: Scan image with Trivy (report)
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Ordered mirrors with fallback so a registry rate limit while
+          # downloading the vulnerability DB cannot block a production deploy.
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
         with:
           image-ref: ${{ steps.build-image.outputs.image }}
           format: 'sarif'
@@ -75,6 +80,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
+          trivyignores: '.trivyignore'
 
       - name: Upload Trivy results to GitHub Security
         if: always()
@@ -83,6 +89,30 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'trivy-container'
+
+      # Gate (blocking): a CRITICAL vulnerability that already has a fix stops
+      # the pipeline BEFORE the image is pushed or deployed. To unblock an
+      # urgent deploy, fix the dependency or add the CVE to .trivyignore with a
+      # written justification.
+      - name: Scan image with Trivy (gate on CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Ordered mirrors with fallback so a registry rate limit while
+          # downloading the vulnerability DB cannot block a production deploy.
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+        with:
+          image-ref: ${{ steps.build-image.outputs.image }}
+          format: 'table'
+          severity: 'CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          trivyignores: '.trivyignore'
+
+      - name: Push image to ECR
+        run: |
+          docker push ${{ steps.build-image.outputs.image }}
+          echo "Pushed: ${{ steps.build-image.outputs.image }}"
 
       - name: Get current task definition and update image
         id: register-task-def

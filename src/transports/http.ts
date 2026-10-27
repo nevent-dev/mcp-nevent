@@ -214,6 +214,18 @@ export function getOpenAiAppsChallengeToken(): string {
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_OPENAI_APPS_CHALLENGE_TOKEN;
 }
 
+/**
+ * Returns the commit SHA the running image was built from, surfaced by `/health`.
+ *
+ * Injected at image build time (Docker `ARG COMMIT_SHA` -> `ENV GIT_COMMIT_SHA`).
+ * Read at call time. Falls back to `'unknown'` when unset or blank (local runs,
+ * images built without the build arg).
+ */
+export function getCommitSha(): string {
+  const sha = process.env['GIT_COMMIT_SHA']?.trim();
+  return sha && sha.length > 0 ? sha : 'unknown';
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -609,7 +621,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       service: 'nevent-mcp',
       transport: 'http',
       version: PKG_VERSION,
-      commitSha: process.env['GIT_COMMIT_SHA'] ?? 'unknown',
+      commitSha: getCommitSha(),
       toolsCount: getToolCount({
         hasNeventApiUrl: true,
         hasMongoUri: true,
