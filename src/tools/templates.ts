@@ -61,7 +61,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
 import type { TemplateClient } from '../clients/template-client.js';
-import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
+import { ok, err, toErrorEnvelope, checkMode, templateEditConflictEnvelope } from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { logger } from '../logger.js';
 import {
@@ -500,7 +500,7 @@ export function registerTemplateTools(
 
   server.tool(
     'nevent_update_template',
-    'Update an existing email template: change the name, MJML/HTML content, or tags. Call nevent_get_template first to inspect the current version before modifying. At least one of name, content, or tags must be provided. Note: updating a template does NOT retroactively change campaigns already sent with it.',
+    'Update an existing email template: change the name, MJML/HTML content, or tags. Call nevent_get_template first to inspect the current version before modifying. At least one of name, content, or tags must be provided. Note: updating a template does NOT retroactively change campaigns already sent with it. If the template changed since you read it (another editor, the image processor or an AI edit), nev-api answers 409 template_edit_conflict and nothing is written: re-read it with nevent_get_template, re-apply your change on the current content and call this tool again (it never retries by itself).',
     UpdateTemplateSchema,
     { title: 'Update email template', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async (params) => {
@@ -569,6 +569,10 @@ export function registerTemplateTools(
 
         if (!response.ok) {
           const body = await response.text();
+          if (response.status === 409) {
+            const conflict = templateEditConflictEnvelope(params.template_id, body);
+            if (conflict) return err(conflict);
+          }
           return err({
             error: {
               type:
