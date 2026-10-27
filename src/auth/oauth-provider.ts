@@ -40,6 +40,7 @@ import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { logger } from '../logger.js';
+import { InvalidGrantError, ServerError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
@@ -146,6 +147,86 @@ async function validateNeventCredentials(
 }
 
 // ---------------------------------------------------------------------------
+// Refresh-time user revalidation (NEV-1848)
+// ---------------------------------------------------------------------------
+
+/** Default total lifetime of a refresh-token rotation chain, in days. */
+export const DEFAULT_REFRESH_MAX_LIFETIME_DAYS = 90;
+
+/** Timeout for the nev-api revalidation call. */
+const USER_REVALIDATION_TIMEOUT_MS = 5_000;
+
+/**
+ * Parses `MCP_REFRESH_MAX_LIFETIME_DAYS`. Returns `undefined` (provider
+ * default) when unset; invalid or non-positive values also fall back to the
+ * default rather than silently disabling the cap.
+ */
+export function parseRefreshMaxLifetimeDays(raw: string | undefined): number | undefined {
+  if (!raw || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    logger.warn({ raw }, 'Invalid MCP_REFRESH_MAX_LIFETIME_DAYS — using default');
+    return undefined;
+  }
+  return n;
+}
+
+/** Outcome of asking nev-api whether a user is still valid. */
+type UserRevalidation =
+  | { status: 'active' }
+  | { status: 'rejected'; httpStatus: number }
+  | { status: 'unavailable'; reason: string };
+
+/**
+ * Asks nev-api whether `userId` is still an active user by calling
+ * `GET /auth/me` with a freshly minted MCP access token.
+ *
+ * nev-api accepts that token because it is HS256-signed with the same secret,
+ * issuer `https://nevent.es` and `type: access_token`
+ * (CustomAuthenticationFilter / TokenUtils.verifyToken). `/auth/me` then loads
+ * the user with `findByIdAndDeletedAtIsNull`, so a soft-deleted user yields
+ * 404, and a removed/invalid role yields 403.
+ *
+ * - 200 whose body `id` matches `userId`: active.
+ * - 401 / 403 / 404 (or an `id` mismatch): rejected (revoke).
+ * - Network error, timeout, 429, 5xx or any other status: unavailable
+ *   (fail-closed for the refresh, but the refresh token is NOT revoked).
+ */
+async function revalidateUserWithNevApi(
+  neventApiUrl: string,
+  accessToken: string,
+  userId: string
+): Promise<UserRevalidation> {
+  let response: globalThis.Response;
+  try {
+    response = await fetch(`${neventApiUrl}/auth/me`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(USER_REVALIDATION_TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { status: 'unavailable', reason: err instanceof Error ? err.name : 'fetch_error' };
+  }
+
+  if (response.status === 401 || response.status === 403 || response.status === 404) {
+    return { status: 'rejected', httpStatus: response.status };
+  }
+  if (!response.ok) {
+    return { status: 'unavailable', reason: `http_${response.status}` };
+  }
+
+  try {
+    const body = await response.json() as Record<string, unknown>;
+    if (body['id'] !== userId) {
+      return { status: 'rejected', httpStatus: 200 };
+    }
+  } catch {
+    return { status: 'unavailable', reason: 'invalid_body' };
+  }
+  return { status: 'active' };
+}
+
+// ---------------------------------------------------------------------------
 // NeventOAuthProvider
 // ---------------------------------------------------------------------------
 
@@ -159,6 +240,11 @@ export interface NeventOAuthProviderOptions {
   neventApiUrl: string;
   /** Base URL of the MCP server (used in resource indicators). */
   mcpServerUrl: URL;
+  /**
+   * Maximum total lifetime of a refresh-token rotation chain, in days, counted
+   * from the original login. Default: {@link DEFAULT_REFRESH_MAX_LIFETIME_DAYS}.
+   */
+  refreshMaxLifetimeDays?: number;
 }
 
 /**
@@ -185,6 +271,7 @@ export class NeventOAuthProvider implements OAuthServerProvider {
   private readonly tokenService: TokenService;
   private readonly neventApiUrl: string;
   readonly mcpServerUrl: URL;
+  private readonly refreshMaxLifetimeMs: number;
 
   /** Exposed so the SDK router can use it for DCR. */
   readonly clientsStore: OAuthRegisteredClientsStore;
@@ -194,6 +281,8 @@ export class NeventOAuthProvider implements OAuthServerProvider {
     this.tokenService = options.tokenService;
     this.neventApiUrl = options.neventApiUrl;
     this.mcpServerUrl = options.mcpServerUrl;
+    this.refreshMaxLifetimeMs =
+      (options.refreshMaxLifetimeDays ?? DEFAULT_REFRESH_MAX_LIFETIME_DAYS) * 24 * 60 * 60 * 1000;
     this.clientsStore = options.stores.clients;
   }
 
@@ -485,6 +574,8 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       // look it up by userId and create a per-user DataClient.
       neventAccessToken: codeDoc.neventAccessToken,
       createdAt: new Date(),
+      // Start of a new rotation chain (NEV-1848).
+      chainCreatedAt: new Date(),
     };
     await this.stores.refreshTokens.save(refreshDoc);
 
@@ -548,8 +639,14 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       }
     }
 
-    // Consume old refresh token (token rotation)
-    await this.stores.refreshTokens.consume(refreshToken);
+    // Maximum total lifetime of the rotation chain (NEV-1848). Documents
+    // written before the field existed count from their own createdAt.
+    const chainCreatedAt = refreshDoc.chainCreatedAt ?? refreshDoc.createdAt;
+    if (Date.now() - chainCreatedAt.getTime() > this.refreshMaxLifetimeMs) {
+      await this.stores.refreshTokens.consume(refreshToken);
+      logger.warn({ userId: refreshDoc.userId, clientId: client.client_id, chainCreatedAt }, 'Refresh token chain exceeded maximum lifetime — revoked');
+      throw new InvalidGrantError('Refresh token has exceeded its maximum lifetime; please log in again');
+    }
 
     const grantedScopes = scopes && scopes.length > 0 ? scopes : refreshDoc.scopes;
     const resourceUrl = resource ?? (refreshDoc.resource ? new URL(refreshDoc.resource) : undefined);
@@ -564,6 +661,25 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       scopes: grantedScopes,
       resource: resourceUrl,
     });
+
+    // Revalidate the user against nev-api BEFORE rotating (NEV-1848), using the
+    // access token we just minted (nev-api accepts it: same secret/issuer/type).
+    //  - rejected  -> the user is gone/disabled: revoke the refresh token.
+    //  - unavailable -> fail closed for this refresh (no tokens issued) but keep
+    //    the refresh token so the client can retry (server_error = HTTP 500).
+    const validation = await revalidateUserWithNevApi(this.neventApiUrl, accessToken, refreshDoc.userId);
+    if (validation.status === 'rejected') {
+      await this.stores.refreshTokens.consume(refreshToken);
+      logger.warn({ userId: refreshDoc.userId, clientId: client.client_id, httpStatus: validation.httpStatus }, 'User revalidation rejected by nev-api — refresh token revoked');
+      throw new InvalidGrantError('User is no longer active; please log in again');
+    }
+    if (validation.status === 'unavailable') {
+      logger.error({ userId: refreshDoc.userId, clientId: client.client_id, reason: validation.reason }, 'User revalidation unavailable — refresh denied (token kept)');
+      throw new ServerError('Unable to validate the user right now; please retry');
+    }
+
+    // Consume old refresh token (token rotation)
+    await this.stores.refreshTokens.consume(refreshToken);
 
     // Issue new refresh token (rotation)
     const { refreshToken: newRefreshToken } = this.tokenService.generateRefreshToken();
@@ -580,6 +696,9 @@ export class NeventOAuthProvider implements OAuthServerProvider {
       // Carry the nev-api access_token forward through refresh token rotation.
       neventAccessToken: refreshDoc.neventAccessToken,
       createdAt: new Date(),
+      // Inherited unchanged so the chain's total lifetime keeps counting from
+      // the original login (NEV-1848).
+      chainCreatedAt,
     };
     await this.stores.refreshTokens.save(newRefreshDoc);
 

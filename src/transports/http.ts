@@ -114,9 +114,10 @@ import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
 import { TokenService } from '../auth/token-service.js';
-import { NeventOAuthProvider } from '../auth/oauth-provider.js';
+import { NeventOAuthProvider, parseRefreshMaxLifetimeDays } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
+import { resolveToolFilterForClient } from '../config/client-restrictions.js';
 import { logger } from '../logger.js';
 import {
   buildAgentAuthMetadata,
@@ -255,6 +256,13 @@ const activeSessions: Record<string, {
   transport: StreamableHTTPServerTransport;
   dataClient: DataClient;
   createdAt: Date;
+  /**
+   * OAuth client the session was created for. Later requests on the session
+   * must come from the same client (NEV-1848): a restricted (read-only)
+   * client's session can never be driven by another client's token, nor the
+   * other way round.
+   */
+  clientId: string | undefined;
 }> = {};
 
 // ---------------------------------------------------------------------------
@@ -695,7 +703,16 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     tokenService,
     neventApiUrl: config.neventApiUrl,
     mcpServerUrl: config.mcpServerUrl,
+    refreshMaxLifetimeDays: parseRefreshMaxLifetimeDays(process.env['MCP_REFRESH_MAX_LIFETIME_DAYS']),
   });
+
+  const resolveToolFilter = (clientId: string | undefined) =>
+    resolveToolFilterForClient(clientId, (id) => provider.clientsStore.getClient(id));
+
+  /** `true` when the request's token belongs to the client that owns the session. */
+  function callerOwnsSession(req: Request, sessionId: string): boolean {
+    return req.auth?.clientId === activeSessions[sessionId]?.clientId;
+  }
 
   // -------------------------------------------------------------------------
   // POST /authorize — custom handler for HTML form submission
@@ -1011,6 +1028,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
       // Reuse existing session transport
       if (sessionId && activeSessions[sessionId]) {
+        if (!callerOwnsSession(req, sessionId)) {
+          res.status(403).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Forbidden: session belongs to a different OAuth client' },
+            id: null,
+          });
+          return;
+        }
         await activeSessions[sessionId].transport.handleRequest(req, res, req.body);
         return;
       }
@@ -1036,12 +1061,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         let sessionPaidMediaClient: PaidMediaClient;
         let sessionUserId: string | null = null;
         let sessionHomeTenantId: string | undefined;
+        let sessionClientId: string | undefined;
 
         try {
           const authHeader = req.headers['authorization'] ?? '';
           const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
           const claims = tokenService.verifyAccessToken(bearerToken);
           sessionUserId = claims.sub;
+          sessionClientId = claims.clientId;
           sessionHomeTenantId = claims.tenantId ?? undefined;
 
           // Use the MCP bearer token directly for data-api calls.
@@ -1109,6 +1136,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
               transport,
               dataClient: sessionDataClient,
               createdAt: new Date(),
+              clientId: sessionClientId,
             };
           },
         });
@@ -1127,12 +1155,17 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         // attribute logs to the correct user and session.
         // getSessionId is lazy because transport.sessionId is only assigned after
         // the first initialize request is processed.
+        const toolFilter = await resolveToolFilter(sessionClientId);
+        if (toolFilter) {
+          logger.info({ clientId: sessionClientId, userId: sessionUserId }, 'Session restricted to read-only tools');
+        }
         const mcpServer = createNeventServer({
           dataClient: sessionDataClient,
           neventApiUrl: config.neventApiUrl,
           mongoUri: config.mongoUri,
           paidMediaClient: sessionPaidMediaClient,
           sessionClients,
+          toolFilter,
           userId: sessionUserId ?? undefined,
           getSessionId: () => transport.sessionId ?? null,
         });
@@ -1201,6 +1234,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       return;
     }
 
+    if (!callerOwnsSession(req, sessionId)) {
+      res.status(403).send('Session belongs to a different OAuth client');
+      return;
+    }
+
     const lastEventId = req.headers['last-event-id'];
     if (lastEventId) {
       logger.debug({ sessionId, lastEventId }, 'SSE resume');
@@ -1225,6 +1263,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
     if (!sessionId || !activeSessions[sessionId]) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
+      return;
+    }
+
+    if (!callerOwnsSession(req, sessionId)) {
+      res.status(403).send('Session belongs to a different OAuth client');
       return;
     }
 

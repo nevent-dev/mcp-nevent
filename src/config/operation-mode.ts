@@ -64,6 +64,9 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_analytics_capabilities: 'READ',
   nevent_analytics_table_schema: 'READ',
   nevent_analytics_filter_values: 'READ',
+  // nevent_campaign_report — READ. Returns the tenant's monthly campaign report
+  // (read-only analytics queries); it never mutates any resource.
+  nevent_campaign_report: 'READ',
 
   // Sprint 1: Segmentation
   nevent_segmentation_criteria: 'READ',
@@ -74,6 +77,11 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 1: Multi-tenant
   nevent_list_tenants: 'READ',
   nevent_switch_tenant: 'READ',
+  // nevent_reset_tenant: for SUPERADMIN users this call mutates the user record
+  // in the database (same endpoint as switch_tenant), so it is treated as a
+  // destructive operation. Classifying it here changes nothing in FULL mode
+  // (the production mode) and now blocks it in READ_ONLY / STANDARD.
+  nevent_reset_tenant: 'DELETE',
 
   // Sprint 2: Segment management
   nevent_list_segments: 'READ',
@@ -152,11 +160,28 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_upload_image: 'WRITE',
   nevent_list_images: 'READ',
   nevent_delete_image: 'DELETE',
+
+  // Meta tool: nevent_help — read-only, in-session guidance.
+  nevent_help: 'READ',
 };
 
 // ---------------------------------------------------------------------------
 // Guards
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns the `OperationType` registered for a tool, or `undefined` when the
+ * tool is not classified in `TOOL_OPERATIONS`.
+ *
+ * Exposed so other modules (e.g. the per-client read-only allowlist in
+ * `client-restrictions.ts`) can apply their own fail-closed policy without
+ * duplicating the table.
+ *
+ * @param toolName — The MCP tool name to look up.
+ */
+export function getToolOperationType(toolName: string): OperationType | undefined {
+  return TOOL_OPERATIONS[toolName];
+}
 
 /**
  * Returns `true` if the given tool is permitted in the current operation mode.

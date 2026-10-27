@@ -34,6 +34,11 @@ export interface ToolCountOptions {
   hasPaidMediaClient: boolean;
   /** Whether a shortUrlClient is available (enables 10 short URL tools). */
   hasShortUrlClient: boolean;
+  /**
+   * Optional allowlist predicate, mirroring `CreateNeventServerOptions.toolFilter`.
+   * When provided, the probe count reflects only tools that pass the filter.
+   */
+  toolFilter?: (toolName: string) => boolean;
 }
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -138,6 +143,36 @@ export interface CreateNeventServerOptions {
    * @default true
    */
   enableToolCallLogging?: boolean;
+  /**
+   * Optional allowlist predicate applied to every tool registration (NEV-1848).
+   *
+   * When provided, `server.tool()` is patched so a tool whose name fails the
+   * predicate is never registered: it does not appear in `tools/list` and
+   * `tools/call` by name returns the SDK's "tool not found" error. This is
+   * stronger than registering and denying at call time.
+   *
+   * Used for OAuth clients restricted to read-only tools
+   * (`src/config/client-restrictions.ts`). Applied AFTER the logging patch so
+   * filtered tools are never wrapped or logged.
+   *
+   * @default undefined (no filtering)
+   */
+  toolFilter?: (toolName: string) => boolean;
+}
+
+/**
+ * Patches `server.tool()` so tools failing `toolFilter` are silently skipped.
+ * Must run before any `register*Tools()` call.
+ */
+function applyToolFilter(server: McpServer, toolFilter: (toolName: string) => boolean): void {
+  const originalTool = server.tool.bind(server);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).tool = (...args: any[]): unknown => {
+    if (!toolFilter(args[0] as string)) {
+      return undefined;
+    }
+    return (originalTool as (...a: unknown[]) => unknown)(...args);
+  };
 }
 
 /**
@@ -176,6 +211,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     getSessionId,
     sessionClients: providedSessionClients,
     enableToolCallLogging = true,
+    toolFilter,
   } = options;
 
   const server = new McpServer(
@@ -202,6 +238,11 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     // tool call does not incur the cold-start ~200ms penalty.
     // Fire-and-forget — errors are swallowed internally by the logger.
     void logger.warmUp();
+  }
+
+  // Per-client allowlist (NEV-1848) — outermost wrapper, applied after logging.
+  if (toolFilter) {
+    applyToolFilter(server, toolFilter);
   }
 
   // Sprint 1: Analytics + Segmentation — always registered
@@ -302,7 +343,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
  * @returns The exact number of tools registered under those flags.
  */
 export function getToolCount(opts: ToolCountOptions): number {
-  const { hasNeventApiUrl, hasMongoUri, hasPaidMediaClient, hasShortUrlClient } = opts;
+  const { hasNeventApiUrl, hasMongoUri, hasPaidMediaClient, hasShortUrlClient, toolFilter } = opts;
 
   // Stub clients satisfy the TypeScript types but are never called —
   // registration functions only capture references, they don't invoke clients.
@@ -314,6 +355,10 @@ export function getToolCount(opts: ToolCountOptions): number {
     { name: 'nevent-mcp-probe', version: '0.0.0' },
     { instructions: '' }
   );
+
+  if (toolFilter) {
+    applyToolFilter(probe, toolFilter);
+  }
 
   // Always registered
   registerAnalyticsTools(probe, stubDataClient);

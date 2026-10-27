@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Read-only OAuth clients (NEV-1848).** `MCP_READONLY_REDIRECT_PREFIXES` (comma-separated `redirect_uri` prefixes, e.g. `https://support.nevent.ai/helpbot/`) and/or `MCP_READONLY_CLIENT_IDS` mark OAuth clients that may only use READ tools. For those clients write, delete, tenant (`list`/`switch`/`reset`) and `nevent_segment_execute` tools are not registered, so they are absent from `tools/list` and rejected on `tools/call`. Unclassified tools are denied (fail-closed). Other clients are unchanged; with neither variable set nothing changes. MCP sessions are now bound to the OAuth client that created them.
+- **Refresh tokens are revalidated (NEV-1848).** `exchangeRefreshToken` calls nev-api `GET /auth/me` before issuing tokens: 401/403/404 revokes the refresh token and returns `invalid_grant`; if nev-api is unreachable or answers 5xx/429 the refresh fails with `server_error` and the token is kept for retry.
+- **Maximum refresh lifetime (NEV-1848).** `MCP_REFRESH_MAX_LIFETIME_DAYS` (default 90) caps the rotation chain, counted from the original login via a new `chainCreatedAt` field inherited on every rotation (older documents count from their `createdAt`).
+
 ## [1.8.2] - 2026-09-25
 
 ### Fixed

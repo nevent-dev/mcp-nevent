@@ -122,6 +122,14 @@ export interface RefreshTokenDocument {
   neventAccessToken?: string;
   /** Creation timestamp — used for TTL index (30-day expiry). */
   createdAt: Date;
+  /**
+   * When the rotation chain this token belongs to was originally issued
+   * (authorization-code exchange). Inherited unchanged on every rotation so
+   * the total refresh lifetime can be capped (`MCP_REFRESH_MAX_LIFETIME_DAYS`).
+   * Documents written before NEV-1848 lack it and are treated as created at
+   * their own `createdAt`.
+   */
+  chainCreatedAt?: Date;
 }
 
 // ---------------------------------------------------------------------------
