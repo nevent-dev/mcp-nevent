@@ -182,10 +182,10 @@ if (transportArg === 'http') {
 
     let serviceKeys: string[];
     try {
-      serviceKeys = parseServiceKeys(
+      serviceKeys = parseServiceKeys([
         process.env[SERVICE_KEY_ENV],
-        process.env[SERVICE_KEY_PREVIOUS_ENV]
-      );
+        process.env[SERVICE_KEY_PREVIOUS_ENV],
+      ]);
     } catch (err) {
       logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough service key'}`);
       process.exit(1);

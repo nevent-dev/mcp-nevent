@@ -185,7 +185,7 @@ Authorization: Bearer <the promoter's nev-api JWT>
   (`Unauthorized.`) with no hint of which check failed. For rotation, set
   `MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS` to the old key while the client
   moves to the new one, then remove it. Keep it in a secret store, never in the
-  repository. Requests are also capped per IP (600/min) and per token (300/min).
+  repository. Requests are also capped per IP (600/min, applied before body parsing) and per token (300/min). `GET /health` is unauthenticated for load balancers and returns only `{status, version, commitSha}`.
 
 - **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.**
   `MONGODB_URI` stays optional: set it to also enable the Mongo-backed read

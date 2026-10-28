@@ -87,13 +87,20 @@ function rawRequest(
   });
 }
 
-function getHealth(port: number): Promise<{ activeSessions: number }> {
+/** Result of the app under test; `/health` no longer exposes the session count. */
+let currentResult: BearerPassthroughAppResult;
+
+async function getHealth(_port: number): Promise<{ activeSessions: number }> {
+  return { activeSessions: currentResult.activeSessionCount() };
+}
+
+function getHealthPublic(port: number): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     http
       .get({ hostname: '127.0.0.1', port, path: '/health' }, (res) => {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => resolve(JSON.parse(data)));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(data) }));
       })
       .on('error', reject);
   });
@@ -149,6 +156,7 @@ describe('bearer-passthrough auth gate (integration)', () => {
       server = result.app.listen(0, '127.0.0.1', resolve);
     });
     port = (server.address() as AddressInfo).port;
+    currentResult = result;
   });
 
   afterEach(async () => {
@@ -315,6 +323,7 @@ describe('bearer-passthrough service key + verification rules (integration)', ()
       server = result.app.listen(0, '127.0.0.1', resolve);
     });
     port = (server.address() as AddressInfo).port;
+    currentResult = result;
   });
 
   afterEach(async () => {
@@ -416,6 +425,55 @@ describe('bearer-passthrough service key + verification rules (integration)', ()
     expect(other.status).not.toBe(429);
   });
 
+  it('serves a minimal /health (status, version, commitSha) and nothing else, without a key', async () => {
+    const { status, body } = await getHealthPublic(port);
+    expect(status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(['commitSha', 'status', 'version']);
+    expect(body['status']).toBe('ok');
+  });
+
+  it('rejects an anonymous request before parsing its body: malformed JSON without a key is a 401, not a 400', async () => {
+    const res = await new Promise<RawResponse>((resolve, reject) => {
+      const req = http.request(
+        { hostname: '127.0.0.1', port, path: '/', method: 'POST', headers: { 'Content-Type': 'application/json' } },
+        (r) => {
+          let d = '';
+          r.on('data', (c) => (d += c));
+          r.on('end', () => resolve({ status: r.statusCode ?? 0, body: d }));
+        }
+      );
+      req.on('error', reject);
+      req.end('{not json');
+    });
+    expect(res.status).toBe(401);
+    expect(JSON.parse(res.body).error.message).toBe('Unauthorized.');
+  });
+
+  it('answers malformed JSON from an authorised caller with a clean JSON-RPC parse error', async () => {
+    const res = await new Promise<RawResponse>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...KEY_HEADER, Authorization: 'Bearer a.b.c' },
+        },
+        (r) => {
+          let d = '';
+          r.on('data', (c) => (d += c));
+          r.on('end', () => resolve({ status: r.statusCode ?? 0, body: d }));
+        }
+      );
+      req.on('error', reject);
+      req.end('{not json');
+    });
+    expect(res.status).toBe(400);
+    const parsed = JSON.parse(res.body) as { jsonrpc: string; error: { code: number } };
+    expect(parsed.error.code).toBe(-32700);
+    expect(res.body).not.toMatch(/<html|at .*\.js/i);
+  });
+
   it('does not call /auth/me again for a token nev-api just rejected (negative cache)', async () => {
     mockFetch.mockResolvedValue(mockFetchError(401));
     const headers = { Authorization: 'Bearer bad.token.zzz', ...KEY_HEADER };
@@ -505,6 +563,7 @@ describe('bearer-passthrough session binding (integration)', () => {
       server = result.app.listen(0, '127.0.0.1', resolve);
     });
     port = (server.address() as AddressInfo).port;
+    currentResult = result;
   });
 
   afterEach(async () => {

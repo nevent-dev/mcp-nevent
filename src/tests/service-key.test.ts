@@ -17,24 +17,30 @@ const OLD = 'b'.repeat(MIN_SERVICE_KEY_LENGTH);
 
 describe('parseServiceKeys', () => {
   it('requires a current key', () => {
-    expect(() => parseServiceKeys(undefined)).toThrow(/MCP_BEARER_PASSTHROUGH_SERVICE_KEY is required/);
-    expect(() => parseServiceKeys('   ')).toThrow(/required/);
+    expect(() => parseServiceKeys([])).toThrow(/MCP_BEARER_PASSTHROUGH_SERVICE_KEY is required/);
+    expect(() => parseServiceKeys([undefined])).toThrow(/required/);
+    expect(() => parseServiceKeys(['   '])).toThrow(/required/);
   });
 
   it('rejects keys shorter than the minimum, without echoing them', () => {
-    expect(() => parseServiceKeys('short-secret')).toThrow(/too short/);
+    expect(() => parseServiceKeys(['short-secret'])).toThrow(/too short/);
     try {
-      parseServiceKeys('short-secret');
+      parseServiceKeys(['short-secret']);
     } catch (e) {
       expect(String(e)).not.toContain('short-secret');
     }
-    expect(() => parseServiceKeys(KEY, 'tiny')).toThrow(/SERVICE_KEY_PREVIOUS is too short/);
+    expect(() => parseServiceKeys([KEY, 'tiny'])).toThrow(/SERVICE_KEY_PREVIOUS is too short/);
   });
 
   it('returns current first, then the optional previous key', () => {
-    expect(parseServiceKeys(KEY)).toEqual([KEY]);
-    expect(parseServiceKeys(` ${KEY} `, OLD)).toEqual([KEY, OLD]);
-    expect(parseServiceKeys(KEY, '')).toEqual([KEY]);
+    expect(parseServiceKeys([KEY])).toEqual([KEY]);
+    expect(parseServiceKeys([` ${KEY} `, OLD])).toEqual([KEY, OLD]);
+    expect(parseServiceKeys([KEY, ''])).toEqual([KEY]);
+    expect(parseServiceKeys([KEY, undefined])).toEqual([KEY]);
+  });
+
+  it('fails instead of silently ignoring a third key', () => {
+    expect(() => parseServiceKeys([KEY, OLD, 'c'.repeat(MIN_SERVICE_KEY_LENGTH)])).toThrow(/At most two/);
   });
 });
 
@@ -63,6 +69,11 @@ describe('createBearerPassthroughApp without a valid service key', () => {
 
   it('throws (startup must fail) when no key is configured', async () => {
     await expect(createBearerPassthroughApp({ ...base, serviceKeys: [] })).rejects.toThrow(/required/);
+  });
+
+  it('throws when more than two keys are configured', async () => {
+    const k = 'k'.repeat(MIN_SERVICE_KEY_LENGTH);
+    await expect(createBearerPassthroughApp({ ...base, serviceKeys: [k, k, k] })).rejects.toThrow(/At most two/);
   });
 
   it('throws when the key is too short', async () => {

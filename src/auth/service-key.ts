@@ -45,31 +45,36 @@ function digest(value: string): Buffer {
 
 /**
  * Validates and normalises the configured keys. Throws with an actionable
- * message (never containing a key) when none is configured or one is too
- * short; callers treat that as a fatal startup error.
+ * message (never containing a key) when none is configured, one is too short,
+ * or more than two are passed; callers treat that as a fatal startup error.
  *
- * @param current  — current key (required).
- * @param previous — previous key, accepted during rotation (optional).
- * @returns the list of configured keys, current first.
+ * Only the current key and one optional previous key are supported. Extra
+ * entries are an error, never silently ignored: a key the operator believes
+ * is accepted (or revoked) must really be.
+ *
+ * @param keys — `[current]` or `[current, previous]`.
+ * @returns the validated keys, current first.
  */
-export function parseServiceKeys(current: string | undefined, previous?: string): string[] {
-  const cur = current?.trim();
-  if (!cur) {
+export function parseServiceKeys(keys: readonly (string | undefined)[]): string[] {
+  const cleaned = keys.map((k) => k?.trim() ?? '');
+  // A trailing empty entry is the "no previous key" case (unset env var).
+  while (cleaned.length > 1 && cleaned[cleaned.length - 1] === '') cleaned.pop();
+  if (cleaned.length > 2) {
+    throw new Error('At most two service keys are supported (current and previous).');
+  }
+  if (!cleaned[0]) {
     throw new Error(
       `${SERVICE_KEY_ENV} is required in bearer-passthrough mode (min ${MIN_SERVICE_KEY_LENGTH} chars, e.g. \`openssl rand -hex 32\`).`
     );
   }
-  const keys = [cur];
-  const prev = previous?.trim();
-  if (prev) keys.push(prev);
-  for (const [i, key] of keys.entries()) {
+  for (const [i, key] of cleaned.entries()) {
     if (key.length < MIN_SERVICE_KEY_LENGTH) {
       throw new Error(
         `${i === 0 ? SERVICE_KEY_ENV : SERVICE_KEY_PREVIOUS_ENV} is too short (min ${MIN_SERVICE_KEY_LENGTH} chars).`
       );
     }
   }
-  return keys;
+  return cleaned;
 }
 
 /**

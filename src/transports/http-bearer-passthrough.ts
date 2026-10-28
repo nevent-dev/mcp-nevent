@@ -97,13 +97,14 @@ import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { createNeventServer, getToolCount } from '../server.js';
+import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
 import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+import { PKG_VERSION, getCommitSha } from './http.js';
 import { createHash } from 'node:crypto';
 import {
   verifySession,
@@ -162,6 +163,8 @@ export interface BearerPassthroughAppResult {
   app: express.Application;
   /** Graceful shutdown function — closes all active sessions. */
   shutdown: () => Promise<void>;
+  /** Number of live MCP sessions (diagnostics/tests; `/health` no longer reports it). */
+  activeSessionCount: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +182,7 @@ export async function createBearerPassthroughApp(
 ): Promise<BearerPassthroughAppResult> {
   // Fail-closed at construction: a bearer-passthrough app without a valid
   // service key must not exist (it would be open to anyone holding a JWT).
-  const serviceKeys = parseServiceKeys(config.serviceKeys[0], config.serviceKeys[1]);
+  const serviceKeys = parseServiceKeys(config.serviceKeys);
 
   const app = express();
 
@@ -216,20 +219,11 @@ export async function createBearerPassthroughApp(
     })
   );
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
-
-  const corsOrigin: cors.CorsOptions['origin'] = config.allowedOrigins
-    ? config.allowedOrigins.split(',').map((o) => o.trim()).filter(Boolean)
-    : '*';
-
-  app.use(
-    cors({
-      origin: corsOrigin,
-      exposedHeaders: ['Mcp-Session-Id'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID', 'X-Nevent-Service-Key'],
-    })
-  );
+  // Minimal liveness probe (load balancer / orchestrator). Deliberately
+  // unauthenticated but reveals nothing about tools, sessions or mode.
+  app.get('/health', (_req: Request, res: Response): void => {
+    res.json({ status: 'ok', version: PKG_VERSION, commitSha: getCommitSha() });
+  });
 
   /**
    * Global cap per client IP, applied to EVERY request first (including
@@ -244,6 +238,42 @@ export async function createBearerPassthroughApp(
     message: { error: 'Rate limit exceeded. Please slow down your requests.' },
     validate: { trustProxy: false, xForwardedForHeader: false },
   });
+
+  /**
+   * Service-key gate. Missing or wrong key → `401` with NO detail (same body
+   * as any other auth failure, so it does not reveal which check failed), and
+   * no outbound call to nev-api is made.
+   */
+  function requireServiceKey(req: Request, res: Response, next: () => void): void {
+    if (!isValidServiceKey(req.headers[SERVICE_KEY_HEADER], serviceKeys)) {
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized.' },
+        id: null,
+      });
+      return;
+    }
+    next();
+  }
+
+  // Anonymous traffic is stopped here, BEFORE any body parsing: per-IP cap,
+  // then the service key. Only callers holding the key reach express.json().
+  app.use(ipRateLimiter, requireServiceKey);
+
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+
+  const corsOrigin: cors.CorsOptions['origin'] = config.allowedOrigins
+    ? config.allowedOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+    : '*';
+
+  app.use(
+    cors({
+      origin: corsOrigin,
+      exposedHeaders: ['Mcp-Session-Id'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID', 'X-Nevent-Service-Key'],
+    })
+  );
 
   /**
    * Per-token cap. Runs after the service-key gate, so its buckets are only
@@ -263,23 +293,6 @@ export async function createBearerPassthroughApp(
         .digest('hex'),
     validate: { trustProxy: false, xForwardedForHeader: false, keyGeneratorIpFallback: false },
   });
-
-  /**
-   * Service-key gate. Missing or wrong key → `401` with NO detail (same body
-   * as any other auth failure, so it does not reveal which check failed), and
-   * no outbound call to nev-api is made.
-   */
-  function requireServiceKey(req: Request, res: Response, next: () => void): void {
-    if (!isValidServiceKey(req.headers[SERVICE_KEY_HEADER], serviceKeys)) {
-      res.status(401).json({
-        jsonrpc: '2.0',
-        error: { code: -32001, message: 'Unauthorized.' },
-        id: null,
-      });
-      return;
-    }
-    next();
-  }
 
   // ---------------------------------------------------------------------------
   // Session registry
@@ -304,30 +317,6 @@ export async function createBearerPassthroughApp(
     dataClient: DataClient;
   }
   const activeSessions = new Map<string, BearerSession>();
-
-  const toolsCount = getToolCount({
-    hasNeventApiUrl: true,
-    hasMongoUri: Boolean(config.mongoUri),
-    hasPaidMediaClient: true,
-    // ShortUrlClient is provided via SessionClients (see below) — its READ
-    // tools (list/get short URLs and their metrics) go through the same
-    // toolFilter as everything else.
-    hasShortUrlClient: true,
-    toolFilter: isToolAllowedInBearerPassthrough,
-  });
-
-  app.get('/health', (_req: Request, res: Response): void => {
-    res.json({
-      status: 'ok',
-      service: 'nevent-mcp',
-      transport: 'http',
-      authMode: 'bearer-passthrough',
-      mode: OPERATION_MODE,
-      toolsCount,
-      activeSessions: activeSessions.size,
-      timestamp: new Date().toISOString(),
-    });
-  });
 
   /**
    * Requires a well-formed `Authorization: Bearer <token>` header. Does NOT
@@ -474,7 +463,7 @@ export async function createBearerPassthroughApp(
     next();
   }
 
-  app.post('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.post('/', requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
@@ -585,7 +574,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.get('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions.has(sessionId)) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
@@ -601,7 +590,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.delete('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions.has(sessionId)) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
@@ -620,6 +609,27 @@ export async function createBearerPassthroughApp(
   // ---------------------------------------------------------------------------
   // Orphaned session cleanup — same 30-minute TTL as the OAuth transport.
   // ---------------------------------------------------------------------------
+
+  // Clean JSON errors for failures raised by middleware (notably malformed
+  // JSON bodies) instead of Express's default HTML handler, which would also
+  // leak a stack trace outside production.
+  app.use((err: unknown, _req: Request, res: Response, next: (e?: unknown) => void): void => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    const type = (err as { type?: string } | null)?.type;
+    if (type === 'entity.parse.failed') {
+      res.status(400).json({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error: invalid JSON body.' }, id: null });
+      return;
+    }
+    if (type === 'entity.too.large') {
+      res.status(413).json({ jsonrpc: '2.0', error: { code: -32600, message: 'Request body too large.' }, id: null });
+      return;
+    }
+    logger.error({ err }, 'Unhandled error in bearer-passthrough app');
+    res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null });
+  });
 
   const SESSION_MAX_AGE_MS = 30 * 60 * 1000;
   const cleanupInterval = setInterval(() => {
@@ -654,5 +664,5 @@ export async function createBearerPassthroughApp(
     logger.info('bearer-passthrough HTTP transport shutdown complete');
   };
 
-  return { app, shutdown };
+  return { app, activeSessionCount: () => activeSessions.size, shutdown };
 }
