@@ -474,6 +474,59 @@ describe('bearer-passthrough service key + verification rules (integration)', ()
     expect(res.body).not.toMatch(/<html|at .*\.js/i);
   });
 
+  it('answers a space-filled Authorization header with a fast 401 and no nev-api call', async () => {
+    const start = Date.now();
+    const res = await send({ ...KEY_HEADER, Authorization: 'bearer ' + ' '.repeat(7000) });
+    expect(res.status).toBe(401);
+    expect(Date.now() - start).toBeLessThan(1500);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bearer token containing internal whitespace', async () => {
+    const res = await send({ ...KEY_HEADER, Authorization: 'Bearer abc def' });
+    expect(res.status).toBe(401);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('accepts a lower-case "bearer" scheme', async () => {
+    const res = await send({ ...KEY_HEADER, Authorization: 'bearer lower.case.token' });
+    expect(res.status).not.toBe(401);
+  });
+
+  it('answers 400 (not a session) to a verified, session-less request that is not initialize', async () => {
+    const res = await send({ ...KEY_HEADER, Authorization: 'Bearer ok.token.here' }, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(res.status).toBe(400);
+    expect((await getHealth(port)).activeSessions).toBe(0);
+  });
+
+  it('answers 400 to a verified request naming an unknown session id', async () => {
+    const res = await new Promise<RawResponse>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/event-stream',
+            ...KEY_HEADER,
+            Authorization: 'Bearer ok.token.here',
+            'Mcp-Session-Id': 'does-not-exist',
+          },
+        },
+        (r) => {
+          let d = '';
+          r.on('data', (c) => (d += c));
+          r.on('end', () => resolve({ status: r.statusCode ?? 0, body: d }));
+        }
+      );
+      req.on('error', reject);
+      req.end(JSON.stringify(INITIALIZE_BODY));
+    });
+    expect(res.status).toBe(400);
+  });
+
   it('does not call /auth/me again for a token nev-api just rejected (negative cache)', async () => {
     mockFetch.mockResolvedValue(mockFetchError(401));
     const headers = { Authorization: 'Bearer bad.token.zzz', ...KEY_HEADER };
@@ -721,5 +774,59 @@ describe('bearer-passthrough session binding (integration)', () => {
 
     await listEvents(sid, T('tok-a'));
     expect(eventsAuth).toEqual([`Bearer ${T('tok-a')}`]);
+  });
+});
+
+describe('bearer-passthrough CORS (off by default)', () => {
+  async function withApp<T>(allowedOrigins: string | undefined, fn: (port: number) => Promise<T>): Promise<T> {
+    _clearVerificationCacheForTests();
+    vi.stubGlobal('fetch', vi.fn(async () => mockFetchError(401)));
+    const result = await createBearerPassthroughApp({
+      port: 0,
+      neventApiUrl: 'https://api.nevent.es',
+      dataApiUrl: 'https://data.nevent.es',
+      serviceKeys: [SERVICE_KEY],
+      allowedOrigins,
+    });
+    const server = await new Promise<http.Server>((resolve) => {
+      const srv = result.app.listen(0, '127.0.0.1', () => resolve(srv));
+    });
+    try {
+      return await fn((server.address() as AddressInfo).port);
+    } finally {
+      await result.shutdown();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.restoreAllMocks();
+    }
+  }
+
+  const call = (port: number, origin: string) =>
+    rawRequestH(port, {
+      method: 'POST',
+      headers: { Origin: origin, Authorization: 'Bearer x.y.z' },
+      body: INITIALIZE_BODY,
+    });
+
+  it('emits no Access-Control-Allow-Origin when MCP_ALLOWED_ORIGINS is unset', async () => {
+    await withApp(undefined, async (port) => {
+      const res = await call(port, 'https://evil.example');
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+  });
+
+  it('ignores a literal "*" entry and stays off', async () => {
+    await withApp('*', async (port) => {
+      const res = await call(port, 'https://evil.example');
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+  });
+
+  it('with an allowlist, allows only listed origins', async () => {
+    await withApp('https://admin.nevent.es, https://help.nevent.es', async (port) => {
+      const ok = await call(port, 'https://admin.nevent.es');
+      const bad = await call(port, 'https://evil.example');
+      expect(ok.headers['access-control-allow-origin']).toBe('https://admin.nevent.es');
+      expect(bad.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 });

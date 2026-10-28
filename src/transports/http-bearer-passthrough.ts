@@ -114,6 +114,7 @@ import {
   type PrincipalType,
   type VerifiedSession,
 } from '../auth/session-verifier.js';
+import { extractBearerToken } from '../auth/bearer.js';
 import { SERVICE_KEY_HEADER, isValidServiceKey, parseServiceKeys } from '../auth/service-key.js';
 
 // ---------------------------------------------------------------------------
@@ -149,10 +150,10 @@ export interface BearerPassthroughConfig {
    */
   tokenRateLimitPerMinute?: number;
   /**
-   * Comma-separated list of allowed CORS origins. Defaults to `*`. The
-   * caller is a server (no browser), so set this to a short allowlist, or
-   * to an origin that never matches, when the instance is reachable from
-   * outside; CORS is not an authentication control either way.
+   * Comma-separated list of allowed CORS origins. When unset (the normal
+   * case: the caller is a server, not a browser) CORS is disabled and no
+   * `Access-Control-Allow-Origin` header is emitted. A literal `*` entry is
+   * ignored. CORS is not an authentication control either way.
    */
   allowedOrigins?: string;
 }
@@ -263,17 +264,22 @@ export async function createBearerPassthroughApp(
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
-  const corsOrigin: cors.CorsOptions['origin'] = config.allowedOrigins
-    ? config.allowedOrigins.split(',').map((o) => o.trim()).filter(Boolean)
-    : '*';
-
-  app.use(
-    cors({
-      origin: corsOrigin,
-      exposedHeaders: ['Mcp-Session-Id'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID', 'X-Nevent-Service-Key'],
-    })
-  );
+  // The caller is a server (no browser), so CORS is OFF unless an explicit
+  // allowlist is configured: without MCP_ALLOWED_ORIGINS no
+  // Access-Control-Allow-Origin header is ever emitted. Never `*`.
+  const allowedOriginList = (config.allowedOrigins ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0 && o !== '*');
+  if (allowedOriginList.length > 0) {
+    app.use(
+      cors({
+        origin: allowedOriginList,
+        exposedHeaders: ['Mcp-Session-Id'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID', 'X-Nevent-Service-Key'],
+      })
+    );
+  }
 
   /**
    * Per-token cap. Runs after the service-key gate, so its buckets are only
@@ -326,9 +332,8 @@ export async function createBearerPassthroughApp(
    * malformed.
    */
   function requireBearerHeader(req: Request, res: Response, next: () => void): void {
-    const authHeader = req.headers['authorization'];
-    const match = typeof authHeader === 'string' ? /^Bearer\s+(.+)$/i.exec(authHeader) : null;
-    if (!match || !match[1]) {
+    const bearerToken = extractBearerToken(req.headers['authorization']);
+    if (bearerToken === undefined) {
       res.status(401).json({
         jsonrpc: '2.0',
         error: {
@@ -340,6 +345,7 @@ export async function createBearerPassthroughApp(
       });
       return;
     }
+    res.locals['bearerToken'] = bearerToken;
     next();
   }
 
@@ -361,8 +367,7 @@ export async function createBearerPassthroughApp(
    * token.
    */
   async function verifyIntrospectedSession(req: Request, res: Response, next: () => void): Promise<void> {
-    const authHeader = req.headers['authorization'] as string;
-    const token = authHeader.replace(/^Bearer\s+/i, '');
+    const token = res.locals['bearerToken'] as string;
     try {
       res.locals['verifiedSession'] = await verifySession(token, config.neventApiUrl);
       next();
@@ -422,7 +427,7 @@ export async function createBearerPassthroughApp(
     }
 
     const verified = res.locals['verifiedSession'] as VerifiedSession | undefined;
-    const token = (req.headers['authorization'] as string).replace(/^Bearer\s+/i, '');
+    const token = res.locals['bearerToken'] as string;
     const scopeTenant = verified ? resolveScopeTenantId(verified) : undefined;
 
     if (
@@ -467,15 +472,48 @@ export async function createBearerPassthroughApp(
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
-      if (sessionId && activeSessions.has(sessionId)) {
-        await activeSessions.get(sessionId)!.transport.handleRequest(req, res, req.body);
+      // Everything below depends on the identity nev-api confirmed for THIS
+      // request's token. The middleware chain guarantees both values exist;
+      // checking them here keeps session creation explicitly conditional on
+      // verified state rather than on anything in the request body.
+      const verified = res.locals['verifiedSession'] as VerifiedSession | undefined;
+      const bearerToken = res.locals['bearerToken'] as string | undefined;
+      if (!verified || !bearerToken) {
+        res.status(401).json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Invalid, expired, or unverifiable session. Re-authenticate with nev-api and retry.' },
+          id: null,
+        });
         return;
       }
 
-      if (!sessionId && isInitializeRequest(req.body)) {
-        const authHeader = req.headers['authorization'] ?? '';
-        const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
+      // A request naming a session continues that session (already bound to
+      // this principal by `bindRequestToSession`) or is refused.
+      if (sessionId !== undefined) {
+        const existing = activeSessions.get(sessionId);
+        if (!existing) {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+            id: null,
+          });
+          return;
+        }
+        await existing.transport.handleRequest(req, res, req.body);
+        return;
+      }
 
+      // No session id: the only acceptable request is `initialize`.
+      if (!isInitializeRequest(req.body)) {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+          id: null,
+        });
+        return;
+      }
+
+      {
         // `verifyIntrospectedSession` already confirmed this exact token
         // against nev-api /auth/me for this request and stored the verdict:
         // that response — never the unverified JWT payload — is the authority
@@ -483,7 +521,6 @@ export async function createBearerPassthroughApp(
         // (`effectiveTenantId`). `parseVerifiedSession` guarantees a tenant is
         // present, so there is no fallback to JWT claims. The token itself is
         // never logged.
-        const verified = res.locals['verifiedSession'] as VerifiedSession;
         const tenantId = resolveScopeTenantId(verified) as string;
 
         // Fresh clients for THIS session, built from THIS request's token.
@@ -554,14 +591,7 @@ export async function createBearerPassthroughApp(
         await mcpServer.connect(transport);
 
         await transport.handleRequest(req, res, req.body);
-        return;
       }
-
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
-        id: null,
-      });
     } catch (err) {
       logger.error({ err }, 'Error handling POST / (bearer-passthrough)');
       if (!res.headersSent) {

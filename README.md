@@ -251,8 +251,9 @@ Authorization: Bearer <the promoter's nev-api JWT>
   no client registration. Caller identity is the pre-shared service key (which
   client) plus the forwarded JWT (which end user), both required on every
   request. Still prefer a restrictive firewall/security group in front of it,
-  set `MCP_ALLOWED_ORIGINS` to a short list (the caller is a server, not a
-  browser), and never point the public OAuth hostname (`mcp.nevent.ai`) at a
+  leave `MCP_ALLOWED_ORIGINS` unset (the caller is a server, not a browser, so
+  CORS is off and no `Access-Control-Allow-Origin` is emitted; set it only to a
+  short explicit list if a browser client ever needs it), and never point the public OAuth hostname (`mcp.nevent.ai`) at a
   process started in this mode. Do not log or commit the service key.
 
 Full design rationale: `src/transports/http-bearer-passthrough.ts` and
