@@ -79,11 +79,14 @@
  * |------------------------|----------------------------------------|----------------------------|-------------|
  * | NEVENT_JWT_TOKEN       | Yes (stdio only)                       | —                          | Shared JWT for nev-data-api (stdio mode) |
  * | NEVENT_DATA_API_URL    | No                                      | https://data.nevent.es     | nev-data-api base URL |
- * | NEVENT_OPERATION_MODE  | No                                      | READ_ONLY                  | READ_ONLY / STANDARD / FULL (oauth mode only — ignored by bearer-passthrough, which always exposes READ tools only) |
+ * | NEVENT_OPERATION_MODE  | No                                      | READ_ONLY                  | READ_ONLY / STANDARD / FULL (call-time guard in both modes; bearer-passthrough tool *visibility* is governed by MCP_BEARER_PASSTHROUGH_WRITES, and writes need STANDARD/FULL here too) |
  * | MCP_TRANSPORT          | No                                      | stdio                      | stdio or http |
  * | MCP_AUTH_MODE          | No (http only)                         | oauth                      | oauth or bearer-passthrough |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY | Yes (bearer-passthrough)       | —                          | Pre-shared key (>= 32 chars) required in the `X-Nevent-Service-Key` header of every request; startup fails without it |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS | No                      | —                          | Previous key, accepted only during rotation |
+ * | MCP_BEARER_PASSTHROUGH_WRITES | No (bearer-passthrough)               | off                        | `off` = READ-only; `human` = HUMAN sessions also get the 12-tool write allowlist (SERVICE never). Startup refuses `human` until the write grant (NEV-1855) exists, and with NEVENT_OPERATION_MODE=READ_ONLY |
+ * | MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR | No (bearer-passthrough)     | 30                         | Max write calls per user+tenant per hour when writes are `human`; extra calls get a `write_rate_limit_exceeded` tool error. READ is never limited |
+ * | MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT | No                    | —                          | `true` lets `human` start WITHOUT a write grant (non-production testing only) |
  * | MCP_PORT               | No                                      | 3000                       | HTTP port |
  * | MCP_SERVER_URL         | No (http, oauth mode only)              | http://localhost:{port}    | Public HTTPS URL of this server (used in OAuth metadata) |
  * | MCP_JWT_SECRET         | Yes (http, oauth mode only)             | —                          | JWT signing key for locally-issued MCP access tokens |
@@ -191,6 +194,30 @@ if (transportArg === 'http') {
       process.exit(1);
     }
 
+    // Write policy (NEV-1854): default `off` = READ-only for everyone.
+    const {
+      parseBearerWritesMode,
+      assertWritesStartupAllowed,
+      BEARER_WRITES_ENV,
+      WRITE_GRANT_ENFORCEMENT_AVAILABLE,
+    } = await import('./config/bearer-passthrough.js');
+
+    let writesMode: 'off' | 'human';
+    let writesPerHour: number | undefined;
+    try {
+      writesMode = parseBearerWritesMode(process.env[BEARER_WRITES_ENV]);
+      // Fail fast on unsafe combinations. The app re-checks and emits the
+      // warnings/error logs itself (createBearerPassthroughApp).
+      assertWritesStartupAllowed(writesMode, process.env, WRITE_GRANT_ENFORCEMENT_AVAILABLE, OPERATION_MODE);
+      if (writesMode === 'human') {
+        const { parseWritesPerHour, WRITES_PER_HOUR_ENV } = await import('./tools/write-rate-limit.js');
+        writesPerHour = parseWritesPerHour(process.env[WRITES_PER_HOUR_ENV]);
+      }
+    } catch (err) {
+      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough write settings'}`);
+      process.exit(1);
+    }
+
     const { createBearerPassthroughApp } = await import('./transports/http-bearer-passthrough.js');
 
     const { app, shutdown } = await createBearerPassthroughApp({
@@ -200,6 +227,8 @@ if (transportArg === 'http') {
       mongoUri: MONGODB_URI,
       serviceKeys,
       allowedOrigins: process.env['MCP_ALLOWED_ORIGINS'],
+      writesMode,
+      ...(writesPerHour !== undefined ? { writesPerHour } : {}),
     });
 
     process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));

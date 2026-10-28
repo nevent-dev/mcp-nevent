@@ -61,7 +61,8 @@ import { PaidMediaClient } from './clients/paid-media-client.js';
 import { ShortUrlClient } from './clients/short-url-client.js';
 import { MediaClient } from './clients/media-client.js';
 import { TemplateClient } from './clients/template-client.js';
-import { createToolCallLogger, applyLoggingToServer } from './tools/logging.js';
+import { createToolCallLogger, applyLoggingToServer, type BearerPrincipalLogContext } from './tools/logging.js';
+import { applyWriteRateLimit, type WriteRateLimiter } from './tools/write-rate-limit.js';
 import { registerHelpTool } from './tools/help.js';
 import { NEVENT_MCP_INSTRUCTIONS } from './server-instructions.js';
 
@@ -160,6 +161,19 @@ export interface CreateNeventServerOptions {
    * @default undefined (no filtering)
    */
   toolFilter?: (toolName: string) => boolean;
+
+  /**
+   * Bearer-passthrough only (NEV-1854): verified principal kind and effective
+   * tenant, recorded on every logged tool call.
+   */
+  principalLog?: BearerPrincipalLogContext;
+
+  /**
+   * Bearer-passthrough only (NEV-1854): hourly write budget. When set, every
+   * WRITE/DELETE tool consumes one unit of `limiter` under `key`
+   * (`tenantId:userId`); READ tools are never limited.
+   */
+  writeRateLimit?: { limiter: WriteRateLimiter; key: string };
 }
 
 /**
@@ -214,6 +228,8 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     sessionClients: providedSessionClients,
     enableToolCallLogging = true,
     toolFilter,
+    principalLog,
+    writeRateLimit,
   } = options;
 
   const server = new McpServer(
@@ -234,12 +250,18 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
   // ---------------------------------------------------------------------------
   if (mongoUri && enableToolCallLogging !== false) {
     const logger = createToolCallLogger(mongoUri);
-    applyLoggingToServer(server, logger, dataClient, userId, getSessionId ?? null);
+    applyLoggingToServer(server, logger, dataClient, userId, getSessionId ?? null, principalLog ?? null);
 
     // Warm up the MongoDB logger connection in the background so the first
     // tool call does not incur the cold-start ~200ms penalty.
     // Fire-and-forget — errors are swallowed internally by the logger.
     void logger.warmUp();
+  }
+
+  // Hourly write budget (NEV-1854) — applied after logging so a limited call
+  // is still logged.
+  if (writeRateLimit) {
+    applyWriteRateLimit(server, writeRateLimit.limiter, writeRateLimit.key);
   }
 
   // Per-client allowlist (NEV-1848) — outermost wrapper, applied after logging.
