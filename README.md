@@ -206,11 +206,21 @@ Authorization: Bearer <the promoter's nev-api JWT>
   response without `effectiveTenantId` is refused, and a `SERVICE`
   verification is cached for 10 s instead of 60 s so a disabled account or
   revoked session stops working almost immediately.
-- **Read-only, tenant-locked.** Only READ tools are exposed, minus
-  `nevent_segment_execute` (returns raw contact PII) and the tenant-switching
-  tools (`nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant`)
-  — a bearer-passthrough caller always operates in the tenant its own JWT
-  carries. Excluded and write/delete tools never appear in `tools/list`.
+- **Read-only, tenant-locked.** Only READ tools are exposed — the same set as
+  an OAuth read-only client, including `nevent_segment_execute` — minus the
+  tenant-switching tools (`nevent_list_tenants` / `nevent_switch_tenant` /
+  `nevent_reset_tenant`): a bearer-passthrough caller always operates in the
+  tenant its own JWT carries. Excluded and write/delete tools never appear in
+  `tools/list`.
+- **Sessions are bound to their principal.** Each `Mcp-Session-Id` remembers
+  the user id, principal type and effective tenant it was opened for. Every
+  later request (`POST`, `GET`, `DELETE`) must carry a token that nev-api
+  confirms for that same principal and tenant, otherwise it is refused with
+  `403` and nothing is dispatched — a valid token of someone else cannot drive
+  a session it learned the id of. When the same principal presents a different
+  valid token (a refreshed human token, or a service session re-minted after
+  its 30 min expiry) the session's clients switch to the new token instead of
+  keeping the one from `initialize`.
 - **Session isolation.** Every MCP session gets its own client instances,
   built fresh from that session's own JWT — two sessions started with
   different tokens never share a client or cached data.

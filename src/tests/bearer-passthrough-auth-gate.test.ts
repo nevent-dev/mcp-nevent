@@ -266,3 +266,213 @@ describe('bearer-passthrough auth gate (integration)', () => {
     expect((await getHealth(port)).activeSessions).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Session binding (principal + tenant) and token rotation
+// ---------------------------------------------------------------------------
+
+interface RawResponseH extends RawResponse {
+  headers: http.IncomingHttpHeaders;
+}
+
+function rawRequestH(
+  port: number,
+  options: { method: string; headers?: Record<string, string>; body?: unknown }
+): Promise<RawResponseH> {
+  return new Promise((resolve, reject) => {
+    const payload = options.body !== undefined ? JSON.stringify(options.body) : undefined;
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/',
+        method: options.method,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          ...options.headers,
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: data, headers: res.headers }));
+      }
+    );
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+describe('bearer-passthrough session binding (integration)', () => {
+  let result: BearerPassthroughAppResult;
+  let server: http.Server;
+  let port: number;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  /** token -> /auth/me body; any other /auth/me call is a 401. */
+  let identities: Record<string, Record<string, unknown>>;
+  /** Authorization headers seen on calls to /events (the downstream tool call). */
+  let eventsAuth: string[];
+
+  beforeEach(async () => {
+    _clearVerificationCacheForTests();
+    identities = {};
+    eventsAuth = [];
+    mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const auth = ((init?.headers ?? {}) as Record<string, string>)['Authorization'] ?? '';
+      const token = auth.replace(/^Bearer\s+/i, '');
+      if (String(url).endsWith('/auth/me')) {
+        const body = identities[token];
+        return body ? mockFetchOk(body) : mockFetchError(401);
+      }
+      if (String(url).includes('/events')) eventsAuth.push(auth);
+      return mockFetchOk({ content: [], totalElements: 0, totalPages: 0 });
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    result = await createBearerPassthroughApp({
+      port: 0,
+      neventApiUrl: 'https://api.nevent.es',
+      dataApiUrl: 'https://data.nevent.es',
+    });
+    await new Promise<void>((resolve) => {
+      server = result.app.listen(0, '127.0.0.1', resolve);
+    });
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    await result.shutdown();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.restoreAllMocks();
+  });
+
+  async function openSession(token: string): Promise<string> {
+    const res = await rawRequestH(port, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: INITIALIZE_BODY,
+    });
+    const sid = res.headers['mcp-session-id'];
+    expect(typeof sid).toBe('string');
+    return sid as string;
+  }
+
+  function listEvents(sid: string, token: string): Promise<RawResponseH> {
+    return rawRequestH(port, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Mcp-Session-Id': sid },
+      body: { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'nevent_list_events', arguments: {} } },
+    });
+  }
+
+  const human = (id: string, tenant: string) => ({
+    id,
+    role: 'OWNER',
+    tenantId: tenant,
+    effectiveTenantId: tenant,
+    principalType: 'HUMAN',
+  });
+
+  it('rejects a foreign session driven by another user\'s valid token (403, nothing dispatched)', async () => {
+    identities['tok-a'] = human('user-a', 'tenant-1');
+    identities['tok-b'] = human('user-b', 'tenant-1');
+    const sid = await openSession('tok-a');
+
+    const res = await listEvents(sid, 'tok-b');
+
+    expect(res.status).toBe(403);
+    expect(eventsAuth).toEqual([]);
+  });
+
+  it('rejects the same user presenting a token for a different effective tenant', async () => {
+    identities['tok-t1'] = human('user-a', 'tenant-1');
+    identities['tok-t2'] = human('user-a', 'tenant-2');
+    const sid = await openSession('tok-t1');
+
+    const res = await listEvents(sid, 'tok-t2');
+
+    expect(res.status).toBe(403);
+    expect(eventsAuth).toEqual([]);
+  });
+
+  it('rejects GET and DELETE on a foreign session too', async () => {
+    identities['tok-a'] = human('user-a', 'tenant-1');
+    identities['tok-b'] = human('user-b', 'tenant-1');
+    const sid = await openSession('tok-a');
+
+    for (const method of ['GET', 'DELETE']) {
+      const res = await rawRequestH(port, {
+        method,
+        headers: { Authorization: 'Bearer tok-b', 'Mcp-Session-Id': sid },
+      });
+      expect(res.status, method).toBe(403);
+    }
+    expect((await getHealth(port)).activeSessions).toBe(1);
+  });
+
+  it('rejects a service token of the same tenant against a human session (principal type mismatch)', async () => {
+    identities['tok-a'] = human('user-a', 'tenant-1');
+    identities['tok-svc'] = {
+      id: 'user-a',
+      principalType: 'SERVICE',
+      tenantId: 'tenant-1',
+      effectiveTenantId: 'tenant-1',
+    };
+    const sid = await openSession('tok-a');
+
+    expect((await listEvents(sid, 'tok-svc')).status).toBe(403);
+  });
+
+  it('uses the original token while the same token is presented', async () => {
+    identities['tok-a'] = human('user-a', 'tenant-1');
+    const sid = await openSession('tok-a');
+
+    const res = await listEvents(sid, 'tok-a');
+
+    expect(res.status).toBe(200);
+    expect(eventsAuth).toEqual(['Bearer tok-a']);
+  });
+
+  it('accepts the same principal with a new valid token and uses the new token downstream', async () => {
+    identities['tok-old'] = human('user-a', 'tenant-1');
+    identities['tok-new'] = human('user-a', 'tenant-1');
+    const sid = await openSession('tok-old');
+
+    const res = await listEvents(sid, 'tok-new');
+
+    expect(res.status).toBe(200);
+    expect(eventsAuth).toEqual(['Bearer tok-new']);
+  });
+
+  it('accepts a re-minted service session (new token, same technical user and tenant) and rotates to it', async () => {
+    const svc = {
+      id: 'svc-user',
+      principalType: 'SERVICE',
+      tenantId: 'tenant-1',
+      effectiveTenantId: 'tenant-1',
+      serviceSession: { sessionId: 'S1', channel: 'API', scope: 'TENANT', tenantId: 'tenant-1' },
+    };
+    identities['svc-1'] = svc;
+    identities['svc-2'] = { ...svc, serviceSession: { ...svc.serviceSession, sessionId: 'S2' } };
+    const sid = await openSession('svc-1');
+
+    const res = await listEvents(sid, 'svc-2');
+
+    expect(res.status).toBe(200);
+    expect(eventsAuth).toEqual(['Bearer svc-2']);
+  });
+
+  it('rejects an invalid new token on an existing session before binding (401, token not rotated)', async () => {
+    identities['tok-a'] = human('user-a', 'tenant-1');
+    const sid = await openSession('tok-a');
+
+    const res = await listEvents(sid, 'tok-unknown');
+    expect(res.status).toBe(401);
+
+    await listEvents(sid, 'tok-a');
+    expect(eventsAuth).toEqual(['Bearer tok-a']);
+  });
+});

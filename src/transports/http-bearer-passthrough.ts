@@ -44,8 +44,7 @@
  *     server, exactly as they do for stdio mode's shared token.
  *   - Only tools that pass `isToolAllowedInBearerPassthrough()` are
  *     registered (`toolFilter` on `createNeventServer`): READ tools minus a
- *     short exclusion list (PII-bearing `nevent_segment_execute`, and the
- *     tenant-switching tools, since a bearer-passthrough client always
+ *     short exclusion list (the tenant discovery/switching tools, since a bearer-passthrough client always
  *     operates in the tenant its own JWT carries). Excluded/WRITE/DELETE
  *     tools are absent from `tools/list`, not merely denied at call time.
  *   - `MONGODB_URI` and `MCP_JWT_SECRET` are NOT required: there is no OAuth
@@ -105,7 +104,13 @@ import { SessionClients } from '../clients/session-clients.js';
 import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
-import { verifySession, resolveScopeTenantId, SessionVerificationError } from '../auth/session-verifier.js';
+import {
+  verifySession,
+  resolveScopeTenantId,
+  SessionVerificationError,
+  type PrincipalType,
+  type VerifiedSession,
+} from '../auth/session-verifier.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -251,10 +256,25 @@ export async function createBearerPassthroughApp(
   // Session registry
   // ---------------------------------------------------------------------------
 
-  const activeSessions: Record<string, {
+  /**
+   * One entry per MCP session. Besides the transport it records the
+   * principal the session was opened for, so every later request can be
+   * checked against it (see `bindRequestToSession`).
+   */
+  interface BearerSession {
     transport: StreamableHTTPServerTransport;
     createdAt: Date;
-  }> = {};
+    /** nev-api user id (human, or the technical user of a service account). */
+    userId: string;
+    principalType: PrincipalType;
+    /** Tenant the session is locked to (`resolveScopeTenantId` at initialize). */
+    tenantId: string | undefined;
+    /** The bearer currently applied to the session's clients. */
+    token: string;
+    sessionClients: SessionClients;
+    dataClient: DataClient;
+  }
+  const activeSessions: Record<string, BearerSession> = {};
 
   const toolsCount = getToolCount({
     hasNeventApiUrl: true,
@@ -326,7 +346,7 @@ export async function createBearerPassthroughApp(
     const authHeader = req.headers['authorization'] as string;
     const token = authHeader.replace(/^Bearer\s+/i, '');
     try {
-      await verifySession(token, config.neventApiUrl);
+      res.locals['verifiedSession'] = await verifySession(token, config.neventApiUrl);
       next();
     } catch (err) {
       const message = err instanceof SessionVerificationError ? err.message : 'Session verification failed';
@@ -342,7 +362,74 @@ export async function createBearerPassthroughApp(
     }
   }
 
-  app.post('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
+  /**
+   * Binds every request that names an existing `Mcp-Session-Id` to the
+   * principal that opened that session. Runs right after
+   * `verifyIntrospectedSession`, so the identity it compares is the one
+   * nev-api just confirmed for THIS request's token (never the JWT payload).
+   *
+   * - Different user id, principal type or effective tenant than the session
+   *   was opened with → `403`, nothing is dispatched. A valid token for
+   *   someone else (or for another tenant) can therefore never drive a
+   *   session it does not own, even if it learned the session id.
+   * - Same principal and tenant presenting a different token (e.g. a service
+   *   session re-minted after its 30 min expiry, or a refreshed human token)
+   *   → the new token replaces the one held by the session's clients
+   *   (`SessionClients.rotateJwt`), so downstream calls use the live token
+   *   instead of the one captured at `initialize`. "Same principal" is the
+   *   user id, not the service session id: a re-minted service session has a
+   *   new session id by design.
+   *
+   * Requests without a session id, or with an unknown one, pass through
+   * untouched (initialize / the existing 400 paths).
+   */
+  function bindRequestToSession(req: Request, res: Response, next: () => void): void {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    const session = sessionId ? activeSessions[sessionId] : undefined;
+    if (!session) {
+      next();
+      return;
+    }
+
+    const verified = res.locals['verifiedSession'] as VerifiedSession | undefined;
+    const token = (req.headers['authorization'] as string).replace(/^Bearer\s+/i, '');
+    const scopeTenant = verified ? resolveScopeTenantId(verified) : undefined;
+
+    if (
+      !verified ||
+      verified.userId !== session.userId ||
+      verified.principalType !== session.principalType ||
+      scopeTenant !== session.tenantId
+    ) {
+      logger.warn(
+        { sessionId, sessionUserId: session.userId, sessionTenantId: session.tenantId ?? 'unknown' },
+        'bearer-passthrough request rejected — token does not belong to the principal/tenant that opened the session'
+      );
+      res.status(403).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32003,
+          message: 'This MCP session belongs to a different user or tenant. Open a new session with your own token.',
+        },
+        id: null,
+      });
+      return;
+    }
+
+    if (token !== session.token) {
+      session.sessionClients.rotateJwt(token);
+      // rotateJwt re-reads the tenant from the JWT claim; nev-api's
+      // effectiveTenantId (already equal to the session's tenant here) wins.
+      if (session.tenantId !== undefined) {
+        session.dataClient.activeTenantId = session.tenantId;
+      }
+      session.token = token;
+      logger.info({ sessionId, userId: session.userId }, 'bearer-passthrough session token rotated');
+    }
+    next();
+  }
+
+  app.post('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
@@ -398,7 +485,18 @@ export async function createBearerPassthroughApp(
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
             logger.info({ sessionId: newSessionId }, 'bearer-passthrough session initialized');
-            activeSessions[newSessionId] = { transport, createdAt: new Date() };
+            activeSessions[newSessionId] = {
+              transport,
+              createdAt: new Date(),
+              userId: verified.userId,
+              principalType: verified.principalType,
+              // Compared against nev-api's answer on every later request,
+              // so it must be the same derivation (no JWT-claim fallback).
+              tenantId: resolveScopeTenantId(verified),
+              token: bearerToken,
+              sessionClients,
+              dataClient,
+            };
           },
         });
 
@@ -445,7 +543,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.get('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions[sessionId]) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
@@ -461,7 +559,7 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.delete('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !activeSessions[sessionId]) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
