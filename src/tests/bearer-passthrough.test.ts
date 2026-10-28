@@ -59,7 +59,7 @@ describe('isToolAllowedInBearerPassthrough', () => {
   });
 
   it('denies every explicitly excluded tool', () => {
-    // Most exclusions (segment_execute, list_tenants, switch_tenant) are
+    // Most exclusions (list_tenants, switch_tenant) are
     // classified READ and would otherwise be allowed — the exclusion list is
     // what blocks them. nevent_reset_tenant is excluded AND classified
     // DELETE, so it is blocked by both mechanisms independently.
@@ -70,7 +70,9 @@ describe('isToolAllowedInBearerPassthrough', () => {
     expect(getToolOperationType('nevent_list_tenants')).toBe('READ');
     expect(getToolOperationType('nevent_switch_tenant')).toBe('READ');
     expect(getToolOperationType('nevent_reset_tenant')).toBe('DELETE');
-    expect(EXCLUDED_TOOLS_BEARER_PASSTHROUGH).toContain('nevent_segment_execute');
+    // nevent_segment_execute is deliberately allowed (decision 2026-10-28).
+    expect(EXCLUDED_TOOLS_BEARER_PASSTHROUGH).not.toContain('nevent_segment_execute');
+    expect(isToolAllowedInBearerPassthrough('nevent_segment_execute')).toBe(true);
     expect(EXCLUDED_TOOLS_BEARER_PASSTHROUGH).toContain('nevent_list_tenants');
     expect(EXCLUDED_TOOLS_BEARER_PASSTHROUGH).toContain('nevent_switch_tenant');
     expect(EXCLUDED_TOOLS_BEARER_PASSTHROUGH).toContain('nevent_reset_tenant');

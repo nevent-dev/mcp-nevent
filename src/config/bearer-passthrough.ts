@@ -14,11 +14,16 @@
  *      (`src/config/operation-mode.ts`). An unclassified tool is denied
  *      (fail-closed), same as the general operation-mode guard.
  *   2. The tool must NOT be in `EXCLUDED_TOOLS_BEARER_PASSTHROUGH`, even if
- *      it is classified READ — these tools either return PII outside the
- *      normal analytics/segmentation shape, or let the caller change which
- *      tenant the session operates on (bearer-passthrough clients always
- *      operate in the tenant carried by their JWT; there is no session to
- *      switch).
+ *      it is classified READ — these tools let the caller discover or change
+ *      which tenant the session operates on (bearer-passthrough clients
+ *      always operate in the tenant carried by their JWT; there is no
+ *      session to switch).
+ *
+ * The resulting policy is intentionally identical to the OAuth read-only
+ * client policy (`isToolAllowedForReadOnlyClient`). The product owner decided
+ * on 2026-10-28 that `nevent_segment_execute` (paginated contact list, PII)
+ * is exposed here too; `bearer-passthrough-read-tools-parity.test.ts` pins
+ * both the decision and the equality of the two policies.
  *
  * @module config/bearer-passthrough
  */
@@ -29,15 +34,12 @@ import { getToolOperationType } from './operation-mode.js';
  * Tools excluded from `bearer-passthrough` mode even though they are
  * classified `READ`:
  *
- * - `nevent_segment_execute` — returns the full paginated contact list for a
- *   segment (PII), unlike `nevent_segment_preview` which only returns counts.
  * - `nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant` —
  *   tenant is resolved server-side from the caller's JWT; a bearer-passthrough
  *   client must never be able to discover or switch to a tenant other than
  *   the one its own token grants.
  */
 export const EXCLUDED_TOOLS_BEARER_PASSTHROUGH: ReadonlySet<string> = new Set([
-  'nevent_segment_execute',
   'nevent_list_tenants',
   'nevent_switch_tenant',
   'nevent_reset_tenant',

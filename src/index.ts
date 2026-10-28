@@ -50,7 +50,7 @@
  *     (campaigns/templates/deliverability), each still scoped by the
  *     caller's own JWT tenant.
  *   - Only READ tools are registered, minus a short exclusion list
- *     (`nevent_segment_execute` — PII; `nevent_list_tenants` /
+ *     (`nevent_list_tenants` /
  *     `nevent_switch_tenant` / `nevent_reset_tenant` — tenant is always the
  *     one carried by the caller's own JWT). See
  *     `src/config/bearer-passthrough.ts`.

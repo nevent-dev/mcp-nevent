@@ -7,9 +7,9 @@
  * Why: the 4 READ tools added in #84 (events, sales provenance by event,
  * campaign deliverability, campaign unsubscribes) must be reachable through
  * every internal channel, and the only intentional difference between the two
- * read-only policies is `nevent_segment_execute` (PII). A new READ tool that
- * silently fails to appear in one channel, or a change in that difference,
- * must fail here.
+ * read-only policies is none: they are identical (decision 2026-10-28,
+ * `nevent_segment_execute` is exposed to both). A new READ tool that silently
+ * fails to appear in one channel must fail here.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -81,14 +81,13 @@ describe('bearer-passthrough READ tool exposure', () => {
     expect(isToolAllowedInBearerPassthrough('nevent_not_a_real_tool')).toBe(false);
   });
 
-  it('differs from the OAuth read-only-client policy only by nevent_segment_execute', () => {
-    const onlyOauth = READ_TOOLS.filter(
-      (t) => isToolAllowedForReadOnlyClient(t) && !isToolAllowedInBearerPassthrough(t)
-    );
-    const onlyBearer = READ_TOOLS.filter(
-      (t) => isToolAllowedInBearerPassthrough(t) && !isToolAllowedForReadOnlyClient(t)
-    );
-    expect(onlyOauth).toEqual(['nevent_segment_execute']);
-    expect(onlyBearer).toEqual([]);
+  it('exposes nevent_segment_execute (product decision 2026-10-28)', () => {
+    expect(isToolAllowedInBearerPassthrough('nevent_segment_execute')).toBe(true);
+  });
+
+  it('is identical to the OAuth read-only-client policy for every registered tool', () => {
+    for (const tool of ALL_TOOLS) {
+      expect(isToolAllowedInBearerPassthrough(tool), tool).toBe(isToolAllowedForReadOnlyClient(tool));
+    }
   });
 });
