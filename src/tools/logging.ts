@@ -60,6 +60,12 @@ export interface ToolCallDocument {
   tenant_id: string | null;
   /** User identifier from the JWT `sub` claim. */
   user_id: string | null;
+  /**
+   * Principal kind (`HUMAN` | `SERVICE`) verified by nev-api for the session.
+   * Only present on bearer-passthrough calls; absent in OAuth mode. No email,
+   * name or token is ever stored — only `user_id` and this kind.
+   */
+  principal_type?: 'HUMAN' | 'SERVICE';
   /** MCP tool name, e.g. "nevent_analytics_query". */
   tool_name: string;
   /** Outcome of the tool invocation. */
@@ -382,6 +388,13 @@ export interface LoggingContext {
   session_id: string | null;
 }
 
+/** Verified principal of a bearer-passthrough session, for audit logging. */
+export interface BearerPrincipalLogContext {
+  principalType: 'HUMAN' | 'SERVICE';
+  /** Tenant the session is locked to (`effectiveTenantId` from `/auth/me`). */
+  effectiveTenantId: string;
+}
+
 /**
  * Apply transparent tool call logging to an MCP server by monkey-patching
  * the `McpServer.tool()` method.
@@ -418,8 +431,12 @@ export function applyLoggingToServer(
   logger: ToolCallLogger,
   dataClient: DataClient,
   userId: string | null,
-  getSessionId: (() => string | null) | null = null
+  getSessionId: (() => string | null) | null = null,
+  principal: BearerPrincipalLogContext | null = null
 ): void {
+  // Bearer-passthrough: the tenant is the one nev-api verified for the
+  // session (locked at initialize), and the principal kind is recorded.
+  const principalFields = principal ? { principal_type: principal.principalType } : {};
   // Store reference to the original `tool` method so we can call it
   // within the wrapper without infinite recursion.
   const originalTool = server.tool.bind(server);
@@ -463,12 +480,13 @@ export function applyLoggingToServer(
         // Handler threw an exception (should be rare — most handlers catch internally)
         const latency = Date.now() - start;
         const message = thrown instanceof Error ? thrown.message.slice(0, 200) : 'unknown';
-        const activeTenantId = dataClient.activeTenantId ?? null;
+        const activeTenantId = principal?.effectiveTenantId ?? dataClient.activeTenantId ?? null;
 
         logger.logToolCall({
           tenant_id: activeTenantId,
           tenant_id_active: activeTenantId,
           user_id: userId,
+          ...principalFields,
           tool_name: toolName,
           status: 'error',
           error_code: 'handler_exception',
@@ -484,7 +502,7 @@ export function applyLoggingToServer(
 
       const latency = Date.now() - start;
       const isError = result.isError === true;
-      const activeTenantId = dataClient.activeTenantId ?? null;
+      const activeTenantId = principal?.effectiveTenantId ?? dataClient.activeTenantId ?? null;
 
       // Try to extract error code from structured error envelope
       let errorCode: string | null = null;
@@ -519,6 +537,7 @@ export function applyLoggingToServer(
         tenant_id: activeTenantId,
         tenant_id_active: activeTenantId,
         user_id: userId,
+        ...principalFields,
         tool_name: toolName,
         status: isError ? 'error' : 'ok',
         error_code: errorCode,

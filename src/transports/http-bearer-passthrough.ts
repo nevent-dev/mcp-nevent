@@ -104,6 +104,7 @@ import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
+import { WriteRateLimiter, DEFAULT_WRITES_PER_HOUR } from '../tools/write-rate-limit.js';
 import { createBearerToolFilter, type BearerWritesMode } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
@@ -165,6 +166,12 @@ export interface BearerPassthroughConfig {
    * READ-only. See `src/config/bearer-passthrough.ts`.
    */
   writesMode?: BearerWritesMode;
+  /**
+   * Max write operations per principal (tenant + user) per hour when
+   * `writesMode` is `human`. Default `DEFAULT_WRITES_PER_HOUR`. READ is never
+   * limited.
+   */
+  writesPerHour?: number;
 }
 
 /** Result of `createBearerPassthroughApp()` — app plus a shutdown function. */
@@ -194,6 +201,8 @@ export async function createBearerPassthroughApp(
   // service key must not exist (it would be open to anyone holding a JWT).
   const serviceKeys = parseServiceKeys(config.serviceKeys);
   const writesMode: BearerWritesMode = config.writesMode ?? 'off';
+  // One limiter for the whole app: the budget survives new MCP sessions.
+  const writeLimiter = new WriteRateLimiter(config.writesPerHour ?? DEFAULT_WRITES_PER_HOUR);
 
   const app = express();
 
@@ -598,6 +607,12 @@ export async function createBearerPassthroughApp(
           // READ tools (+ the HUMAN write allowlist when enabled), minus the
           // always-denied tools — see src/config/bearer-passthrough.ts.
           toolFilter: createBearerToolFilter(verified.principalType, writesMode),
+          // Audit: principal kind + verified tenant on every logged call.
+          principalLog: { principalType: verified.principalType, effectiveTenantId: tenantId },
+          // Hourly write budget per tenant+user, only when writes are on.
+          ...(writesMode === 'human'
+            ? { writeRateLimit: { limiter: writeLimiter, key: `${tenantId}:${verified.userId}` } }
+            : {}),
         });
         await mcpServer.connect(transport);
 

@@ -202,6 +202,11 @@ Authorization: Bearer <the promoter's nev-api JWT>
   yet**: the real barrier is the signed single-use write grant (NEV-1855), so
   the server refuses to start with `human` until that exists (override for
   non-production only: `MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT=true`).
+  Each tenant+user is limited to `MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR`
+  writes per hour (default 30; over it, a `write_rate_limit_exceeded` tool
+  error and nothing is executed; READ is never limited). Every tool call is
+  logged with `user_id`, `principal_type` and the verified tenant (no email
+  or token).
   Calls also need `NEVENT_OPERATION_MODE=FULL` (`schedule_campaign` is
   classified DELETE because it sends for real).
 

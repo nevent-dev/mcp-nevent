@@ -64,7 +64,7 @@ describe('bearer-passthrough write policy over HTTP', () => {
   const identities: Record<string, Record<string, unknown>> = {};
   let sideEffectCalls: string[];
 
-  async function start(writesMode?: BearerWritesMode) {
+  async function start(writesMode?: BearerWritesMode, writesPerHour?: number) {
     result = await createBearerPassthroughApp({
       port: 0,
       neventApiUrl: 'https://api.nevent.es',
@@ -72,6 +72,7 @@ describe('bearer-passthrough write policy over HTTP', () => {
       serviceKeys: [SERVICE_KEY],
       tokenRateLimitPerMinute: 1000,
       ...(writesMode ? { writesMode } : {}),
+      ...(writesPerHour ? { writesPerHour } : {}),
     });
     await new Promise<void>((r) => { server = result.app.listen(0, '127.0.0.1', r); });
     port = (server.address() as AddressInfo).port;
@@ -157,5 +158,36 @@ describe('bearer-passthrough write policy over HTTP', () => {
     const msg = rpc(res.body);
     expect(msg.error ?? msg.result?.isError).toBeTruthy();
     expect(sideEffectCalls).toEqual([]);
+  });
+
+  const call = (token: string, sid: string, id: number, name: string, args: Record<string, unknown> = {}) =>
+    post(port, token, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }, sid);
+  // Schema-valid arguments: the SDK validates BEFORE the handler, and calls
+  // rejected for invalid arguments never reach the (counted) handler.
+  const SEGMENT_ARGS = {
+    name: 'VIP',
+    definition: { stanzas: [{ criteria: [{ criterion_id: 'event_attended', operator: 'is', value: 'E1' }] }] },
+  };
+
+  it('writes=human: the hourly write limit applies per user to writes only, across sessions', async () => {
+    await start('human', 1);
+    const { human } = principals();
+    const first = await toolsFor(human);
+    // Spend the single write of the budget (outcome irrelevant: it is counted).
+    await call(human, first.sid, 10, 'nevent_create_segment', SEGMENT_ARGS);
+    const limited = rpc((await call(human, first.sid, 11, 'nevent_create_segment', SEGMENT_ARGS)).body);
+    const text = limited.result.content[0].text as string;
+    expect(limited.result.isError).toBe(true);
+    expect(JSON.parse(text).error.code).toBe('write_rate_limit_exceeded');
+
+    // A brand-new session of the same user does not reset the budget.
+    const second = await toolsFor(human);
+    const again = rpc((await call(human, second.sid, 12, 'nevent_create_segment', SEGMENT_ARGS)).body);
+    expect(JSON.parse(again.result.content[0].text).error.code).toBe('write_rate_limit_exceeded');
+
+    // READ is never limited by the write budget.
+    const read = rpc((await call(human, second.sid, 13, 'nevent_list_segments')).body);
+    const readCode = read.result?.isError ? JSON.parse(read.result.content[0].text).error?.code : undefined;
+    expect(readCode).not.toBe('write_rate_limit_exceeded');
   });
 });

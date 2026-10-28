@@ -85,6 +85,7 @@
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY | Yes (bearer-passthrough)       | —                          | Pre-shared key (>= 32 chars) required in the `X-Nevent-Service-Key` header of every request; startup fails without it |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS | No                      | —                          | Previous key, accepted only during rotation |
  * | MCP_BEARER_PASSTHROUGH_WRITES | No (bearer-passthrough)               | off                        | `off` = READ-only; `human` = HUMAN sessions also get the 12-tool write allowlist (SERVICE never). Startup refuses `human` until the write grant (NEV-1855) exists |
+ * | MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR | No (bearer-passthrough)     | 30                         | Max write calls per user+tenant per hour when writes are `human`; extra calls get a `write_rate_limit_exceeded` tool error. READ is never limited |
  * | MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT | No                    | —                          | `true` lets `human` start WITHOUT a write grant (non-production testing only) |
  * | MCP_PORT               | No                                      | 3000                       | HTTP port |
  * | MCP_SERVER_URL         | No (http, oauth mode only)              | http://localhost:{port}    | Public HTTPS URL of this server (used in OAuth metadata) |
@@ -228,6 +229,15 @@ if (transportArg === 'http') {
       }
     }
 
+    let writesPerHour: number;
+    try {
+      const { parseWritesPerHour } = await import('./tools/write-rate-limit.js');
+      writesPerHour = parseWritesPerHour(process.env['MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR']);
+    } catch (err) {
+      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid write limit'}`);
+      process.exit(1);
+    }
+
     if (writesMode === 'human' && OPERATION_MODE !== 'FULL') {
       // Call-time guard (tools/helpers.ts) still applies: write tools are
       // listed but `schedule_campaign` (DELETE) needs FULL and the other
@@ -248,6 +258,7 @@ if (transportArg === 'http') {
       serviceKeys,
       allowedOrigins: process.env['MCP_ALLOWED_ORIGINS'],
       writesMode,
+      writesPerHour,
     });
 
     process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
