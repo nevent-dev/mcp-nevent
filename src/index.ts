@@ -62,9 +62,11 @@
  *     symmetric signing secret, rejected as a design choice — nev-data-api
  *     and nev-api also continue to validate the token on every call they
  *     receive, exactly like stdio mode's shared `NEVENT_JWT_TOKEN`.
- *     **Not meant to be reachable from the public internet** — run it on an
- *     internal network only; caller confinement is a deployment concern,
- *     not something this server enforces on its own.
+ *     The instance may be reachable from outside, so EVERY request must also
+ *     carry a pre-shared service key in the `X-Nevent-Service-Key` header
+ *     (env `MCP_BEARER_PASSTHROUGH_SERVICE_KEY`, required, >= 32 chars;
+ *     optional `MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS` for rotation).
+ *     It is checked before the token is introspected. Startup fails without it.
  *
  * ```bash
  * MCP_AUTH_MODE=bearer-passthrough \
@@ -80,6 +82,8 @@
  * | NEVENT_OPERATION_MODE  | No                                      | READ_ONLY                  | READ_ONLY / STANDARD / FULL (oauth mode only — ignored by bearer-passthrough, which always exposes READ tools only) |
  * | MCP_TRANSPORT          | No                                      | stdio                      | stdio or http |
  * | MCP_AUTH_MODE          | No (http only)                         | oauth                      | oauth or bearer-passthrough |
+ * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY | Yes (bearer-passthrough)       | —                          | Pre-shared key (>= 32 chars) required in the `X-Nevent-Service-Key` header of every request; startup fails without it |
+ * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS | No                      | —                          | Previous key, accepted only during rotation |
  * | MCP_PORT               | No                                      | 3000                       | HTTP port |
  * | MCP_SERVER_URL         | No (http, oauth mode only)              | http://localhost:{port}    | Public HTTPS URL of this server (used in OAuth metadata) |
  * | MCP_JWT_SECRET         | Yes (http, oauth mode only)             | —                          | JWT signing key for locally-issued MCP access tokens |
@@ -170,9 +174,22 @@ if (transportArg === 'http') {
 
     logger.warn(
       { port: HTTP_PORT, dataApi: DATA_API_URL, neventApi: NEVENT_API_URL, mode: OPERATION_MODE },
-      'Starting HTTP transport in bearer-passthrough mode — NOT for public internet exposure. ' +
-      'Every request must carry the calling user\'s own nev-api JWT as Authorization: Bearer <jwt>.'
+      'Starting HTTP transport in bearer-passthrough mode. ' +
+      'Every request must carry the service key (X-Nevent-Service-Key) AND the calling user\'s own nev-api JWT as Authorization: Bearer <jwt>.'
     );
+
+    const { parseServiceKeys, SERVICE_KEY_ENV, SERVICE_KEY_PREVIOUS_ENV } = await import('./auth/service-key.js');
+
+    let serviceKeys: string[];
+    try {
+      serviceKeys = parseServiceKeys(
+        process.env[SERVICE_KEY_ENV],
+        process.env[SERVICE_KEY_PREVIOUS_ENV]
+      );
+    } catch (err) {
+      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough service key'}`);
+      process.exit(1);
+    }
 
     const { createBearerPassthroughApp } = await import('./transports/http-bearer-passthrough.js');
 
@@ -181,6 +198,7 @@ if (transportArg === 'http') {
       neventApiUrl: NEVENT_API_URL,
       dataApiUrl: DATA_API_URL,
       mongoUri: MONGODB_URI,
+      serviceKeys,
       allowedOrigins: process.env['MCP_ALLOWED_ORIGINS'],
     });
 

@@ -155,22 +155,37 @@ Optional environment variables for the HTTP server:
 
 See `CHANGELOG.md` for the exact behaviour.
 
-## Advanced: bearer-passthrough mode (internal, trusted callers only)
+## Advanced: bearer-passthrough mode (trusted clients, service key required)
 
 `MCP_AUTH_MODE=bearer-passthrough` is a second HTTP auth mode for trusted
-internal services that already hold a per-user nev-api JWT and want to call
+clients that already hold a per-user nev-api JWT and want to call
 MCP tools on that user's behalf — for example `nev-helpbot`, the Chatwoot
 support bot, answering as the promoter currently chatting.
 
 ```bash
-MCP_AUTH_MODE=bearer-passthrough node dist/index.js --transport=http --port=3000
+MCP_AUTH_MODE=bearer-passthrough \
+MCP_BEARER_PASSTHROUGH_SERVICE_KEY=$(openssl rand -hex 32) \
+node dist/index.js --transport=http --port=3000
 ```
 
-Every request must carry the calling user's own nev-api JWT:
+Every request must carry BOTH the client's service key and the calling
+user's own nev-api JWT:
 
 ```
+X-Nevent-Service-Key: <pre-shared service key>
 Authorization: Bearer <the promoter's nev-api JWT>
 ```
+
+- **Service key (mandatory).** The instance may be reachable from outside, so
+  a JWT alone is not enough. `MCP_BEARER_PASSTHROUGH_SERVICE_KEY` (at least 32
+  characters) is required: **the server refuses to start without it.** It is
+  compared in constant time (`crypto.timingSafeEqual` over SHA-256 digests)
+  and checked **before** the token is introspected, so outsiders cannot make
+  this server call nev-api. A missing or wrong key gets a bare `401`
+  (`Unauthorized.`) with no hint of which check failed. For rotation, set
+  `MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS` to the old key while the client
+  moves to the new one, then remove it. Keep it in a secret store, never in the
+  repository. Requests are also capped per IP (600/min) and per token (300/min).
 
 - **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.**
   `MONGODB_URI` stays optional: set it to also enable the Mongo-backed read
@@ -200,12 +215,20 @@ Authorization: Bearer <the promoter's nev-api JWT>
 - **Human and service sessions.** `GET /auth/me` also reports `principalType`
   (`HUMAN` or `SERVICE`), `effectiveTenantId` and `serviceSession`. Technical
   service sessions minted by `POST /auth/service-token` (unattended agents)
-  are accepted like a human token: the session is locked to
-  `effectiveTenantId` (authoritative when present, also for hierarchical
-  admins navigating a child tenant), an unknown `principalType` or a `SERVICE`
-  response without `effectiveTenantId` is refused, and a `SERVICE`
-  verification is cached for 10 s instead of 60 s so a disabled account or
-  revoked session stops working almost immediately.
+  are accepted like a human token **only with `TENANT` scope** (`PLATFORM`,
+  i.e. global SUPERADMIN, is refused). The session is locked to
+  `effectiveTenantId`, which comes only from this answer (never from the JWT
+  payload; also correct for hierarchical admins navigating a child tenant).
+  Fail-closed: an unknown `principalType`, a `SERVICE` response without
+  `effectiveTenantId`, or any response with no tenant at all is refused. A
+  `SERVICE` verification is cached for 10 s instead of 60 s so a disabled
+  account or revoked session stops working almost immediately.
+- **Verification cache.** Positive verdicts are cached (max 1000 entries, LRU,
+  expired ones purged first); a token nev-api explicitly rejected (`401`/`403`)
+  is remembered for ~5 s so a bad token cannot turn into one `/auth/me` call per
+  request. When nev-api itself is unavailable (5xx, timeout, network) the
+  request is still refused, but with `503` instead of `401`, and that outcome
+  is never cached.
 - **Read-only, tenant-locked.** Only READ tools are exposed — the same set as
   an OAuth read-only client, including `nevent_segment_execute` — minus the
   tenant-switching tools (`nevent_list_tenants` / `nevent_switch_tenant` /
@@ -224,16 +247,13 @@ Authorization: Bearer <the promoter's nev-api JWT>
 - **Session isolation.** Every MCP session gets its own client instances,
   built fresh from that session's own JWT — two sessions started with
   different tokens never share a client or cached data.
-- **Not for the public internet — and no caller identity of its own.** This
-  mode has no login page, no client registration, and no API key or
-  internal-client header identifying the caller — verification only ever
-  confirms the *forwarded token* is currently valid at nev-api, never who is
-  presenting it. Restricting **which processes can reach this port at all**
-  is entirely the deployment's job, not this server's: run it only on an
-  internal network reachable by trusted callers (e.g. a container on the
-  same Docker network as its caller, with no port published to the host) —
-  never point a public hostname (like `mcp.nevent.ai`) at a process started
-  this way.
+- **Reachable from outside, authenticated twice.** There is no login page and
+  no client registration. Caller identity is the pre-shared service key (which
+  client) plus the forwarded JWT (which end user), both required on every
+  request. Still prefer a restrictive firewall/security group in front of it,
+  set `MCP_ALLOWED_ORIGINS` to a short list (the caller is a server, not a
+  browser), and never point the public OAuth hostname (`mcp.nevent.ai`) at a
+  process started in this mode. Do not log or commit the service key.
 
 Full design rationale: `src/transports/http-bearer-passthrough.ts` and
 `src/auth/session-verifier.ts`.

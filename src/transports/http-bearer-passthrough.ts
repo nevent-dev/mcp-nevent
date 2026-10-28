@@ -75,16 +75,16 @@
  * against nev-api instead (see above), which rejects anything invalid,
  * expired, or revoked, but this server still trusts whoever holds the
  * connection to only ever forward tokens on behalf of the user actually
- * chatting, never a mix-and-match of caller and token. Confining WHO can
- * reach this port at all is therefore left entirely to the deployment: this
- * transport is meant to run on an internal network reachable only by
- * trusted callers (e.g. `nev-helpbot` calling a sidecar/internal listener on
- * the `chatwoot_default` Docker network, with no port published to the
- * host), never on the public internet. Do not point `MCP_SERVER_URL`/public
- * DNS such as `mcp.nevent.ai` at a process started with
- * `MCP_AUTH_MODE=bearer-passthrough`. No API key or internal-client header
- * is layered on top of this — network isolation is the only caller
- * confinement this mode has, by design.
+ * chatting, never a mix-and-match of caller and token.
+ *
+ * Because the listener may be reachable from outside (no private network is
+ * assumed), a JWT alone is not enough: every request must also present a
+ * pre-shared service key in `X-Nevent-Service-Key` (`src/auth/service-key.ts`),
+ * checked BEFORE the token is introspected and compared in constant time.
+ * Request pipeline: per-IP cap → service key → bearer header present →
+ * per-token cap → `/auth/me` introspection (positive cache, short negative
+ * cache) → session/principal binding. Do not point the public OAuth hostname
+ * (`mcp.nevent.ai`) at a process started in this mode.
  *
  * @module transports/http-bearer-passthrough
  */
@@ -104,13 +104,16 @@ import { SessionClients } from '../clients/session-clients.js';
 import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
+import { createHash } from 'node:crypto';
 import {
   verifySession,
   resolveScopeTenantId,
+  unverifiedTokenExpiryMs,
   SessionVerificationError,
   type PrincipalType,
   type VerifiedSession,
 } from '../auth/session-verifier.js';
+import { SERVICE_KEY_HEADER, isValidServiceKey, parseServiceKeys } from '../auth/service-key.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -132,9 +135,23 @@ export interface BearerPassthroughConfig {
    */
   mongoUri?: string;
   /**
-   * Comma-separated list of allowed CORS origins. Defaults to `*`
-   * (acceptable here because this transport is not meant to be internet-
-   * reachable — see module doc).
+   * Pre-shared service key(s) every request must present in the
+   * `X-Nevent-Service-Key` header: the current key first, optionally the
+   * previous one (rotation). REQUIRED — `createBearerPassthroughApp` throws
+   * when empty or when a key is shorter than the minimum. See
+   * `src/auth/service-key.ts`.
+   */
+  serviceKeys: readonly string[];
+  /**
+   * Max requests per minute per bearer token (default 300). Exposed so tests
+   * can exercise the limiter without sending hundreds of requests.
+   */
+  tokenRateLimitPerMinute?: number;
+  /**
+   * Comma-separated list of allowed CORS origins. Defaults to `*`. The
+   * caller is a server (no browser), so set this to a short allowlist, or
+   * to an origin that never matches, when the instance is reachable from
+   * outside; CORS is not an authentication control either way.
    */
   allowedOrigins?: string;
 }
@@ -145,39 +162,6 @@ export interface BearerPassthroughAppResult {
   app: express.Application;
   /** Graceful shutdown function — closes all active sessions. */
   shutdown: () => Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// JWT claim extraction (no signature verification — see module doc)
-// ---------------------------------------------------------------------------
-
-/**
- * Decodes a JWT payload without verifying its signature and extracts the
- * `sub` (user id) and `tenantId` claims used to build the session's clients.
- *
- * We never verify the signature here: this server does not own the signing
- * key for the forwarded token (it belongs to nev-api) and does not need to —
- * nev-data-api and nev-api validate the token themselves on every call. This
- * mirrors `decodeJwtTenantId` in `src/clients/session-clients.ts` (used for
- * the same purpose during `nevent_switch_tenant`) and the stdio transport's
- * own JWT decode in `src/index.ts`.
- *
- * @param token — Raw JWT string (without the `Bearer ` prefix).
- */
-export function decodeJwtClaims(token: string): { sub?: string; tenantId?: string } {
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return {};
-    const payload = JSON.parse(
-      Buffer.from(parts[1], 'base64url').toString('utf8')
-    ) as Record<string, unknown>;
-    const sub = typeof payload['sub'] === 'string' ? payload['sub'] : undefined;
-    const tenantIdClaim = payload['tenantId'] ?? payload['activeTenantId'];
-    const tenantId = typeof tenantIdClaim === 'string' ? tenantIdClaim : undefined;
-    return { sub, tenantId };
-  } catch {
-    return {};
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +177,10 @@ export function decodeJwtClaims(token: string): { sub?: string; tenantId?: strin
 export async function createBearerPassthroughApp(
   config: BearerPassthroughConfig
 ): Promise<BearerPassthroughAppResult> {
+  // Fail-closed at construction: a bearer-passthrough app without a valid
+  // service key must not exist (it would be open to anyone holding a JWT).
+  const serviceKeys = parseServiceKeys(config.serviceKeys[0], config.serviceKeys[1]);
+
   const app = express();
 
   app.set('trust proxy', 1);
@@ -239,11 +227,16 @@ export async function createBearerPassthroughApp(
     cors({
       origin: corsOrigin,
       exposedHeaders: ['Mcp-Session-Id'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Last-Event-ID', 'X-Nevent-Service-Key'],
     })
   );
 
-  const mcpRateLimiter = rateLimit({
+  /**
+   * Global cap per client IP, applied to EVERY request first (including
+   * those that will fail the service-key check), so a single address cannot
+   * brute-force the key or flood the server.
+   */
+  const ipRateLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 600,
     standardHeaders: true,
@@ -251,6 +244,42 @@ export async function createBearerPassthroughApp(
     message: { error: 'Rate limit exceeded. Please slow down your requests.' },
     validate: { trustProxy: false, xForwardedForHeader: false },
   });
+
+  /**
+   * Per-token cap. Runs after the service-key gate, so its buckets are only
+   * ever created by callers that hold the key. Keyed by a hash of the bearer
+   * (never the raw token): one chatty end user cannot starve the others, which
+   * they would if everyone behind the bot shared a single IP bucket.
+   */
+  const tokenRateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: config.tokenRateLimitPerMinute ?? 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Rate limit exceeded. Please slow down your requests.' },
+    keyGenerator: (req: Request): string =>
+      createHash('sha256')
+        .update(String(req.headers['authorization'] ?? ''))
+        .digest('hex'),
+    validate: { trustProxy: false, xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  });
+
+  /**
+   * Service-key gate. Missing or wrong key → `401` with NO detail (same body
+   * as any other auth failure, so it does not reveal which check failed), and
+   * no outbound call to nev-api is made.
+   */
+  function requireServiceKey(req: Request, res: Response, next: () => void): void {
+    if (!isValidServiceKey(req.headers[SERVICE_KEY_HEADER], serviceKeys)) {
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized.' },
+        id: null,
+      });
+      return;
+    }
+    next();
+  }
 
   // ---------------------------------------------------------------------------
   // Session registry
@@ -268,13 +297,13 @@ export async function createBearerPassthroughApp(
     userId: string;
     principalType: PrincipalType;
     /** Tenant the session is locked to (`resolveScopeTenantId` at initialize). */
-    tenantId: string | undefined;
+    tenantId: string;
     /** The bearer currently applied to the session's clients. */
     token: string;
     sessionClients: SessionClients;
     dataClient: DataClient;
   }
-  const activeSessions: Record<string, BearerSession> = {};
+  const activeSessions = new Map<string, BearerSession>();
 
   const toolsCount = getToolCount({
     hasNeventApiUrl: true,
@@ -295,7 +324,7 @@ export async function createBearerPassthroughApp(
       authMode: 'bearer-passthrough',
       mode: OPERATION_MODE,
       toolsCount,
-      activeSessions: Object.keys(activeSessions).length,
+      activeSessions: activeSessions.size,
       timestamp: new Date().toISOString(),
     });
   });
@@ -350,7 +379,19 @@ export async function createBearerPassthroughApp(
       next();
     } catch (err) {
       const message = err instanceof SessionVerificationError ? err.message : 'Session verification failed';
-      logger.warn({ err: message }, 'bearer-passthrough request rejected — session verification failed');
+      const unavailable = err instanceof SessionVerificationError && err.kind === 'unavailable';
+      logger.warn({ err: message, unavailable }, 'bearer-passthrough request rejected — session verification failed');
+      if (unavailable) {
+        // nev-api could not be asked (5xx / timeout / network). Still
+        // fail-closed — nothing is exposed — but a healthy caller should
+        // retry later rather than re-authenticate.
+        res.status(503).json({
+          jsonrpc: '2.0',
+          error: { code: -32002, message: 'Session verification temporarily unavailable. Retry shortly.' },
+          id: null,
+        });
+        return;
+      }
       res.status(401).json({
         jsonrpc: '2.0',
         error: {
@@ -385,7 +426,7 @@ export async function createBearerPassthroughApp(
    */
   function bindRequestToSession(req: Request, res: Response, next: () => void): void {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    const session = sessionId ? activeSessions[sessionId] : undefined;
+    const session = sessionId ? activeSessions.get(sessionId) : undefined;
     if (!session) {
       next();
       return;
@@ -417,24 +458,28 @@ export async function createBearerPassthroughApp(
     }
 
     if (token !== session.token) {
-      session.sessionClients.rotateJwt(token);
-      // rotateJwt re-reads the tenant from the JWT claim; nev-api's
-      // effectiveTenantId (already equal to the session's tenant here) wins.
-      if (session.tenantId !== undefined) {
-        session.dataClient.activeTenantId = session.tenantId;
+      // Rotate only to a token that outlives the one the session holds: an
+      // older (but still valid) token of the same principal must not roll the
+      // session back to a credential that expires sooner.
+      const newExp = unverifiedTokenExpiryMs(token);
+      const currentExp = unverifiedTokenExpiryMs(session.token);
+      if (newExp !== undefined && (currentExp === undefined || newExp > currentExp)) {
+        // The tenant is pinned to the verified one: a rotation can never
+        // move the session to whatever tenant the new token's claims name.
+        session.sessionClients.rotateJwt(token, session.tenantId);
+        session.token = token;
+        logger.info({ sessionId, userId: session.userId }, 'bearer-passthrough session token rotated');
       }
-      session.token = token;
-      logger.info({ sessionId, userId: session.userId }, 'bearer-passthrough session token rotated');
     }
     next();
   }
 
-  app.post('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.post('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
-      if (sessionId && activeSessions[sessionId]) {
-        await activeSessions[sessionId].transport.handleRequest(req, res, req.body);
+      if (sessionId && activeSessions.has(sessionId)) {
+        await activeSessions.get(sessionId)!.transport.handleRequest(req, res, req.body);
         return;
       }
 
@@ -443,15 +488,14 @@ export async function createBearerPassthroughApp(
         const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
 
         // `verifyIntrospectedSession` already confirmed this exact token
-        // against nev-api /auth/me for this request (cache hit here in the
-        // common case). That response — not the unverified JWT payload — is
-        // the authority for WHO the caller is and WHICH tenant the session is
-        // locked to: `effectiveTenantId` covers service sessions and
-        // hierarchical admins whose `activeTenantId` differs from the stored
-        // `tenantId`. The JWT claim is only a fallback for older nev-api
-        // versions that do not return it. The token itself is never logged.
-        const verified = await verifySession(bearerToken, config.neventApiUrl);
-        const tenantId = resolveScopeTenantId(verified) ?? decodeJwtClaims(bearerToken).tenantId;
+        // against nev-api /auth/me for this request and stored the verdict:
+        // that response — never the unverified JWT payload — is the authority
+        // for WHO the caller is and WHICH tenant the session is locked to
+        // (`effectiveTenantId`). `parseVerifiedSession` guarantees a tenant is
+        // present, so there is no fallback to JWT claims. The token itself is
+        // never logged.
+        const verified = res.locals['verifiedSession'] as VerifiedSession;
+        const tenantId = resolveScopeTenantId(verified) as string;
 
         // Fresh clients for THIS session, built from THIS request's token.
         // No shared state with any other session — see module doc.
@@ -473,7 +517,6 @@ export async function createBearerPassthroughApp(
         logger.info(
           {
             userId: verified.userId,
-            email: verified.email ?? 'unknown',
             principalType: verified.principalType,
             tenantId: tenantId ?? 'unknown',
             mode: OPERATION_MODE,
@@ -485,26 +528,25 @@ export async function createBearerPassthroughApp(
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
             logger.info({ sessionId: newSessionId }, 'bearer-passthrough session initialized');
-            activeSessions[newSessionId] = {
+            activeSessions.set(newSessionId, {
               transport,
               createdAt: new Date(),
               userId: verified.userId,
               principalType: verified.principalType,
-              // Compared against nev-api's answer on every later request,
-              // so it must be the same derivation (no JWT-claim fallback).
-              tenantId: resolveScopeTenantId(verified),
+              // Compared against nev-api's answer on every later request.
+              tenantId,
               token: bearerToken,
               sessionClients,
               dataClient,
-            };
+            });
           },
         });
 
         transport.onclose = () => {
           const sid = transport.sessionId;
-          if (sid && activeSessions[sid]) {
+          if (sid && activeSessions.has(sid)) {
             logger.info({ sessionId: sid }, 'bearer-passthrough session closed');
-            delete activeSessions[sid];
+            activeSessions.delete(sid);
           }
         };
 
@@ -543,14 +585,14 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.get('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.get('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !activeSessions[sessionId]) {
+    if (!sessionId || !activeSessions.has(sessionId)) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
       return;
     }
     try {
-      await activeSessions[sessionId].transport.handleRequest(req, res);
+      await activeSessions.get(sessionId)!.transport.handleRequest(req, res);
     } catch (err) {
       logger.error({ err }, 'Error handling GET / (bearer-passthrough)');
       if (!res.headersSent) {
@@ -559,14 +601,14 @@ export async function createBearerPassthroughApp(
     }
   });
 
-  app.delete('/', mcpRateLimiter, requireBearerHeader, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
+  app.delete('/', ipRateLimiter, requireServiceKey, requireBearerHeader, tokenRateLimiter, verifyIntrospectedSession, bindRequestToSession, async (req: Request, res: Response): Promise<void> => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !activeSessions[sessionId]) {
+    if (!sessionId || !activeSessions.has(sessionId)) {
       res.status(400).send('Invalid or missing Mcp-Session-Id header');
       return;
     }
     try {
-      await activeSessions[sessionId].transport.handleRequest(req, res);
+      await activeSessions.get(sessionId)!.transport.handleRequest(req, res);
     } catch (err) {
       logger.error({ err }, 'Error handling DELETE / (bearer-passthrough)');
       if (!res.headersSent) {
@@ -582,15 +624,15 @@ export async function createBearerPassthroughApp(
   const SESSION_MAX_AGE_MS = 30 * 60 * 1000;
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
-    const orphaned = Object.entries(activeSessions).filter(
+    const orphaned = [...activeSessions.entries()].filter(
       ([, { createdAt }]) => now - createdAt.getTime() > SESSION_MAX_AGE_MS
     );
     for (const [sid] of orphaned) {
       logger.info({ sessionId: sid }, 'Cleaning up orphaned bearer-passthrough session');
-      activeSessions[sid].transport.close().catch(() => {
+      activeSessions.get(sid)!.transport.close().catch(() => {
         // Ignore errors during cleanup — session may already be closed
       });
-      delete activeSessions[sid];
+      activeSessions.delete(sid);
     }
   }, SESSION_MAX_AGE_MS);
   cleanupInterval.unref();
@@ -598,12 +640,12 @@ export async function createBearerPassthroughApp(
   const shutdown = async (): Promise<void> => {
     logger.info('Shutting down bearer-passthrough HTTP transport...');
     clearInterval(cleanupInterval);
-    const sessionIds = Object.keys(activeSessions);
+    const sessionIds = [...activeSessions.keys()];
     await Promise.allSettled(
       sessionIds.map(async (sid) => {
         try {
-          await activeSessions[sid].transport.close();
-          delete activeSessions[sid];
+          await activeSessions.get(sid)!.transport.close();
+          activeSessions.delete(sid);
         } catch (err) {
           logger.error({ err, sessionId: sid }, 'Error closing session during shutdown');
         }

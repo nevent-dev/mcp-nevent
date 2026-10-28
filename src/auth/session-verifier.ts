@@ -116,7 +116,19 @@ export function resolveScopeTenantId(session: VerifiedSession): string | undefin
  * way: refuse the request with `401` and expose nothing.
  */
 export class SessionVerificationError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+  /**
+   * - `rejected`: nev-api (or the shape of its answer) says this token must
+   *   not be used → the transport answers `401`.
+   * - `unavailable`: nev-api could not be asked (5xx, timeout, network,
+   *   unparseable answer) → the transport answers `503`. Still fail-closed:
+   *   nothing is exposed either way; the distinction only tells a healthy
+   *   caller to retry later instead of re-authenticating.
+   */
+  constructor(
+    message: string,
+    readonly cause?: unknown,
+    readonly kind: 'rejected' | 'unavailable' = 'rejected'
+  ) {
     super(message);
     this.name = 'SessionVerificationError';
   }
@@ -143,8 +155,47 @@ interface CacheEntry {
   expiresAtMs: number;
 }
 
-/** Keyed by SHA-256 hex digest of the token — never the raw token. */
+/**
+ * Hard cap on cached verdicts (positive and negative each). The cache is
+ * keyed by attacker-influenced input (every distinct token), so it must be
+ * bounded: when full, expired entries are purged first and then the least
+ * recently used entry is evicted.
+ */
+export const MAX_CACHE_ENTRIES = 1000;
+
+/**
+ * How long a token that nev-api explicitly rejected (`401`/`403`) is
+ * remembered, so a client hammering with a bad token does not turn into one
+ * `/auth/me` call per request. Deliberately short: a freshly issued token must
+ * not be locked out for long. Only explicit rejections are cached — never
+ * 5xx/timeouts, which say nothing about the token.
+ */
+export const NEGATIVE_CACHE_TTL_MS = 5_000;
+
+/** Keyed by SHA-256 hex digest of the token — never the raw token. Insertion order = LRU order. */
 const verificationCache = new Map<string, CacheEntry>();
+
+/** token hash -> time (ms) until which the token is treated as rejected. */
+const rejectedTokenCache = new Map<string, number>();
+
+/** Drops expired entries from a cache and evicts oldest ones above the cap. */
+function enforceCap<V>(cache: Map<string, V>, expiresAt: (v: V) => number, reserve = 0): void {
+  if (cache.size + reserve <= MAX_CACHE_ENTRIES) return;
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (expiresAt(v) <= now) cache.delete(k);
+  }
+  while (cache.size + reserve > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+}
+
+/** Current number of cached verdicts (positive + negative). Exposed for tests only. */
+export function _cacheSizesForTests(): { verified: number; rejected: number } {
+  return { verified: verificationCache.size, rejected: rejectedTokenCache.size };
+}
 
 /** Hashes a token for use as a cache key/log field. Never logs the raw token. */
 function hashToken(token: string): string {
@@ -176,6 +227,16 @@ function decodeExpMs(token: string): number | undefined {
 /** Clears the verification cache. Exposed for tests only. */
 export function _clearVerificationCacheForTests(): void {
   verificationCache.clear();
+  rejectedTokenCache.clear();
+}
+
+/**
+ * Best-effort, UNVERIFIED `exp` (ms since epoch) of a JWT, or `undefined`.
+ * Used only to decide whether a newly presented token of an already
+ * verified principal outlives the one a session currently holds.
+ */
+export function unverifiedTokenExpiryMs(token: string): number | undefined {
+  return decodeExpMs(token);
 }
 
 // ---------------------------------------------------------------------------
@@ -196,11 +257,11 @@ function str(value: unknown): string | undefined {
  *    acts in exactly one tenant; without it the tenant lock cannot be
  *    established.
  *
- * `SERVICE` principals are accepted (both `TENANT` and `PLATFORM` scope):
- * every tool exposed here is READ-only and locked to the session tenant via
+ * `SERVICE` principals are accepted only with `TENANT` scope: every tool
+ * exposed here is READ-only and locked to the session tenant via
  * `effectiveTenantId`, tenant-discovery/switching tools are excluded, and
  * nev-api / nev-data-api re-validate the live service session on every
- * downstream call.
+ * downstream call. `PLATFORM` scope (global SUPERADMIN) is refused.
  */
 function parseVerifiedSession(userId: string, body: Record<string, unknown>): VerifiedSession {
   const rawPrincipal = body['principalType'];
@@ -216,6 +277,12 @@ function parseVerifiedSession(userId: string, body: Record<string, unknown>): Ve
   if (principalType === 'SERVICE' && !effectiveTenantId) {
     throw new SessionVerificationError('nev-api /auth/me service session is missing "effectiveTenantId"');
   }
+  // Fail-closed: the session's tenant lock comes ONLY from this answer. No
+  // tenant at all (neither effectiveTenantId nor tenantId) means no lock can
+  // be established, and the unverified JWT claim is never used instead.
+  if (!effectiveTenantId && !str(body['tenantId'])) {
+    throw new SessionVerificationError('nev-api /auth/me returned no tenant for this session');
+  }
 
   const rawService = body['serviceSession'];
   let serviceSession: VerifiedServiceSession | undefined;
@@ -227,6 +294,18 @@ function parseVerifiedSession(userId: string, body: Record<string, unknown>): Ve
       scope: str(svc['scope']),
       tenantId: str(svc['tenantId']),
     };
+  }
+  if (principalType === 'SERVICE') {
+    // Only TENANT-scope service sessions (bound to one tenant and its
+    // descendants). PLATFORM scope is global SUPERADMIN authority and is
+    // refused; so is a missing scope, or a session tenant that disagrees with
+    // the effective tenant.
+    if (serviceSession?.scope !== 'TENANT') {
+      throw new SessionVerificationError('nev-api /auth/me service session scope is not TENANT');
+    }
+    if (serviceSession.tenantId && serviceSession.tenantId !== effectiveTenantId) {
+      throw new SessionVerificationError('nev-api /auth/me service session tenant mismatch');
+    }
   }
 
   return {
@@ -262,7 +341,19 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
 
   const cached = verificationCache.get(tokenHash);
   if (cached && cached.expiresAtMs > Date.now()) {
+    // Refresh recency (LRU).
+    verificationCache.delete(tokenHash);
+    verificationCache.set(tokenHash, cached);
     return cached.session;
+  }
+  if (cached) verificationCache.delete(tokenHash);
+
+  const rejectedUntil = rejectedTokenCache.get(tokenHash);
+  if (rejectedUntil !== undefined) {
+    if (rejectedUntil > Date.now()) {
+      throw new SessionVerificationError('nev-api /auth/me rejected this token (401/403, cached)');
+    }
+    rejectedTokenCache.delete(tokenHash);
   }
 
   let response: Response;
@@ -275,7 +366,7 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Network error';
     logger.warn({ tokenHash: tokenHash.slice(0, 16), err: message }, 'auth/me verification failed (network/timeout)');
-    throw new SessionVerificationError(`Failed to reach nev-api /auth/me: ${message}`, err);
+    throw new SessionVerificationError(`Failed to reach nev-api /auth/me: ${message}`, err, 'unavailable');
   }
 
   if (!response.ok) {
@@ -283,8 +374,19 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
       { tokenHash: tokenHash.slice(0, 16), status: response.status },
       'auth/me verification rejected'
     );
-    // Any non-2xx (401 invalid/expired, 403, 5xx, ...) is fail-closed.
-    throw new SessionVerificationError(`nev-api /auth/me returned ${response.status}`);
+    // Any non-2xx is fail-closed. Only an explicit 401/403 says the TOKEN is
+    // bad (and is negatively cached); everything else (5xx, 429, ...) says
+    // nev-api could not answer and maps to 503 at the transport.
+    if (response.status === 401 || response.status === 403) {
+      enforceCap(rejectedTokenCache, (until) => until, 1);
+      rejectedTokenCache.set(tokenHash, Date.now() + NEGATIVE_CACHE_TTL_MS);
+      throw new SessionVerificationError(`nev-api /auth/me returned ${response.status}`);
+    }
+    throw new SessionVerificationError(
+      `nev-api /auth/me returned ${response.status}`,
+      undefined,
+      'unavailable'
+    );
   }
 
   let body: Record<string, unknown>;
@@ -292,7 +394,7 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
     body = (await response.json()) as Record<string, unknown>;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid JSON';
-    throw new SessionVerificationError(`Failed to parse nev-api /auth/me response: ${message}`, err);
+    throw new SessionVerificationError(`Failed to parse nev-api /auth/me response: ${message}`, err, 'unavailable');
   }
 
   const userId = typeof body['id'] === 'string' ? body['id'] : undefined;
@@ -319,6 +421,7 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
   // already-expired token must always re-check with nev-api (which will
   // legitimately 401 it) rather than be cached at all.
   if (expiresAtMs > Date.now()) {
+    enforceCap(verificationCache, (e) => e.expiresAtMs, 1);
     verificationCache.set(tokenHash, { session, expiresAtMs });
   }
 

@@ -9,9 +9,6 @@
  *    actually registered on the McpServer — excluded/WRITE/DELETE tools are
  *    absent from the tool registry entirely (i.e. absent from `tools/list`),
  *    not merely denied at call time.
- *  - `decodeJwtClaims`: two different tokens decode to independent claims —
- *    the building block that guarantees two bearer-passthrough sessions
- *    started with different JWTs never share a `DataClient` / tenant.
  *  - Session isolation: replaying the exact client-construction sequence
  *    `http-bearer-passthrough.ts` uses per session shows that two sessions
  *    built from different JWTs get distinct client instances scoped to
@@ -33,7 +30,6 @@ import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
-import { decodeJwtClaims } from '../transports/http-bearer-passthrough.js';
 
 // ---------------------------------------------------------------------------
 // isToolAllowedInBearerPassthrough
@@ -161,46 +157,12 @@ describe('createNeventServer — bearer-passthrough toolFilter', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// decodeJwtClaims
-// ---------------------------------------------------------------------------
-
 /** Builds an unsigned (alg=none) JWT-shaped string carrying the given payload. */
 function makeFakeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${header}.${body}.`;
 }
-
-describe('decodeJwtClaims', () => {
-  it('extracts sub and tenantId from a well-formed token', () => {
-    const token = makeFakeJwt({ sub: 'user-1', tenantId: 'tenant-1' });
-    expect(decodeJwtClaims(token)).toEqual({ sub: 'user-1', tenantId: 'tenant-1' });
-  });
-
-  it('falls back to activeTenantId when tenantId is absent', () => {
-    const token = makeFakeJwt({ sub: 'user-1', activeTenantId: 'tenant-2' });
-    expect(decodeJwtClaims(token)).toEqual({ sub: 'user-1', tenantId: 'tenant-2' });
-  });
-
-  it('two distinct tokens decode to two distinct, independent claim sets', () => {
-    const tokenA = makeFakeJwt({ sub: 'promoter-a', tenantId: 'tenant-a' });
-    const tokenB = makeFakeJwt({ sub: 'promoter-b', tenantId: 'tenant-b' });
-
-    const claimsA = decodeJwtClaims(tokenA);
-    const claimsB = decodeJwtClaims(tokenB);
-
-    expect(claimsA).toEqual({ sub: 'promoter-a', tenantId: 'tenant-a' });
-    expect(claimsB).toEqual({ sub: 'promoter-b', tenantId: 'tenant-b' });
-    expect(claimsA).not.toEqual(claimsB);
-  });
-
-  it('returns an empty object for a malformed token instead of throwing', () => {
-    expect(decodeJwtClaims('not-a-jwt')).toEqual({});
-    expect(decodeJwtClaims('')).toEqual({});
-    expect(() => decodeJwtClaims('not.valid-base64url!!!.sig')).not.toThrow();
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Session isolation — two JWTs never share a client or tenant
@@ -216,16 +178,15 @@ describe('bearer-passthrough session isolation', () => {
     const jwtA = makeFakeJwt({ sub: 'promoter-a', tenantId: 'tenant-a' });
     const jwtB = makeFakeJwt({ sub: 'promoter-b', tenantId: 'tenant-b' });
 
-    function buildSession(jwt: string) {
-      const { tenantId } = decodeJwtClaims(jwt);
+    function buildSession(jwt: string, tenantId: string) {
       const dataClient = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: jwt }, tenantId);
       const paidMediaClient = new PaidMediaClient({ baseUrl: 'https://api.nevent.es', jwtToken: jwt });
       const sessionClients = new SessionClients(dataClient, paidMediaClient, 'https://api.nevent.es', tenantId);
       return { dataClient, paidMediaClient, sessionClients };
     }
 
-    const sessionA = buildSession(jwtA);
-    const sessionB = buildSession(jwtB);
+    const sessionA = buildSession(jwtA, 'tenant-a');
+    const sessionB = buildSession(jwtB, 'tenant-b');
 
     // Distinct instances — no shared client object between sessions.
     expect(sessionA.dataClient).not.toBe(sessionB.dataClient);
@@ -248,5 +209,17 @@ describe('bearer-passthrough session isolation', () => {
     sessionA.sessionClients.rotateJwt('rotated-token-a');
     expect(sessionA.dataClient.getJwtToken()).toBe('rotated-token-a');
     expect(sessionB.dataClient.getJwtToken()).toBe(jwtB);
+  });
+
+  it('rotateJwt with a locked tenant can never move the session to the tenant named by the new token', () => {
+    const jwt = makeFakeJwt({ sub: 'promoter-a', tenantId: 'tenant-a' });
+    const dataClient = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: jwt }, 'tenant-a');
+    const paidMediaClient = new PaidMediaClient({ baseUrl: 'https://api.nevent.es', jwtToken: jwt });
+    const sessionClients = new SessionClients(dataClient, paidMediaClient, 'https://api.nevent.es', 'tenant-a');
+
+    // A new token whose (unverified) claims name ANOTHER tenant.
+    sessionClients.rotateJwt(makeFakeJwt({ sub: 'promoter-a', tenantId: 'tenant-evil' }), 'tenant-a');
+
+    expect(dataClient.activeTenantId).toBe('tenant-a');
   });
 });

@@ -22,6 +22,9 @@ import {
   verifySession,
   resolveScopeTenantId,
   SessionVerificationError,
+  NEGATIVE_CACHE_TTL_MS,
+  MAX_CACHE_ENTRIES,
+  _cacheSizesForTests,
   _clearVerificationCacheForTests,
 } from '../auth/session-verifier.js';
 
@@ -295,5 +298,132 @@ describe('verifySession — principalType / effectiveTenantId / serviceSession',
     expect(mockFetch).toHaveBeenCalledTimes(2);
     await verifySession(serviceToken, NEVENT_API_URL); // revalidated (10s)
     expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('verifySession — caches, 5xx handling, scope and tenant rules', () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  const okBody = (id: string) => ({ id, tenantId: 't-1', principalType: 'HUMAN' });
+
+  beforeEach(() => {
+    _clearVerificationCacheForTests();
+    mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('marks 5xx, network errors and unparseable answers as "unavailable" and 401/403 as "rejected"', async () => {
+    const kindOf = async (setup: () => void): Promise<string | undefined> => {
+      _clearVerificationCacheForTests();
+      setup();
+      try {
+        await verifySession(makeFakeJwt({ sub: 'u' }), NEVENT_API_URL);
+      } catch (e) {
+        return (e as SessionVerificationError).kind;
+      }
+      return undefined;
+    };
+    expect(await kindOf(() => mockFetch.mockResolvedValue(mockFetchError(503)))).toBe('unavailable');
+    expect(await kindOf(() => mockFetch.mockResolvedValue(mockFetchError(429)))).toBe('unavailable');
+    expect(await kindOf(() => mockFetch.mockRejectedValue(new Error('ECONNRESET')))).toBe('unavailable');
+    expect(await kindOf(() => mockFetch.mockResolvedValue(mockFetchError(401)))).toBe('rejected');
+    expect(await kindOf(() => mockFetch.mockResolvedValue(mockFetchError(403)))).toBe('rejected');
+  });
+
+  it('negatively caches a 401 for ~5 s, then asks nev-api again; 5xx is never negatively cached', async () => {
+    vi.useFakeTimers();
+    const token = makeFakeJwt({ sub: 'u' });
+
+    mockFetch.mockResolvedValue(mockFetchError(401));
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(/401/);
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(/401/);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(NEGATIVE_CACHE_TTL_MS + 1);
+    mockFetch.mockResolvedValue(mockFetchOk(okBody('u')));
+    await expect(verifySession(token, NEVENT_API_URL)).resolves.toMatchObject({ userId: 'u' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    _clearVerificationCacheForTests();
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(mockFetchError(503));
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow();
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds both caches at MAX_CACHE_ENTRIES (oldest evicted first)', async () => {
+    mockFetch.mockImplementation(async (_u: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>)['Authorization'];
+      return auth.includes('bad') ? mockFetchError(401) : mockFetchOk(okBody('u'));
+    });
+
+    for (let i = 0; i < MAX_CACHE_ENTRIES + 25; i++) {
+      await verifySession(makeFakeJwt({ sub: `u${i}`, exp: Math.floor(Date.now() / 1000) + 3600 }), NEVENT_API_URL);
+      await verifySession(`bad.${i}.x`, NEVENT_API_URL).catch(() => undefined);
+    }
+    const sizes = _cacheSizesForTests();
+    expect(sizes.verified).toBeLessThanOrEqual(MAX_CACHE_ENTRIES);
+    expect(sizes.rejected).toBeLessThanOrEqual(MAX_CACHE_ENTRIES);
+    expect(sizes.verified).toBeGreaterThan(MAX_CACHE_ENTRIES - 5);
+  });
+
+  it('purges expired entries before evicting live ones when the cap is hit', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue(mockFetchOk(okBody('u')));
+    const exp = () => Math.floor(Date.now() / 1000) + 3600;
+
+    for (let i = 0; i < MAX_CACHE_ENTRIES; i++) {
+      await verifySession(makeFakeJwt({ sub: `old${i}`, exp: exp() }), NEVENT_API_URL);
+    }
+    expect(_cacheSizesForTests().verified).toBe(MAX_CACHE_ENTRIES);
+
+    vi.advanceTimersByTime(61_000); // every entry is now expired
+    const fresh = makeFakeJwt({ sub: 'fresh', exp: exp() });
+    await verifySession(fresh, NEVENT_API_URL);
+    expect(_cacheSizesForTests().verified).toBe(1);
+    mockFetch.mockClear();
+    await verifySession(fresh, NEVENT_API_URL);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a SERVICE session with PLATFORM scope, or with no scope', async () => {
+    const svc = (scope?: string) => ({
+      id: 's',
+      principalType: 'SERVICE',
+      tenantId: 't-1',
+      effectiveTenantId: 't-1',
+      serviceSession: scope ? { scope, tenantId: 't-1' } : {},
+    });
+    mockFetch.mockResolvedValue(mockFetchOk(svc('PLATFORM')));
+    await expect(verifySession(makeFakeJwt({ sub: 'a' }), NEVENT_API_URL)).rejects.toThrow(/scope is not TENANT/);
+    mockFetch.mockResolvedValue(mockFetchOk(svc()));
+    await expect(verifySession(makeFakeJwt({ sub: 'b' }), NEVENT_API_URL)).rejects.toThrow(/scope is not TENANT/);
+    mockFetch.mockResolvedValue(mockFetchOk(svc('TENANT')));
+    await expect(verifySession(makeFakeJwt({ sub: 'c' }), NEVENT_API_URL)).resolves.toMatchObject({
+      principalType: 'SERVICE',
+    });
+  });
+
+  it('refuses a SERVICE session whose session tenant disagrees with the effective tenant', async () => {
+    mockFetch.mockResolvedValue(
+      mockFetchOk({
+        id: 's',
+        principalType: 'SERVICE',
+        effectiveTenantId: 't-1',
+        serviceSession: { scope: 'TENANT', tenantId: 't-2' },
+      })
+    );
+    await expect(verifySession(makeFakeJwt({ sub: 'a' }), NEVENT_API_URL)).rejects.toThrow(/tenant mismatch/);
+  });
+
+  it('refuses a response with no tenant at all (fail-closed, no JWT-claim fallback)', async () => {
+    const token = makeFakeJwt({ sub: 'u', tenantId: 'claim-tenant' });
+    mockFetch.mockResolvedValue(mockFetchOk({ id: 'u', principalType: 'HUMAN' }));
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(/no tenant/);
   });
 });
