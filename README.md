@@ -187,6 +187,24 @@ Authorization: Bearer <the promoter's nev-api JWT>
   moves to the new one, then remove it. Keep it in a secret store, never in the
   repository. Requests are also capped per IP (600/min, applied before body parsing) and per token (300/min). `GET /health` is unauthenticated for load balancers and returns only `{status, version, commitSha}`.
 
+- **Write policy (off by default).** By default every session is READ-only
+  (46 tools). `MCP_BEARER_PASSTHROUGH_WRITES=human` additionally exposes, to
+  sessions of a person (`principalType` HUMAN verified in `/auth/me`), 12
+  write tools: `nevent_create_segment`, `nevent_update_segment`,
+  `nevent_create_template`, `nevent_update_template`, `nevent_clone_template`,
+  `nevent_rename_template`, `nevent_send_test_template`,
+  `nevent_create_campaign`, `nevent_schedule_campaign`,
+  `nevent_create_short_url`, `nevent_update_short_url`,
+  `nevent_create_bulk_user_short_urls`. `SERVICE` sessions never get writes.
+  `upload_image`, `delete_image`, `reset_tenant`, `switch_tenant` and
+  `list_tenants` are never exposed, and an unclassified tool is denied. The
+  policy is fixed per session at `initialize`. Writes are **not safe to enable
+  yet**: the real barrier is the signed single-use write grant (NEV-1855), so
+  the server refuses to start with `human` until that exists (override for
+  non-production only: `MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT=true`).
+  Calls also need `NEVENT_OPERATION_MODE=FULL` (`schedule_campaign` is
+  classified DELETE because it sends for real).
+
 - **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.**
   `MONGODB_URI` stays optional: set it to also enable the Mongo-backed read
   tools (campaigns/templates/deliverability), each still scoped by the
