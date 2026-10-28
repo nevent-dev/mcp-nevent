@@ -17,12 +17,12 @@
  *   │
  *   ├── POST /authorize (custom) → NeventOAuthProvider.handleLoginPost()
  *   │
- *   ├── POST /mcp                — MCP JSON-RPC (lazyAuthMiddleware, NEV-1776)
+ *   ├── POST /                   — MCP JSON-RPC (lazyAuthMiddleware, NEV-1776)
  *   │     ├── with Bearer token  → requireBearerAuth (unchanged)
  *   │     └── without token      → discovery-only (initialize, tools/list, ping…)
  *   │           → anonymous McpServer probe (stub clients, full tool metadata)
- *   ├── GET  /mcp                — MCP SSE stream (requireBearerAuth, always)
- *   ├── DELETE /mcp              — Session termination (requireBearerAuth, always)
+ *   ├── GET  /                   — MCP SSE stream (requireBearerAuth, always)
+ *   ├── DELETE /                 — Session termination (requireBearerAuth, always)
  *   ├── GET  /health             — Health check (no auth)
  *   ├── GET  /                   — Public landing page (HTML/Markdown, no auth)
  *   ├── GET  /.well-known/mcp-manifest.json      — Client discovery (no auth)
@@ -72,7 +72,7 @@
  *
  * ## Rate limiting
  *
- * `express-rate-limit` is applied on all `/mcp` and `/authorize` endpoints to
+ * `express-rate-limit` is applied on all `/` (MCP) and `/authorize` endpoints to
  * prevent brute-force attacks.
  *
  * ## CORS
@@ -114,9 +114,15 @@ import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
 import { TokenService } from '../auth/token-service.js';
-import { NeventOAuthProvider } from '../auth/oauth-provider.js';
+import { NeventOAuthProvider, parseRefreshMaxLifetimeDays, parseRefreshRevalidateMode } from '../auth/oauth-provider.js';
 import { createOAuthStores } from '../auth/oauth-stores.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
+import {
+  getClientRestrictionPolicy,
+  hasClientRestrictions,
+  resolveToolFilterForClient,
+  validateClientRestrictionPolicy,
+} from '../config/client-restrictions.js';
 import { logger } from '../logger.js';
 import {
   buildAgentAuthMetadata,
@@ -208,6 +214,18 @@ export function getOpenAiAppsChallengeToken(): string {
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_OPENAI_APPS_CHALLENGE_TOKEN;
 }
 
+/**
+ * Returns the commit SHA the running image was built from, surfaced by `/health`.
+ *
+ * Injected at image build time (Docker `ARG COMMIT_SHA` -> `ENV GIT_COMMIT_SHA`).
+ * Read at call time. Falls back to `'unknown'` when unset or blank (local runs,
+ * images built without the build arg).
+ */
+export function getCommitSha(): string {
+  const sha = process.env['GIT_COMMIT_SHA']?.trim();
+  return sha && sha.length > 0 ? sha : 'unknown';
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -255,6 +273,13 @@ const activeSessions: Record<string, {
   transport: StreamableHTTPServerTransport;
   dataClient: DataClient;
   createdAt: Date;
+  /**
+   * OAuth client the session was created for. Later requests on the session
+   * must come from the same client (NEV-1848): a restricted (read-only)
+   * client's session can never be driven by another client's token, nor the
+   * other way round.
+   */
+  clientId: string | undefined;
 }> = {};
 
 // ---------------------------------------------------------------------------
@@ -596,7 +621,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       service: 'nevent-mcp',
       transport: 'http',
       version: PKG_VERSION,
-      commitSha: process.env['GIT_COMMIT_SHA'] ?? 'unknown',
+      commitSha: getCommitSha(),
       toolsCount: getToolCount({
         hasNeventApiUrl: true,
         hasMongoUri: true,
@@ -695,7 +720,32 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     tokenService,
     neventApiUrl: config.neventApiUrl,
     mcpServerUrl: config.mcpServerUrl,
+    refreshMaxLifetimeDays: parseRefreshMaxLifetimeDays(process.env['MCP_REFRESH_MAX_LIFETIME_DAYS']),
+    refreshRevalidate: parseRefreshRevalidateMode(process.env['MCP_REFRESH_REVALIDATE']),
   });
+
+  // Startup report of the per-client restriction rules (NEV-1848).
+  const restrictionPolicy = getClientRestrictionPolicy();
+  if (hasClientRestrictions(restrictionPolicy)) {
+    logger.info(
+      {
+        readOnlyRedirectPrefixes: restrictionPolicy.redirectPrefixes,
+        readOnlyClientIds: restrictionPolicy.clientIds.size,
+      },
+      'Read-only OAuth client restrictions active'
+    );
+    for (const warning of validateClientRestrictionPolicy(restrictionPolicy)) {
+      logger.warn(warning);
+    }
+  }
+
+  const resolveToolFilter = (clientId: string | undefined) =>
+    resolveToolFilterForClient(clientId, (id) => provider.clientsStore.getClient(id));
+
+  /** `true` when the request's token belongs to the client that owns the session. */
+  function callerOwnsSession(req: Request, sessionId: string): boolean {
+    return req.auth?.clientId === activeSessions[sessionId]?.clientId;
+  }
 
   // -------------------------------------------------------------------------
   // POST /authorize — custom handler for HTML form submission
@@ -867,7 +917,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   };
 
   // -------------------------------------------------------------------------
-  // POST /mcp — Handle MCP JSON-RPC messages
+  // POST / — Handle MCP JSON-RPC messages
   // -------------------------------------------------------------------------
 
   app.post('/', (req: Request, _res: Response, next: () => void) => {
@@ -876,7 +926,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         sessionId: req.headers['mcp-session-id'] ?? 'new',
         auth: req.headers['authorization'] ? 'present' : 'missing',
       },
-      'POST /mcp'
+      'POST /'
     );
     next();
   }, mcpRateLimiter, lazyAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
@@ -1011,6 +1061,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
       // Reuse existing session transport
       if (sessionId && activeSessions[sessionId]) {
+        if (!callerOwnsSession(req, sessionId)) {
+          res.status(403).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Forbidden: session belongs to a different OAuth client' },
+            id: null,
+          });
+          return;
+        }
         await activeSessions[sessionId].transport.handleRequest(req, res, req.body);
         return;
       }
@@ -1036,12 +1094,14 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         let sessionPaidMediaClient: PaidMediaClient;
         let sessionUserId: string | null = null;
         let sessionHomeTenantId: string | undefined;
+        let sessionClientId: string | undefined;
 
         try {
           const authHeader = req.headers['authorization'] ?? '';
           const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
           const claims = tokenService.verifyAccessToken(bearerToken);
           sessionUserId = claims.sub;
+          sessionClientId = claims.clientId;
           sessionHomeTenantId = claims.tenantId ?? undefined;
 
           // Use the MCP bearer token directly for data-api calls.
@@ -1109,6 +1169,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
               transport,
               dataClient: sessionDataClient,
               createdAt: new Date(),
+              clientId: sessionClientId,
             };
           },
         });
@@ -1127,12 +1188,17 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         // attribute logs to the correct user and session.
         // getSessionId is lazy because transport.sessionId is only assigned after
         // the first initialize request is processed.
+        const toolFilter = await resolveToolFilter(sessionClientId);
+        if (toolFilter) {
+          logger.info({ clientId: sessionClientId, userId: sessionUserId }, 'Session restricted to read-only tools');
+        }
         const mcpServer = createNeventServer({
           dataClient: sessionDataClient,
           neventApiUrl: config.neventApiUrl,
           mongoUri: config.mongoUri,
           paidMediaClient: sessionPaidMediaClient,
           sessionClients,
+          toolFilter,
           userId: sessionUserId ?? undefined,
           getSessionId: () => transport.sessionId ?? null,
         });
@@ -1153,7 +1219,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
         id: null,
       });
     } catch (err) {
-      logger.error({ err }, 'Error handling POST /mcp');
+      logger.error({ err }, 'Error handling POST /');
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
@@ -1165,7 +1231,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // GET /mcp — SSE stream for server-initiated messages
+  // GET / — SSE stream for server-initiated messages
   // -------------------------------------------------------------------------
 
   // A browser or a crawler hitting `https://mcp.nevent.ai/` is not opening an
@@ -1201,6 +1267,11 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       return;
     }
 
+    if (!callerOwnsSession(req, sessionId)) {
+      res.status(403).send('Session belongs to a different OAuth client');
+      return;
+    }
+
     const lastEventId = req.headers['last-event-id'];
     if (lastEventId) {
       logger.debug({ sessionId, lastEventId }, 'SSE resume');
@@ -1209,7 +1280,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
     try {
       await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
-      logger.error({ err }, 'Error handling GET /mcp');
+      logger.error({ err }, 'Error handling GET /');
       if (!res.headersSent) {
         res.status(500).send('Internal server error');
       }
@@ -1217,7 +1288,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
   });
 
   // -------------------------------------------------------------------------
-  // DELETE /mcp — Session termination
+  // DELETE / — Session termination
   // -------------------------------------------------------------------------
 
   app.delete('/', mcpRateLimiter, bearerAuth, async (req: Request, res: Response): Promise<void> => {
@@ -1228,12 +1299,17 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
       return;
     }
 
+    if (!callerOwnsSession(req, sessionId)) {
+      res.status(403).send('Session belongs to a different OAuth client');
+      return;
+    }
+
     logger.info({ sessionId }, 'Session termination requested');
 
     try {
       await activeSessions[sessionId].transport.handleRequest(req, res);
     } catch (err) {
-      logger.error({ err }, 'Error handling DELETE /mcp');
+      logger.error({ err }, 'Error handling DELETE /');
       if (!res.headersSent) {
         res.status(500).send('Error processing session termination');
       }
@@ -1248,7 +1324,7 @@ export async function createHttpApp(config: HttpTransportConfig): Promise<HttpAp
 
   /**
    * Periodic cleanup for sessions that were not closed via the transport
-   * `onclose` event (e.g., clients that disconnected without a DELETE /mcp).
+   * `onclose` event (e.g., clients that disconnected without a DELETE /).
    * Authenticated sessions older than 30 minutes are considered orphaned.
    * Anonymous discovery sessions use the shorter ANON_SESSION_MAX_AGE_MS TTL
    * (5 minutes) since they hold no state worth preserving.

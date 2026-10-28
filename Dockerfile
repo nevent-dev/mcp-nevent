@@ -51,6 +51,19 @@ FROM node:22-alpine AS runner
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S mcp -u 1001 -G nodejs
 
+# Supply-chain hardening: the app only runs `node dist/index.js` and the
+# healthcheck uses wget, so the package manager shipped with the base image
+# (npm, npx, corepack and their bundled dependencies) is dead weight that only
+# adds CVE surface. Remove it from the final image.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+           /opt/yarn* \
+           /usr/local/bin/yarn \
+           /usr/local/bin/yarnpkg
+
 WORKDIR /app
 
 # Copy compiled output and production node_modules only
@@ -60,8 +73,15 @@ COPY --from=builder --chown=mcp:nodejs /app/package.json ./package.json
 
 USER mcp
 
+# Commit SHA of the build, surfaced by GET /health (read as GIT_COMMIT_SHA).
+# Declared right before its use so a changing SHA does not invalidate the
+# cache of the earlier layers.
+# Pass with: docker build --build-arg COMMIT_SHA=$(git rev-parse HEAD) .
+ARG COMMIT_SHA=unknown
+
 # Default to HTTP transport. Override via environment or ECS task definition.
-ENV NODE_ENV=production \
+ENV GIT_COMMIT_SHA=${COMMIT_SHA} \
+    NODE_ENV=production \
     MCP_TRANSPORT=http \
     MCP_PORT=3000 \
     NEVENT_DATA_API_URL=https://data.nevent.es \

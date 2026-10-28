@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`nevent_list_events`** (READ) — nev-api `GET /events`. Always paginated (`page`, `page_size` max 100; nev-api would otherwise answer a legacy unpaginated format with every event and its full ticket tree) with `search`, `future`, `nature`, `active_only`, `sort`, `order`. Returns a compact projection of each event.
+- **`nevent_event_sales_provenance`** (READ) — nev-data-api event sales provenance, one tool with a `view`: `overview` (`GET /events/{id}/overview`), `summary`, `daily` and `campaigns` (`GET /events/{id}/sales-provenance/...`). `from`/`to` required; `tz`, `currency`, `population`, `dimension`, `level`/`parent` (marketing drill-down), `top` and `search` where they apply. Params that the chosen view ignores are rejected. The purchase drill-down and CSV export are not exposed (they carry per-purchase rows).
+- **`nevent_get_campaign_deliverability`** (READ) — nev-api `GET /campaigns/{id}/deliverability/...`, `view` = `summary` | `bounce_reasons` (needs `bounce_type` soft|hard) | `segment_breakdown`.
+- **`nevent_get_campaign_unsubscribes`** (READ) — nev-api `GET /campaigns/{id}/unsubscribes/...`, `view` = `summary` | `reasons` | `segment_breakdown`.
+- `nevent_help` topic `events`; the campaigns, deliverability and workflows topics list the new tools.
+
+### Fixed
+- **`nevent_quote_campaign` description.** It claimed the audience block is null for any channel mix touching WhatsApp. nev-api now estimates `WHATSAPP_ONLY` itself and returns `estimatedEligible.whatsapp`, `whatsappExclusions` and `whatsappConsentSources`; the audience is still null for WhatsApp combined with another channel, more than 20 segments, a WhatsApp selection too large for the segmentation budget, or a data-api failure.
+- **`nevent_schedule_campaign` 409 `SENDER_INELIGIBLE`** is now an actionable `sender_ineligible` error (the campaign stays DRAFT; check `nevent_get_sending_profile`, fix the sender or domain) and mentions the `AUTO_PAUSED_SENDER_INELIGIBLE` pause code, instead of a generic `HTTP 409` dump.
+- **`nevent_update_template` 409 `template_edit_conflict`** (nev-api compare-and-set on template writes) is now an actionable error telling the caller to re-read the template with `nevent_get_template` and apply the change again. Nothing is retried automatically.
+
+### Security
+- **Read-only OAuth clients (NEV-1848).** `MCP_READONLY_REDIRECT_PREFIXES` (comma-separated `redirect_uri` prefixes, e.g. `https://support.nevent.ai/helpbot/`) and/or `MCP_READONLY_CLIENT_IDS` mark OAuth clients that may only use READ tools. For those clients write, delete and tenant (`nevent_list_tenants`, `nevent_switch_tenant`, `nevent_reset_tenant`) tools are not registered, so they are absent from `tools/list` and rejected on `tools/call`. `nevent_segment_execute` (contact list) is allowed for them by product decision; to revert, add it back to `EXCLUDED_TOOLS_READONLY_CLIENT`. Unclassified tools are denied (fail-closed). With neither variable set nothing changes for any client.
+  - **Each prefix must end with `/`.** Matching is a plain prefix match, so `https://support.nevent.ai/helpbot` would also match `https://support.nevent.ai/helpbot-evil/...`. The server logs a warning at startup for entries that do not end with `/`.
+  - **Fail-closed lookup.** While rules are configured, if the client record cannot be loaded (MongoDB error, unknown `client_id`), that session is limited to read-only tools, even for a normal client such as claude.ai, and a warning with the `client_id` is logged. Successful lookups are cached for 30 s; failures are never cached, so the next session retries.
+  - **Scope of the protection.** The restriction protects against a compromised or over-powered helpbot: its tokens are bound to its own client. It does not protect against a user acting on their own, who can register another DCR client without a matching redirect URI and get the same tools as with claude.ai today. Revoking such access is handled by the Nevent team.
+  - MCP sessions are now bound to the OAuth client that created them: using a session id with a token from another client returns 403 on `POST`, `GET` and `DELETE` of `/`.
+- **Refresh tokens are revalidated against nev-api (NEV-1848).** Controlled by `MCP_REFRESH_REVALIDATE=restricted|all|off` (default `restricted`: only read-only restricted clients; claude.ai and other clients keep their previous behaviour). `exchangeRefreshToken` calls nev-api `GET /auth/me` with the freshly minted MCP access token before rotating. `401`, `404` or a different user id revoke the refresh token and return `invalid_grant`. Anything else is transient and returns `server_error` (HTTP 500) without revoking, so the client retries: network error, timeout, `403` (it may come from gateway or IP rules unrelated to the user), `429` and `5xx`. On `429` there is no in-process retry; the client's normal retry applies.
+- **Maximum refresh lifetime (NEV-1848).** `MCP_REFRESH_MAX_LIFETIME_DAYS` (default 90) caps the rotation chain for every client and mode, counted from the original login via a new `chainCreatedAt` field inherited on every rotation (older documents count from their `createdAt`). It does not depend on nev-api, so it is not tied to `MCP_REFRESH_REVALIDATE`; claude.ai users will have to log in again after 90 days.
+- **Atomic refresh rotation (NEV-1848).** The refresh token delete now reports whether it removed the token, and a refresh whose token was already consumed returns `invalid_grant`, so two concurrent refreshes with the same token no longer both succeed.
+
+## [1.8.2] - 2026-09-25
+
+### Fixed
+- **`nevent_campaign_report` always failed with 400.** It sent `{ campaignId, timeRange }`, but nev-data-api `POST /analytics/campaign-report` takes `{ year, month }` and returns the tenant's monthly campaign report (13 queries: marketing metrics for the month and the previous one, ROI, attribution, revenue, variable costs, 24-month history, transactional campaigns, segments, benchmarks). The tool now takes `year` and `month`; per-campaign numbers remain in `nevent_get_campaign_insights`.
+- **Analytics BOOLEAN filters.** The mandatory rule told the model to use `is_true`/`is_false`, which `/analytics/query` rejects; analytics takes `eq`/`neq` with `true`/`false`. Server instructions, the analytics tool, `nevent_help` and `FilterSchema` now list the operators nev-data-api validates (3.34.0, the same list `nevent_analytics_capabilities` returns). Segmentation keeps `is_true`/`is_false`.
+- Segmentation `time_range` example: unit `days` (was `day`, which nev-data-api rejects).
+- The analytics tool description no longer mentions the `users` table, which is not served.
+
 ## [1.8.1] - 2026-09-09
 
 ### Fixed

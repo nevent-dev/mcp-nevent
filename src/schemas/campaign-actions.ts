@@ -382,15 +382,17 @@ export const QuoteCampaignSchema = {
    * `nevent_create_campaign`; legacy aliases EMAIL/SMS/WHATSAPP are mapped to
    * their _ONLY variants in the handler.
    *
-   * Note: any mix touching WhatsApp cannot be estimated — the backend returns
-   * cost and recipient count but a `null` audience block.
+   * Note: WHATSAPP_ONLY is estimated by nev-api (estimatedEligible.whatsapp,
+   * whatsappExclusions, whatsappConsentSources). A mix that combines WhatsApp
+   * with another channel cannot be estimated — the backend returns cost and
+   * recipient count but a `null` audience block.
    */
   channel: z
     .enum(COMMUNICATION_CHANNEL_VALUES)
     .describe(
       'Delivery channel to quote (nev-api CommunicationChannel enum). ' +
       'Legacy values EMAIL/SMS/WHATSAPP are accepted and mapped to the _ONLY variants. ' +
-      'Channel mixes involving WhatsApp return a null audience block.'
+      'WHATSAPP_ONLY returns a WhatsApp-specific audience estimate; mixes that combine WhatsApp with another channel return a null audience block.'
     ),
 
   /**

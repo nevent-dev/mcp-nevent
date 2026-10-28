@@ -36,9 +36,7 @@ export interface ToolCountOptions {
   hasShortUrlClient: boolean;
   /**
    * Optional allowlist predicate, mirroring `CreateNeventServerOptions.toolFilter`.
-   * When provided, the probe count reflects only tools that pass the filter —
-   * used to report an accurate `tools_count` for restricted modes such as
-   * `bearer-passthrough` (see `src/config/bearer-passthrough.ts`).
+   * When provided, the probe count reflects only tools that pass the filter.
    */
   toolFilter?: (toolName: string) => boolean;
 }
@@ -54,6 +52,8 @@ import { registerTemplateTools } from './tools/templates.js';
 import { registerDeliverabilityTools } from './tools/deliverability.js';
 import { registerCampaignActionTools } from './tools/campaign-actions.js';
 import { registerCampaignMetricsTools } from './tools/campaign-metrics.js';
+import { registerEventTools } from './tools/events.js';
+import { registerCampaignHealthTools } from './tools/campaign-health.js';
 import { registerPaidMediaTools } from './tools/paid-media.js';
 import { registerShortUrlTools } from './tools/short-urls.js';
 import { registerMediaTools } from './tools/media.js';
@@ -146,24 +146,35 @@ export interface CreateNeventServerOptions {
    */
   enableToolCallLogging?: boolean;
   /**
-   * Optional allowlist predicate applied to every tool registration.
+   * Optional allowlist predicate applied to every tool registration (NEV-1848).
    *
-   * When provided, `server.tool()` is patched (same monkey-patch technique as
-   * `applyLoggingToServer`) so that a tool whose name fails `toolFilter` is
-   * never registered at all — it does not appear in `tools/list` and cannot
-   * be invoked, as opposed to being registered and then denied at call time
-   * by `checkMode()`.
+   * When provided, `server.tool()` is patched so a tool whose name fails the
+   * predicate is never registered: it does not appear in `tools/list` and
+   * `tools/call` by name returns the SDK's "tool not found" error. This is
+   * stronger than registering and denying at call time.
    *
-   * Used by the `bearer-passthrough` HTTP auth mode
-   * (`src/config/bearer-passthrough.ts`) to expose only a locked-down subset
-   * of READ tools regardless of `NEVENT_OPERATION_MODE`. Applied AFTER the
-   * logging patch (if any) so that filtered-out tools are also never wrapped
-   * for logging, and so that a tool which passes the filter still gets
-   * logged normally.
+   * Used for OAuth clients restricted to read-only tools
+   * (`src/config/client-restrictions.ts`). Applied AFTER the logging patch so
+   * filtered tools are never wrapped or logged.
    *
-   * @default undefined (no filtering — all applicable tool groups registered)
+   * @default undefined (no filtering)
    */
   toolFilter?: (toolName: string) => boolean;
+}
+
+/**
+ * Patches `server.tool()` so tools failing `toolFilter` are silently skipped.
+ * Must run before any `register*Tools()` call.
+ */
+function applyToolFilter(server: McpServer, toolFilter: (toolName: string) => boolean): void {
+  const originalTool = server.tool.bind(server);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).tool = (...args: any[]): unknown => {
+    if (!toolFilter(args[0] as string)) {
+      return undefined;
+    }
+    return (originalTool as (...a: unknown[]) => unknown)(...args);
+  };
 }
 
 /**
@@ -231,25 +242,9 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     void logger.warmUp();
   }
 
-  // ---------------------------------------------------------------------------
-  // Tool allowlist (bearer-passthrough mode)
-  //
-  // Applied AFTER the logging patch so it becomes the outermost wrapper: a
-  // filtered-out tool's registration call is swallowed here and never reaches
-  // the logging wrapper or the SDK's real `tool()` method, so it is neither
-  // logged nor exposed in `tools/list`.
-  // ---------------------------------------------------------------------------
+  // Per-client allowlist (NEV-1848) — outermost wrapper, applied after logging.
   if (toolFilter) {
-    const originalTool = server.tool.bind(server);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (server as any).tool = (...args: any[]): unknown => {
-      const toolName = args[0] as string;
-      if (!toolFilter(toolName)) {
-        // Not registered: absent from tools/list, cannot be invoked.
-        return undefined;
-      }
-      return (originalTool as (...a: unknown[]) => unknown)(...args);
-    };
+    applyToolFilter(server, toolFilter);
   }
 
   // Sprint 1: Analytics + Segmentation — always registered
@@ -278,6 +273,10 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
 
     // 1.8.0: Campaign performance (metrics/recipients via nev-api)
     registerCampaignMetricsTools(server, dataClient, neventApiUrl);
+
+    // 1.9.0: Events + sales provenance, campaign deliverability + unsubscribes
+    registerEventTools(server, dataClient, neventApiUrl);
+    registerCampaignHealthTools(server, dataClient, neventApiUrl);
   }
 
   // Sprint 2: MongoDB-backed tools — registered when mongoUri is provided
@@ -363,16 +362,8 @@ export function getToolCount(opts: ToolCountOptions): number {
     { instructions: '' }
   );
 
-  // Optional allowlist — same monkey-patch technique as createNeventServer's
-  // `toolFilter`, applied before any register*Tools() call below.
   if (toolFilter) {
-    const originalTool = probe.tool.bind(probe);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (probe as any).tool = (...args: any[]): unknown => {
-      const toolName = args[0] as string;
-      if (!toolFilter(toolName)) return undefined;
-      return (originalTool as (...a: unknown[]) => unknown)(...args);
-    };
+    applyToolFilter(probe, toolFilter);
   }
 
   // Always registered
@@ -386,6 +377,8 @@ export function getToolCount(opts: ToolCountOptions): number {
     registerSegmentTools(probe, stubDataClient, 'http://stub');
     registerCampaignActionTools(probe, stubDataClient, 'http://stub');
     registerCampaignMetricsTools(probe, stubDataClient, 'http://stub');
+    registerEventTools(probe, stubDataClient, 'http://stub');
+    registerCampaignHealthTools(probe, stubDataClient, 'http://stub');
   }
 
   if (hasMongoUri) {

@@ -25,6 +25,7 @@
 
 import { BaseClient } from './base-client.js';
 import type { BaseClientConfig } from './base-client.js';
+import type { QueryParamValue } from '../types/common.js';
 import type {
   AnalyticsQueryRequest,
   AnalyticsQueryResponse,
@@ -221,28 +222,55 @@ export class DataClient extends BaseClient {
   }
 
   /**
-   * Generate a comprehensive campaign analytics report.
-   * Maps to POST /analytics/campaign-report.
-   *
-   * Introduced in v3.19.0: executes 13 parallel analytics queries for a single
-   * campaign in one API call, returning opens, clicks, bounces, unsubscribes,
-   * conversions, revenue, and other performance metrics.
+   * Monthly campaign report of the tenant for a calendar month.
+   * Maps to POST /analytics/campaign-report with body { year, month } (nev-data-api
+   * CampaignReportController): 13 parallel queries (campaign metrics for the month and
+   * the previous one, ROI, attribution, revenue, costs, history, segments, benchmarks).
    *
    * Tenant is resolved server-side from the bearer JWT — do NOT pass tenant_id.
    *
-   * @param campaignId - The campaign ID to report on.
-   * @param timeRange  - Optional time range to restrict the report data.
-   * @returns Structured campaign performance report.
+   * @param year  - Calendar year, e.g. 2026.
+   * @param month - Calendar month, 1-12.
    */
-  async getCampaignReport(
-    campaignId: string,
-    timeRange?: { start: string; end: string; granularity?: string }
-  ): Promise<CampaignReportResponse> {
-    const body: Record<string, unknown> = { campaignId };
-    if (timeRange) {
-      body['timeRange'] = timeRange;
+  async getCampaignReport(year: number, month: number): Promise<CampaignReportResponse> {
+    return this.post<CampaignReportResponse>('/analytics/campaign-report', { year, month });
+  }
+
+  // -------------------------------------------------------------------------
+  // Event sales provenance endpoints
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sales provenance of one event.
+   * Maps to GET /events/{eventId}/overview (view `overview`) or
+   * GET /events/{eventId}/sales-provenance/{summary|daily|campaigns}.
+   *
+   * Tenant scope comes only from the bearer JWT (the selected tenant and its
+   * descendants) — do NOT pass tenant_id. nev-data-api wraps successful responses in
+   * `{ success, data, message, timestamp }`; this method returns the unwrapped `data`.
+   *
+   * @param eventId - Event ID (24-char hex).
+   * @param view    - Which endpoint to call.
+   * @param params  - Query parameters already mapped to nev-data-api names.
+   */
+  async getEventSalesProvenance(
+    eventId: string,
+    view: 'overview' | 'summary' | 'daily' | 'campaigns',
+    params: Record<string, QueryParamValue>
+  ): Promise<unknown> {
+    const id = encodeURIComponent(eventId);
+    const path =
+      view === 'overview' ? `/events/${id}/overview` : `/events/${id}/sales-provenance/${view}`;
+    const raw = await this.get<unknown>(path, params);
+    if (
+      raw !== null &&
+      typeof raw === 'object' &&
+      (raw as Record<string, unknown>)['success'] === true &&
+      'data' in (raw as Record<string, unknown>)
+    ) {
+      return (raw as Record<string, unknown>)['data'];
     }
-    return this.post<CampaignReportResponse>('/analytics/campaign-report', body);
+    return raw;
   }
 
   // -------------------------------------------------------------------------

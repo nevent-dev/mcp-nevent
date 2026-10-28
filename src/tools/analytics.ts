@@ -63,10 +63,10 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_analytics_query',
-    'Query event marketing analytics. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, users, and more. ' +
+    'Query event marketing analytics. Supports dimensions, metrics, time ranges, and filters across campaigns, purchases, fans (user_tenants), and more. ' +
     'MANDATORY RULES: ' +
     '(1) ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess field names. ' +
-    '(2) For BOOLEAN fields, use operator "is_true" or "is_false". NEVER use "eq" with string "true"/"false". ' +
+    '(2) For BOOLEAN fields, use operator "eq" (or "neq") with the boolean value true or false; "is_true"/"is_false" are segmentation operators and analytics rejects them. ' +
     '(3) For enum fields (state, status), check the field description for valid values. Common values: purchases.state = SUCCEEDED|COMPLETE|PENDING|FAILED; campaigns.status = EXECUTED|DRAFT|PAUSED|STOPPED.',
     AnalyticsQuerySchema,
     { title: 'Query analytics data', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -193,7 +193,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_campaign_report',
-    'Generate a comprehensive analytics report for a single campaign. Executes 13 parallel queries in one call returning opens, clicks, bounces, unsubscribes, conversions, revenue, and other key performance metrics. Use nevent_list_campaigns to get valid campaign IDs.',
+    'Generate the monthly campaign report of the current brand for a calendar month (year + month). Executes 13 parallel queries in one call: marketing campaign metrics for that month and the previous one, ROI and attribution, revenue, variable costs, 24-month purchase history, transactional campaigns, segments and industry benchmarks. For a single campaign use nevent_get_campaign_insights.',
     CampaignReportSchema,
     { title: 'Generate campaign analytics report', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (params) => {
@@ -201,10 +201,7 @@ export function registerAnalyticsTools(server: McpServer, client: DataClient): v
       if (denied) return err(denied);
 
       try {
-        const result = await client.getCampaignReport(
-          params.campaignId,
-          params.timeRange
-        );
+        const result = await client.getCampaignReport(params.year, params.month);
         return ok(result);
       } catch (caught) {
         return err(toErrorEnvelope(caught));

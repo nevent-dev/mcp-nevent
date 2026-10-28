@@ -18,6 +18,8 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - **Analytics (9 tools):** nevent_analytics_capabilities → nevent_analytics_table_schema → nevent_analytics_query | nevent_analytics_filter_values | nevent_campaign_report | nevent_segmentation_criteria | nevent_segment_preview | nevent_segment_execute | nevent_dimension_values
 - **Segments (4 tools):** nevent_list_segments | nevent_get_segment | nevent_create_segment | nevent_update_segment
 - **Campaigns (5 tools):** nevent_list_campaigns | nevent_get_campaign | nevent_get_campaign_insights | nevent_create_campaign | nevent_schedule_campaign
+- **Campaign health (2 tools):** nevent_get_campaign_deliverability | nevent_get_campaign_unsubscribes
+- **Events (2 tools):** nevent_list_events | nevent_event_sales_provenance
 - **Templates (8 tools):** nevent_list_templates | nevent_get_template | nevent_create_template | nevent_update_template | nevent_clone_template | nevent_rename_template | nevent_preview_template | nevent_send_test_template
 - **Deliverability (2 tools):** nevent_get_sending_profile | nevent_get_suppressions_summary
 - **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_get_paid_ad_group_insights
@@ -33,10 +35,12 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 5. **"What data is available?"** → nevent_analytics_capabilities → nevent_analytics_table_schema → nevent_analytics_query
 6. **"Campaign link CTR"** → nevent_list_short_urls → nevent_get_short_url_campaign_metrics
 7. **"Create per-user tracking links"** → nevent_create_short_url → nevent_create_bulk_user_short_urls → nevent_get_short_url_campaign_metrics
+8. **"Where do an event's sales come from?"** → nevent_list_events → nevent_event_sales_provenance(view=overview, then summary/daily/campaigns)
+9. **"Why did this campaign bounce or lose subscribers?"** → nevent_get_campaign_deliverability / nevent_get_campaign_unsubscribes
 
 ## MANDATORY: Analytics query rules
 - ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess.
-- BOOLEAN fields: use operator "is_true" or "is_false". NEVER "eq" with "true"/"false".
+- BOOLEAN fields: use operator "eq" (or "neq") with the boolean value true or false. "is_true"/"is_false" are segmentation operators, not analytics ones.
 - Enum fields (state, status): check field description for valid values.
 
 ## Segment definition rules

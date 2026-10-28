@@ -65,9 +65,8 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_analytics_capabilities: 'READ',
   nevent_analytics_table_schema: 'READ',
   nevent_analytics_filter_values: 'READ',
-  // nevent_campaign_report (v3.19.0) — READ. Runs 13 parallel read-only
-  // queries against a single campaign and returns aggregated metrics; it
-  // never mutates any resource.
+  // nevent_campaign_report — READ. Returns the tenant's monthly campaign report
+  // (read-only analytics queries); it never mutates any resource.
   nevent_campaign_report: 'READ',
 
   // Sprint 1: Segmentation
@@ -79,10 +78,10 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // Sprint 1: Multi-tenant
   nevent_list_tenants: 'READ',
   nevent_switch_tenant: 'READ',
-  // nevent_reset_tenant: DELETE-equivalent — for SUPERADMIN users this call
-  // mutates the user record in the database (same endpoint as switch_tenant).
-  // Treated with the same caution as a destructive operation so it is blocked
-  // in READ_ONLY and STANDARD, and only permitted in FULL.
+  // nevent_reset_tenant: for SUPERADMIN users this call mutates the user record
+  // in the database (same endpoint as switch_tenant), so it is treated as a
+  // destructive operation. Classifying it here changes nothing in FULL mode
+  // (the production mode) and now blocks it in READ_ONLY / STANDARD.
   nevent_reset_tenant: 'DELETE',
 
   // Sprint 2: Segment management
@@ -99,6 +98,14 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   nevent_list_campaign_recipients: 'READ',
   // nevent_quote_campaign: READ — the quote never debits credits and never sends.
   nevent_quote_campaign: 'READ',
+
+  // Per-campaign deliverability and unsubscribe breakdowns (nev-api GET only)
+  nevent_get_campaign_deliverability: 'READ',
+  nevent_get_campaign_unsubscribes: 'READ',
+
+  // Events (nev-api GET /events) and event sales provenance (nev-data-api GET only)
+  nevent_list_events: 'READ',
+  nevent_event_sales_provenance: 'READ',
 
   // Sprint 2: Template tools (read from MongoDB)
   nevent_list_templates: 'READ',
@@ -177,10 +184,12 @@ const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
 
 /**
  * Returns the `OperationType` registered for a tool, or `undefined` when the
- * tool is not in the registry.
+ * tool is not classified in `TOOL_OPERATIONS`.
  *
- * Exposed so other modules (e.g. the bearer-passthrough tool allowlist) can
- * classify a tool without duplicating the `TOOL_OPERATIONS` table.
+ * Exposed so other modules (e.g. the per-client read-only allowlist in
+ * `client-restrictions.ts` and the bearer-passthrough allowlist in
+ * `bearer-passthrough.ts`) can apply their own fail-closed policy without
+ * duplicating the table.
  *
  * @param toolName — The MCP tool name to look up.
  */

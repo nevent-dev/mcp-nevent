@@ -1,8 +1,8 @@
 {
   "name": "mcp-nevent",
   "mcpName": "io.github.nevent-dev/mcp-nevent",
-  "version": "1.8.1",
-  "description": "Official Nevent MCP server. Talk to your live-events CRM (campaigns, analytics, paid ads, segments, short URLs, media library) in Claude and ChatGPT. 55 tools across 10 categories with OAuth 2.1 and stdio transports.",
+  "version": "1.8.2",
+  "description": "Official Nevent MCP server. Talk to your live-events CRM (campaigns, analytics, paid ads, segments, short URLs, media library) in Claude and ChatGPT. 63 tools across 10 categories with OAuth 2.1 and stdio transports.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -68,7 +68,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/jsonwebtoken": "^9.0.10",
     "cors": "^2.8.6",
     "express": "^4.21.0",

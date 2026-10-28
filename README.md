@@ -7,7 +7,7 @@
 [![Help Center](https://img.shields.io/badge/docs-help.nevent.ai-8B5CF6)](https://help.nevent.ai/en/nevent-ai/)
 [![smithery badge](https://smithery.ai/badge/samuel-fraga/nevent-mcp)](https://smithery.ai/servers/samuel-fraga/nevent-mcp)
 
-Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 59 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
+Official MCP server for [Nevent](https://nevent.ai/en) — the marketing platform for live event promoters. 63 tools across 10 groups (analytics, segmentation, campaigns, templates, deliverability, paid media, short URLs, media library, multi-tenant, and help/discovery) over **OAuth 2.1** (hosted) or **stdio** (local).
 
 📚 **Full documentation:** **<https://help.nevent.ai/en/nevent-ai/>**
 
@@ -117,7 +117,7 @@ Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claud
 | Overview, transports and architecture | <https://help.nevent.ai/en/nevent-ai/developers/> |
 | Local installation and env vars | <https://help.nevent.ai/en/nevent-ai/developers/local-installation/> |
 | Multi-tenant model | <https://help.nevent.ai/en/nevent-ai/developers/multi-tenant/> |
-| Reference of all 59 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
+| Reference of all 63 tools | <https://help.nevent.ai/en/nevent-ai/developers/tools/> |
 | Troubleshooting and error codes | <https://help.nevent.ai/en/nevent-ai/developers/troubleshooting/> |
 
 ---
@@ -141,6 +141,19 @@ LLM (Claude / ChatGPT / Cursor / …)
 **Hosted mode** uses OAuth 2.1: the MCP server issues short-lived JWT tokens after validating your Nevent credentials. Each session is isolated — no shared service accounts.
 
 ---
+
+## Restricting OAuth clients (self-hosted HTTP)
+
+Optional environment variables for the HTTP server:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_READONLY_REDIRECT_PREFIXES` | unset | Comma-separated `redirect_uri` prefixes. A client that registered a matching redirect URI only gets read-only tools. **Every prefix must end with `/`**, for example `https://support.nevent.ai/helpbot/`. |
+| `MCP_READONLY_CLIENT_IDS` | unset | Comma-separated `client_id` values restricted the same way. |
+| `MCP_REFRESH_REVALIDATE` | `restricted` | `restricted`, `all` or `off`: which clients are revalidated against nev-api (`GET /auth/me`) when they refresh a token. |
+| `MCP_REFRESH_MAX_LIFETIME_DAYS` | `90` | Maximum total lifetime of a refresh-token chain, counted from the original login. |
+
+See `CHANGELOG.md` for the exact behaviour.
 
 ## Advanced: bearer-passthrough mode (internal, trusted callers only)
 

@@ -51,14 +51,17 @@ type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 
 function makeMockServer() {
   const tools: Record<string, ToolHandler> = {};
+  const descriptions: Record<string, string> = {};
   return {
+    descriptions,
     tool(
       name: string,
-      _description: string,
+      description: string,
       _schema: unknown,
       annotationsOrHandler: unknown,
       maybeHandler?: ToolHandler
     ) {
+      descriptions[name] = description;
       tools[name] = maybeHandler ?? (annotationsOrHandler as ToolHandler);
     },
     async invoke(name: string, params: Record<string, unknown> = {}) {
@@ -297,5 +300,50 @@ describe('nevent_quote_campaign response handling', () => {
     expect((result as { isError?: boolean }).isError).toBe(true);
     const error = parseToolResult(result)['error'] as Record<string, unknown>;
     expect(error['code']).toBe('api_error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp-only audience estimate (nev-api d59e3cd30)
+// ---------------------------------------------------------------------------
+describe('nevent_quote_campaign — WhatsApp audience estimate', () => {
+  const WHATSAPP_QUOTE = {
+    ...QUOTE_RESPONSE,
+    audience: {
+      uniqueAudience: 900,
+      estimatedEligible: { whatsapp: 640 },
+      eligibleAnyChannel: 640,
+      emailExclusions: null,
+      computedAt: '2026-10-27T09:00:00Z',
+      dataAsOf: null,
+      whatsappExclusions: { no_phone: 40, no_consent: 150, opt_out: 30, meta_stop: 10, cooldown: 20, duplicate_phone: 10 },
+      whatsappConsentSources: [
+        { tenantId: 'tenant-xyz', tenantName: 'Parent', relation: 'SELF', recipients: 500 },
+        { tenantId: 'tenant-child', tenantName: 'Child', relation: 'DESCENDANT', recipients: 140 },
+      ],
+    },
+  };
+
+  it('describes the WhatsApp-only fields and keeps the mixed-channel null caveat', async () => {
+    const server = await setupCampaignTools(vi.fn() as unknown as typeof fetch);
+    const description = server.descriptions['nevent_quote_campaign']!;
+
+    expect(description).toContain('estimatedEligible.whatsapp');
+    expect(description).toContain('whatsappExclusions');
+    expect(description).toContain('whatsappConsentSources');
+    expect(description).toContain('WHATSAPP_ONLY');
+    // The old blanket claim must be gone: only mixes that combine WhatsApp are null.
+    expect(description).not.toContain('any channel mix touching WhatsApp');
+    expect(description).toContain('combines WhatsApp with another channel');
+  });
+
+  it('passes the WhatsApp fields through untouched for WHATSAPP_ONLY', async () => {
+    const server = await setupCampaignTools(async () => mockFetchOk(WHATSAPP_QUOTE));
+    const result = parseToolResult(await server.invoke('nevent_quote_campaign', { channel: 'WHATSAPP_ONLY' }));
+    const audience = result['audience'] as Record<string, unknown>;
+
+    expect((audience['estimatedEligible'] as Record<string, number>)['whatsapp']).toBe(640);
+    expect(audience['whatsappExclusions']).toEqual(WHATSAPP_QUOTE.audience.whatsappExclusions);
+    expect(audience['whatsappConsentSources']).toEqual(WHATSAPP_QUOTE.audience.whatsappConsentSources);
   });
 });

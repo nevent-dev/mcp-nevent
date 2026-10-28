@@ -99,6 +99,6 @@ The reviewer account has `STANDARD` operation mode, which allows creating segmen
 
 ## Reference
 
-- Full tool inventory: <https://help.nevent.ai/en/nevent-ai/developers/tools/> (55 tools)
+- Full tool inventory: <https://help.nevent.ai/en/nevent-ai/developers/tools/> (63 tools)
 - npm package: https://www.npmjs.com/package/mcp-nevent
 - MCP Registry entry: io.github.nevent-dev/mcp-nevent
