@@ -5,6 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Call-time operation-mode guard: the write tools must be able to execute.
+vi.hoisted(() => {
+  process.env['NEVENT_OPERATION_MODE'] = 'FULL';
+});
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createBearerPassthroughApp, type BearerPassthroughAppResult } from '../transports/http-bearer-passthrough.js';
@@ -72,6 +77,7 @@ describe('bearer-passthrough write policy over HTTP', () => {
       serviceKeys: [SERVICE_KEY],
       tokenRateLimitPerMinute: 1000,
       ...(writesMode ? { writesMode } : {}),
+      writesStartup: { env: { MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT: 'true' }, grantAvailable: false, operationMode: 'FULL' },
       ...(writesPerHour ? { writesPerHour } : {}),
     });
     await new Promise<void>((r) => { server = result.app.listen(0, '127.0.0.1', r); });
@@ -189,5 +195,19 @@ describe('bearer-passthrough write policy over HTTP', () => {
     const read = rpc((await call(human, second.sid, 13, 'nevent_list_segments')).body);
     const readCode = read.result?.isError ? JSON.parse(read.result.content[0].text).error?.code : undefined;
     expect(readCode).not.toBe('write_rate_limit_exceeded');
+  });
+
+  it('writes=human: a call rejected for invalid arguments does not consume the budget', async () => {
+    await start('human', 1);
+    const { human } = principals();
+    const { sid } = await toolsFor(human);
+    // Invalid args: rejected by the SDK before the handler -> not counted.
+    await call(human, sid, 20, 'nevent_create_segment', {});
+    const ok = rpc((await call(human, sid, 21, 'nevent_create_segment', SEGMENT_ARGS)).body);
+    const code = ok.result?.isError ? JSON.parse(ok.result.content[0].text).error?.code : undefined;
+    expect(code).not.toBe('write_rate_limit_exceeded');
+    // That valid call used the only unit of the budget.
+    const limited = rpc((await call(human, sid, 22, 'nevent_create_segment', SEGMENT_ARGS)).body);
+    expect(JSON.parse(limited.result.content[0].text).error.code).toBe('write_rate_limit_exceeded');
   });
 });

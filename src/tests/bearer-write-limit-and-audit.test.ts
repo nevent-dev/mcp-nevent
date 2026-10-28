@@ -4,11 +4,17 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+
+// The wrapper only counts calls the operation-mode guard lets through.
+vi.hoisted(() => {
+  process.env['NEVENT_OPERATION_MODE'] = 'FULL';
+});
 import {
   WriteRateLimiter,
   parseWritesPerHour,
   applyWriteRateLimit,
   DEFAULT_WRITES_PER_HOUR,
+  writeLimitKey,
 } from '../tools/write-rate-limit.js';
 import { applyLoggingToServer, type ToolCallLogger } from '../tools/logging.js';
 import type { DataClient } from '../clients/data-client.js';
@@ -57,16 +63,42 @@ describe('WriteRateLimiter', () => {
   });
 });
 
+describe('writeLimitKey', () => {
+  it('cannot collide across tenant/user boundaries', () => {
+    expect(writeLimitKey('a:b', 'c')).not.toBe(writeLimitKey('a', 'b:c'));
+    expect(writeLimitKey('t', 'u')).toBe(writeLimitKey('t', 'u'));
+  });
+});
+
+describe('purge', () => {
+  it('drops idle keys on the periodic timer', () => {
+    vi.useFakeTimers();
+    try {
+      const l = new WriteRateLimiter(5);
+      const stop = l.startPurgeTimer(1000);
+      l.tryConsume('a');
+      l.tryConsume('b');
+      expect(l.size).toBe(2);
+      vi.advanceTimersByTime(HOUR + 2000);
+      expect(l.size).toBe(0);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('parseWritesPerHour', () => {
   it('defaults when unset/empty', () => {
     expect(parseWritesPerHour(undefined)).toBe(DEFAULT_WRITES_PER_HOUR);
     expect(parseWritesPerHour('')).toBe(DEFAULT_WRITES_PER_HOUR);
   });
-  it('parses a positive integer', () => {
+  it('parses a positive integer up to 1000', () => {
     expect(parseWritesPerHour('12')).toBe(12);
+    expect(parseWritesPerHour('1000')).toBe(1000);
   });
   it('rejects zero, negatives, decimals, junk and absurd values', () => {
-    for (const v of ['0', '-1', '1.5', 'abc', '100001']) {
+    for (const v of ['0', '-1', '1.5', 'abc', '1001', '100000']) {
       expect(() => parseWritesPerHour(v), v).toThrow(/MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR/);
     }
   });
@@ -107,6 +139,33 @@ describe('applyWriteRateLimit', () => {
 
     for (let i = 0; i < 5; i++) await handlers.get('nevent_list_segments')!({});
     expect(run).toHaveBeenCalledTimes(7);
+  });
+
+  it('a handler that fails (isError or throws) still consumes budget', async () => {
+    const { server, handlers } = fakeServer();
+    applyWriteRateLimit(server as never, new WriteRateLimiter(2), 't:u');
+    let n = 0;
+    server.tool('nevent_create_segment', {}, async () => {
+      n++;
+      if (n === 1) throw new Error('boom');
+      return { content: [{ type: 'text', text: '{}' }], isError: true };
+    });
+    await expect(handlers.get('nevent_create_segment')!({})).rejects.toThrow('boom');
+    await handlers.get('nevent_create_segment')!({});
+    const third = await handlers.get('nevent_create_segment')!({});
+    expect(JSON.parse(third.content[0].text).error.code).toBe('write_rate_limit_exceeded');
+    expect(n).toBe(2);
+  });
+
+  it('does not spend budget on a call the operation-mode guard rejects', async () => {
+    const { server, handlers } = fakeServer();
+    const limiter = new WriteRateLimiter(1);
+    applyWriteRateLimit(server as never, limiter, 't:u', () => false);
+    const run = vi.fn(async () => ({ content: [{ type: 'text', text: 'denied-by-mode' }], isError: true }));
+    server.tool('nevent_create_segment', {}, run);
+    for (let i = 0; i < 3; i++) await handlers.get('nevent_create_segment')!({});
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(limiter.tryConsume('t:u').allowed).toBe(true);
   });
 
   it('shares the budget across servers (sessions) of the same key', async () => {

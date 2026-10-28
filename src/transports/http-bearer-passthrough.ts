@@ -104,9 +104,14 @@ import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
-import { WriteRateLimiter, DEFAULT_WRITES_PER_HOUR } from '../tools/write-rate-limit.js';
-import { createBearerToolFilter, type BearerWritesMode } from '../config/bearer-passthrough.js';
-import { OPERATION_MODE } from '../config/operation-mode.js';
+import { WriteRateLimiter, DEFAULT_WRITES_PER_HOUR, writeLimitKey } from '../tools/write-rate-limit.js';
+import {
+  createBearerToolFilter,
+  assertWritesStartupAllowed,
+  WRITE_GRANT_ENFORCEMENT_AVAILABLE,
+  type BearerWritesMode,
+} from '../config/bearer-passthrough.js';
+import { OPERATION_MODE, type OperationMode } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
 import { PKG_VERSION, getCommitSha } from './http.js';
 import { createHash } from 'node:crypto';
@@ -172,6 +177,16 @@ export interface BearerPassthroughConfig {
    * limited.
    */
   writesPerHour?: number;
+  /**
+   * Inputs of the write-policy startup gate (`assertWritesStartupAllowed`),
+   * injectable for tests. Defaults: `process.env`, the build's
+   * `WRITE_GRANT_ENFORCEMENT_AVAILABLE`, and the process `OPERATION_MODE`.
+   */
+  writesStartup?: {
+    env?: Readonly<Record<string, string | undefined>>;
+    grantAvailable?: boolean;
+    operationMode?: OperationMode;
+  };
 }
 
 /** Result of `createBearerPassthroughApp()` — app plus a shutdown function. */
@@ -201,8 +216,21 @@ export async function createBearerPassthroughApp(
   // service key must not exist (it would be open to anyone holding a JWT).
   const serviceKeys = parseServiceKeys(config.serviceKeys);
   const writesMode: BearerWritesMode = config.writesMode ?? 'off';
-  // One limiter for the whole app: the budget survives new MCP sessions.
+  const grantAvailable = config.writesStartup?.grantAvailable ?? WRITE_GRANT_ENFORCEMENT_AVAILABLE;
+  // Fail closed here too, not only in index.ts: the app must never start with
+  // an unsafe write configuration whoever builds it.
+  for (const line of assertWritesStartupAllowed(
+    writesMode,
+    config.writesStartup?.env ?? process.env,
+    grantAvailable,
+    config.writesStartup?.operationMode ?? OPERATION_MODE
+  )) {
+    logger[line.level]({ writesMode }, `bearer-passthrough writes: ${line.message}`);
+  }
+  // One limiter for the whole app: the budget survives new MCP sessions
+  // (per process; each instance has its own budget).
   const writeLimiter = new WriteRateLimiter(config.writesPerHour ?? DEFAULT_WRITES_PER_HOUR);
+  const stopWritePurge = writeLimiter.startPurgeTimer();
 
   const app = express();
 
@@ -568,6 +596,12 @@ export async function createBearerPassthroughApp(
           },
           'bearer-passthrough session starting'
         );
+        if (writesMode === 'human' && verified.principalType === 'HUMAN' && !grantAvailable) {
+          logger.error(
+            { userId: verified.userId, tenantId },
+            'bearer-passthrough HUMAN session opened WITH WRITES ENABLED AND NO WRITE GRANT (NEV-1855 missing): writes run without per-action confirmation proof'
+          );
+        }
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -611,7 +645,7 @@ export async function createBearerPassthroughApp(
           principalLog: { principalType: verified.principalType, effectiveTenantId: tenantId },
           // Hourly write budget per tenant+user, only when writes are on.
           ...(writesMode === 'human'
-            ? { writeRateLimit: { limiter: writeLimiter, key: `${tenantId}:${verified.userId}` } }
+            ? { writeRateLimit: { limiter: writeLimiter, key: writeLimitKey(tenantId, verified.userId) } }
             : {}),
         });
         await mcpServer.connect(transport);
@@ -704,6 +738,7 @@ export async function createBearerPassthroughApp(
   cleanupInterval.unref();
 
   const shutdown = async (): Promise<void> => {
+    stopWritePurge();
     logger.info('Shutting down bearer-passthrough HTTP transport...');
     clearInterval(cleanupInterval);
     const sessionIds = [...activeSessions.keys()];

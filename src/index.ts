@@ -84,7 +84,7 @@
  * | MCP_AUTH_MODE          | No (http only)                         | oauth                      | oauth or bearer-passthrough |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY | Yes (bearer-passthrough)       | —                          | Pre-shared key (>= 32 chars) required in the `X-Nevent-Service-Key` header of every request; startup fails without it |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS | No                      | —                          | Previous key, accepted only during rotation |
- * | MCP_BEARER_PASSTHROUGH_WRITES | No (bearer-passthrough)               | off                        | `off` = READ-only; `human` = HUMAN sessions also get the 12-tool write allowlist (SERVICE never). Startup refuses `human` until the write grant (NEV-1855) exists |
+ * | MCP_BEARER_PASSTHROUGH_WRITES | No (bearer-passthrough)               | off                        | `off` = READ-only; `human` = HUMAN sessions also get the 12-tool write allowlist (SERVICE never). Startup refuses `human` until the write grant (NEV-1855) exists, and with NEVENT_OPERATION_MODE=READ_ONLY |
  * | MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR | No (bearer-passthrough)     | 30                         | Max write calls per user+tenant per hour when writes are `human`; extra calls get a `write_rate_limit_exceeded` tool error. READ is never limited |
  * | MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT | No                    | —                          | `true` lets `human` start WITHOUT a write grant (non-production testing only) |
  * | MCP_PORT               | No                                      | 3000                       | HTTP port |
@@ -197,55 +197,25 @@ if (transportArg === 'http') {
     // Write policy (NEV-1854): default `off` = READ-only for everyone.
     const {
       parseBearerWritesMode,
+      assertWritesStartupAllowed,
       BEARER_WRITES_ENV,
-      WRITES_WITHOUT_GRANT_ENV,
       WRITE_GRANT_ENFORCEMENT_AVAILABLE,
     } = await import('./config/bearer-passthrough.js');
 
     let writesMode: 'off' | 'human';
+    let writesPerHour: number | undefined;
     try {
       writesMode = parseBearerWritesMode(process.env[BEARER_WRITES_ENV]);
-    } catch (err) {
-      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough writes mode'}`);
-      process.exit(1);
-    }
-
-    if (writesMode === 'human') {
-      // The write grant (NEV-1855) is the real barrier between the model and
-      // the writes. Until it exists, the flag alone must not enable writes.
-      if (!WRITE_GRANT_ENFORCEMENT_AVAILABLE) {
-        if (process.env[WRITES_WITHOUT_GRANT_ENV] !== 'true') {
-          logger.fatal(
-            `FATAL: ${BEARER_WRITES_ENV}=human requires the write-grant verification (NEV-1855), which is not available in this build. ` +
-            `Leave ${BEARER_WRITES_ENV} unset, or set ${WRITES_WITHOUT_GRANT_ENV}=true for NON-production testing only.`
-          );
-          process.exit(1);
-        }
-        logger.warn(
-          { writesMode },
-          `bearer-passthrough WRITES ENABLED WITHOUT A WRITE GRANT (${WRITES_WITHOUT_GRANT_ENV}=true). ` +
-          'HUMAN sessions can execute the write allowlist with no per-action confirmation proof. Never use in production.'
-        );
+      // Fail fast on unsafe combinations. The app re-checks and emits the
+      // warnings/error logs itself (createBearerPassthroughApp).
+      assertWritesStartupAllowed(writesMode, process.env, WRITE_GRANT_ENFORCEMENT_AVAILABLE, OPERATION_MODE);
+      if (writesMode === 'human') {
+        const { parseWritesPerHour, WRITES_PER_HOUR_ENV } = await import('./tools/write-rate-limit.js');
+        writesPerHour = parseWritesPerHour(process.env[WRITES_PER_HOUR_ENV]);
       }
-    }
-
-    let writesPerHour: number;
-    try {
-      const { parseWritesPerHour } = await import('./tools/write-rate-limit.js');
-      writesPerHour = parseWritesPerHour(process.env['MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR']);
     } catch (err) {
-      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid write limit'}`);
+      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough write settings'}`);
       process.exit(1);
-    }
-
-    if (writesMode === 'human' && OPERATION_MODE !== 'FULL') {
-      // Call-time guard (tools/helpers.ts) still applies: write tools are
-      // listed but `schedule_campaign` (DELETE) needs FULL and the other
-      // writes need at least STANDARD.
-      logger.warn(
-        { writesMode, operationMode: OPERATION_MODE },
-        `${BEARER_WRITES_ENV}=human but NEVENT_OPERATION_MODE is not FULL: write tools will be listed but the call-time operation-mode guard will reject them (schedule_campaign needs FULL, the other writes at least STANDARD).`
-      );
     }
 
     const { createBearerPassthroughApp } = await import('./transports/http-bearer-passthrough.js');
@@ -258,7 +228,7 @@ if (transportArg === 'http') {
       serviceKeys,
       allowedOrigins: process.env['MCP_ALLOWED_ORIGINS'],
       writesMode,
-      writesPerHour,
+      ...(writesPerHour !== undefined ? { writesPerHour } : {}),
     });
 
     process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));

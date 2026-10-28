@@ -59,7 +59,7 @@ if (rawMode && !VALID_MODES.has(rawMode as OperationMode)) {
  * All tools must be listed here. Unknown tools are fail-closed (denied, and a
  * warning is logged) — a tool must be explicitly classified before it can run.
  */
-export const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
+export const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = Object.freeze({
   // Sprint 1: Analytics
   nevent_analytics_query: 'READ',
   nevent_analytics_capabilities: 'READ',
@@ -176,7 +176,7 @@ export const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = {
   // filters the registered tool set by TOOL_OPERATIONS rather than by
   // whether the tool happens to call checkMode().
   nevent_help: 'READ',
-};
+});
 
 // ---------------------------------------------------------------------------
 // Guards

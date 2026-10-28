@@ -207,8 +207,13 @@ Authorization: Bearer <the promoter's nev-api JWT>
   error and nothing is executed; READ is never limited). Every tool call is
   logged with `user_id`, `principal_type` and the verified tenant (no email
   or token).
-  Calls also need `NEVENT_OPERATION_MODE=FULL` (`schedule_campaign` is
-  classified DELETE because it sends for real).
+  Calls also need `NEVENT_OPERATION_MODE=STANDARD` for writes and `FULL` for
+  `nevent_schedule_campaign` (classified DELETE because it sends for real);
+  startup refuses `human` with `READ_ONLY`. The hourly limit is **per
+  process** (in memory, each instance has its own budget, a restart resets
+  it), counts only calls that actually execute (not invalid arguments, not
+  calls the operation-mode guard rejects; a handler that fails does count) and
+  accepts 1-1000. The no-grant override is rejected when `NODE_ENV=production`.
 
 - **No OAuth flow, no `MCP_JWT_SECRET`, no `MONGODB_URI` required.**
   `MONGODB_URI` stays optional: set it to also enable the Mongo-backed read

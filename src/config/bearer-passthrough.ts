@@ -55,6 +55,7 @@
 
 import { getToolOperationType } from './operation-mode.js';
 import type { PrincipalType } from '../auth/session-verifier.js';
+import type { OperationMode } from './operation-mode.js';
 
 /**
  * Tools excluded from `bearer-passthrough` mode even though they are
@@ -177,4 +178,82 @@ export function isToolAllowedInBearerPassthrough(toolName: string): boolean {
     return false;
   }
   return getToolOperationType(toolName) === 'READ';
+}
+
+/** A log line the caller must emit after {@link assertWritesStartupAllowed}. */
+export interface StartupLog {
+  level: 'error' | 'warn';
+  message: string;
+}
+
+/**
+ * Pure startup gate for the bearer-passthrough write policy. Throws when the
+ * combination of settings would expose writes unsafely; otherwise returns the
+ * log lines the caller should emit.
+ *
+ * - `off` + `UNSAFE_NO_GRANT=true` -> warning that the override is ignored.
+ * - `human` + no write grant available:
+ *     - override not exactly `true` (unset, `TRUE`, `1`, ...) -> throws;
+ *     - override `true` but `NODE_ENV=production` -> throws;
+ *     - override `true` otherwise -> allowed, with an ERROR-level log.
+ * - `human` + `READ_ONLY` operation mode -> throws (every write would be
+ *   rejected at call time while listed); `STANDARD` -> warning that
+ *   `schedule_campaign` (DELETE) needs `FULL`.
+ *
+ * @param mode - Parsed `MCP_BEARER_PASSTHROUGH_WRITES`.
+ * @param env - Environment (injected for testing).
+ * @param grantAvailable - Whether write-grant enforcement exists (NEV-1855).
+ * @param operationMode - Call-time `NEVENT_OPERATION_MODE`.
+ */
+export function assertWritesStartupAllowed(
+  mode: BearerWritesMode,
+  env: Readonly<Record<string, string | undefined>>,
+  grantAvailable: boolean,
+  operationMode: OperationMode
+): StartupLog[] {
+  const logs: StartupLog[] = [];
+  const unsafe = env[WRITES_WITHOUT_GRANT_ENV] === 'true';
+
+  if (mode === 'off') {
+    if (unsafe) {
+      logs.push({
+        level: 'warn',
+        message: `${WRITES_WITHOUT_GRANT_ENV}=true is ignored because ${BEARER_WRITES_ENV} is not "human". Remove it.`,
+      });
+    }
+    return logs;
+  }
+
+  if (!grantAvailable) {
+    if (!unsafe) {
+      throw new Error(
+        `${BEARER_WRITES_ENV}=human requires the write-grant verification (NEV-1855), which is not available in this build. ` +
+          `Leave ${BEARER_WRITES_ENV} unset, or set ${WRITES_WITHOUT_GRANT_ENV}=true (exactly) for NON-production testing only.`
+      );
+    }
+    if (env['NODE_ENV'] === 'production') {
+      throw new Error(
+        `${WRITES_WITHOUT_GRANT_ENV}=true is not allowed when NODE_ENV=production: writes without a write grant cannot run in production.`
+      );
+    }
+    logs.push({
+      level: 'error',
+      message:
+        `WRITES ENABLED WITHOUT A WRITE GRANT (${WRITES_WITHOUT_GRANT_ENV}=true). HUMAN sessions can execute the write ` +
+        'allowlist with no per-action confirmation proof. Never use in production.',
+    });
+  }
+
+  if (operationMode === 'READ_ONLY') {
+    throw new Error(
+      `${BEARER_WRITES_ENV}=human needs NEVENT_OPERATION_MODE=STANDARD or FULL: with READ_ONLY every write would be listed but rejected at call time.`
+    );
+  }
+  if (operationMode === 'STANDARD') {
+    logs.push({
+      level: 'warn',
+      message: 'NEVENT_OPERATION_MODE=STANDARD: nevent_schedule_campaign (classified DELETE) needs FULL and will be rejected at call time.',
+    });
+  }
+  return logs;
 }

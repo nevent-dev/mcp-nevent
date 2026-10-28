@@ -8,6 +8,10 @@
  * with a clear MCP error once the budget is spent. READ tools are never
  * counted or limited.
  *
+ * A call is counted only when it is going to execute: invalid arguments are
+ * rejected by the SDK before the handler, and a call the operation-mode guard
+ * would reject is not counted either. A handler that runs and fails IS counted.
+ *
  * The budget lives in the limiter instance (one per app), NOT in the MCP
  * session, so opening a new session does not reset it. It is in memory: a
  * restart resets it, and with several instances each has its own budget.
@@ -17,13 +21,13 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { getToolOperationType } from '../config/operation-mode.js';
+import { getToolOperationType, isOperationAllowed } from '../config/operation-mode.js';
 
 /** Env var holding the max writes per principal per hour. */
 export const WRITES_PER_HOUR_ENV = 'MCP_BEARER_PASSTHROUGH_WRITES_PER_HOUR';
 /** Default budget when the env var is unset. */
 export const DEFAULT_WRITES_PER_HOUR = 30;
-const MAX_WRITES_PER_HOUR = 100_000;
+const MAX_WRITES_PER_HOUR = 1000;
 const HOUR_MS = 3_600_000;
 /** Above this many tracked keys, fully expired keys are purged on access. */
 const PURGE_THRESHOLD = 5_000;
@@ -32,7 +36,7 @@ const PURGE_THRESHOLD = 5_000;
 export function parseWritesPerHour(raw: string | undefined): number {
   const value = (raw ?? '').trim();
   if (value === '') return DEFAULT_WRITES_PER_HOUR;
-  if (!/^\d{1,6}$/.test(value)) {
+  if (!/^\d{1,5}$/.test(value)) {
     throw new Error(`${WRITES_PER_HOUR_ENV} must be a positive integer.`);
   }
   const n = Number(value);
@@ -40,6 +44,11 @@ export function parseWritesPerHour(raw: string | undefined): number {
     throw new Error(`${WRITES_PER_HOUR_ENV} must be between 1 and ${MAX_WRITES_PER_HOUR}.`);
   }
   return n;
+}
+
+/** Collision-free limiter key for a tenant+user pair. */
+export function writeLimitKey(tenantId: string, userId: string): string {
+  return JSON.stringify([tenantId, userId]);
 }
 
 /** Result of {@link WriteRateLimiter.tryConsume}. */
@@ -70,6 +79,22 @@ export class WriteRateLimiter {
     return { allowed: true };
   }
 
+  /**
+   * Starts a periodic purge of fully expired keys so idle principals do not
+   * accumulate. The timer is unref'd (never keeps the process alive); call the
+   * returned function to stop it.
+   */
+  startPurgeTimer(intervalMs: number = 600_000): () => void {
+    const timer = setInterval(() => this.purge(this.now()), intervalMs);
+    timer.unref();
+    return () => clearInterval(timer);
+  }
+
+  /** Number of tracked keys (diagnostics/tests). */
+  get size(): number {
+    return this.hits.size;
+  }
+
   private purge(now: number): void {
     for (const [k, ts] of this.hits) {
       if (ts.every((t) => now - t >= this.windowMs)) this.hits.delete(k);
@@ -85,7 +110,12 @@ export class WriteRateLimiter {
  *
  * Apply it AFTER `applyLoggingToServer` so a rate-limited call is still logged.
  */
-export function applyWriteRateLimit(server: McpServer, limiter: WriteRateLimiter, key: string): void {
+export function applyWriteRateLimit(
+  server: McpServer,
+  limiter: WriteRateLimiter,
+  key: string,
+  willExecute: (toolName: string) => boolean = isOperationAllowed
+): void {
   const originalTool = server.tool.bind(server);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (server as any).tool = (...args: any[]): unknown => {
@@ -97,6 +127,9 @@ export function applyWriteRateLimit(server: McpServer, limiter: WriteRateLimiter
       return (originalTool as (...a: unknown[]) => unknown)(...args);
     }
     const limited = async (...handlerArgs: unknown[]): Promise<unknown> => {
+      // The operation-mode guard inside the handler will reject this call:
+      // let it answer, and do not spend budget on a call that cannot execute.
+      if (!willExecute(toolName)) return handler(...handlerArgs);
       const verdict = limiter.tryConsume(key);
       if (!verdict.allowed) {
         const envelope = {
