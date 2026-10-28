@@ -214,4 +214,55 @@ describe('bearer-passthrough auth gate (integration)', () => {
     expect(res.status).not.toBe(401);
     expect((await getHealth(port)).activeSessions).toBe(1);
   });
+
+  it('lets a verified SERVICE session through and registers a session', async () => {
+    mockFetch.mockResolvedValue(
+      mockFetchOk({
+        id: 'svc-user',
+        email: 'agent@service.nevent.invalid',
+        role: 'ADMIN',
+        tenantId: 'tenant-session',
+        principalType: 'SERVICE',
+        effectiveTenantId: 'tenant-session',
+        serviceSession: { sessionId: 's1', channel: 'API', scope: 'TENANT', tenantId: 'tenant-session' },
+      })
+    );
+
+    const res = await rawRequest(port, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer service.token.here' },
+      body: INITIALIZE_BODY,
+    });
+
+    expect(res.status).not.toBe(401);
+    expect((await getHealth(port)).activeSessions).toBe(1);
+  });
+
+  it('rejects a SERVICE session that carries no effectiveTenantId, creating no session', async () => {
+    mockFetch.mockResolvedValue(
+      mockFetchOk({ id: 'svc-user', tenantId: 'x', principalType: 'SERVICE' })
+    );
+
+    const res = await rawRequest(port, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer service.token.here' },
+      body: INITIALIZE_BODY,
+    });
+
+    expect(res.status).toBe(401);
+    expect((await getHealth(port)).activeSessions).toBe(0);
+  });
+
+  it('rejects an unknown principalType, creating no session', async () => {
+    mockFetch.mockResolvedValue(mockFetchOk({ id: 'u', principalType: 'ROBOT', effectiveTenantId: 't' }));
+
+    const res = await rawRequest(port, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer weird.token.here' },
+      body: INITIALIZE_BODY,
+    });
+
+    expect(res.status).toBe(401);
+    expect((await getHealth(port)).activeSessions).toBe(0);
+  });
 });

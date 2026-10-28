@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **bearer-passthrough: tenant scope and principal kind now come from nev-api `GET /auth/me`.** The session's clients are locked to `effectiveTenantId` (falling back to `tenantId`, then to the unverified JWT claim for older nev-api) instead of the JWT `tenantId` claim first, which was wrong for hierarchical admins navigating a child tenant. `principalType` `SERVICE` (technical service sessions from `POST /auth/service-token`) is accepted; an unknown `principalType`, or a `SERVICE` response without `effectiveTenantId`, is refused (fail-closed). `SERVICE` verifications are cached for 10 s (humans keep 60 s) so account disable / session revocation takes effect almost immediately. Every bearer-passthrough caller gets the READ tools, including `nevent_list_events`, `nevent_event_sales_provenance`, `nevent_get_campaign_deliverability` and `nevent_get_campaign_unsubscribes`; a parity test pins that set.
+
 ### Added
 - **`nevent_list_events`** (READ) — nev-api `GET /events`. Always paginated (`page`, `page_size` max 100; nev-api would otherwise answer a legacy unpaginated format with every event and its full ticket tree) with `search`, `future`, `nature`, `active_only`, `sort`, `order`. Returns a compact projection of each event.
 - **`nevent_event_sales_provenance`** (READ) — nev-data-api event sales provenance, one tool with a `view`: `overview` (`GET /events/{id}/overview`), `summary`, `daily` and `campaigns` (`GET /events/{id}/sales-provenance/...`). `from`/`to` required; `tz`, `currency`, `population`, `dimension`, `level`/`parent` (marketing drill-down), `top` and `search` where they apply. Params that the chosen view ignores are rejected. The purchase drill-down and CSV export are not exposed (they carry per-purchase rows).

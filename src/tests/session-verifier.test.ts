@@ -20,6 +20,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
   verifySession,
+  resolveScopeTenantId,
   SessionVerificationError,
   _clearVerificationCacheForTests,
 } from '../auth/session-verifier.js';
@@ -77,6 +78,9 @@ describe('verifySession', () => {
       name: undefined,
       role: 'OWNER',
       tenantId: 'tenant-1',
+      principalType: 'HUMAN',
+      effectiveTenantId: undefined,
+      serviceSession: undefined,
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
@@ -186,5 +190,110 @@ describe('verifySession', () => {
       expect(sessionB.userId).toBe('user-b');
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe('verifySession — principalType / effectiveTenantId / serviceSession', () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    _clearVerificationCacheForTests();
+    mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  const serviceBody = {
+    id: 'svc-user',
+    email: 'agent@service.nevent.invalid',
+    role: 'ADMIN',
+    tenantId: 'tenant-session',
+    principalType: 'SERVICE',
+    effectiveTenantId: 'tenant-session',
+    serviceSession: { sessionId: 'sess-1', channel: 'API', scope: 'TENANT', tenantId: 'tenant-session', label: 'x' },
+  };
+
+  it('treats a response without principalType as HUMAN (older nev-api)', async () => {
+    const token = makeFakeJwt({ sub: 'u' });
+    mockFetch.mockResolvedValue(mockFetchOk({ id: 'u', tenantId: 't-1' }));
+
+    const session = await verifySession(token, NEVENT_API_URL);
+
+    expect(session.principalType).toBe('HUMAN');
+    expect(resolveScopeTenantId(session)).toBe('t-1');
+  });
+
+  it('accepts a SERVICE principal and exposes its session context', async () => {
+    const token = makeFakeJwt({ sub: 'svc-user' });
+    mockFetch.mockResolvedValue(mockFetchOk(serviceBody));
+
+    const session = await verifySession(token, NEVENT_API_URL);
+
+    expect(session.principalType).toBe('SERVICE');
+    expect(session.effectiveTenantId).toBe('tenant-session');
+    expect(session.serviceSession).toEqual({
+      sessionId: 'sess-1',
+      channel: 'API',
+      scope: 'TENANT',
+      tenantId: 'tenant-session',
+    });
+  });
+
+  it('uses effectiveTenantId over tenantId when they differ (hierarchical admin navigating a child tenant)', async () => {
+    const token = makeFakeJwt({ sub: 'admin-1' });
+    mockFetch.mockResolvedValue(
+      mockFetchOk({ id: 'admin-1', role: 'ADMIN', tenantId: 'parent', effectiveTenantId: 'child', principalType: 'HUMAN' })
+    );
+
+    const session = await verifySession(token, NEVENT_API_URL);
+
+    expect(session.tenantId).toBe('parent');
+    expect(resolveScopeTenantId(session)).toBe('child');
+  });
+
+  it('falls back to tenantId when effectiveTenantId is absent', () => {
+    expect(resolveScopeTenantId({ userId: 'u', principalType: 'HUMAN', tenantId: 'only' })).toBe('only');
+    expect(resolveScopeTenantId({ userId: 'u', principalType: 'HUMAN' })).toBeUndefined();
+  });
+
+  it('rejects an unknown principalType (fail-closed)', async () => {
+    const token = makeFakeJwt({ sub: 'u' });
+    mockFetch.mockResolvedValue(mockFetchOk({ id: 'u', principalType: 'ROBOT', effectiveTenantId: 't' }));
+
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(SessionVerificationError);
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(/principalType/);
+  });
+
+  it('rejects a SERVICE principal without effectiveTenantId (no tenant lock possible)', async () => {
+    const token = makeFakeJwt({ sub: 'svc-user' });
+    mockFetch.mockResolvedValue(mockFetchOk({ ...serviceBody, effectiveTenantId: undefined, tenantId: 'x' }));
+
+    await expect(verifySession(token, NEVENT_API_URL)).rejects.toThrow(/effectiveTenantId/);
+  });
+
+  it('caches a HUMAN verification for the full window but a SERVICE one for far less', async () => {
+    vi.useFakeTimers();
+    const farFuture = Math.floor(Date.now() / 1000) + 3600;
+
+    const humanToken = makeFakeJwt({ sub: 'u', exp: farFuture });
+    const serviceToken = makeFakeJwt({ sub: 'svc-user', exp: farFuture });
+    mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>)['Authorization'];
+      return auth.endsWith(serviceToken) ? mockFetchOk(serviceBody) : mockFetchOk({ id: 'u', tenantId: 't-1' });
+    });
+
+    await verifySession(humanToken, NEVENT_API_URL);
+    await verifySession(serviceToken, NEVENT_API_URL);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(30_000);
+    await verifySession(humanToken, NEVENT_API_URL); // still cached (60s)
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await verifySession(serviceToken, NEVENT_API_URL); // revalidated (10s)
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });

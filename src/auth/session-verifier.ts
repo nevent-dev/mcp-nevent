@@ -62,8 +62,51 @@ export interface VerifiedSession {
   name?: string;
   /** Role assigned to the user (ADMIN, SUPERADMIN, OWNER, STAFF, USER, ...). */
   role?: string;
-  /** Tenant id nev-api resolved for this user, when present. */
+  /**
+   * Tenant id nev-api reports for this user (`AuthMeResponse.tenantId`). For a
+   * human this is the user's stored home tenant; do NOT use it to scope data
+   * access — use {@link resolveScopeTenantId} instead.
+   */
   tenantId?: string;
+  /**
+   * `HUMAN` (a person logged in) or `SERVICE` (technical service session
+   * minted by `POST /auth/service-token` for unattended agents). Defaults to
+   * `HUMAN` when nev-api predates `principalType` (older deployments).
+   */
+  principalType: PrincipalType;
+  /**
+   * Tenant the token actually acts in (`AuthMeResponse.effectiveTenantId`):
+   * the session tenant for service sessions, the navigation tenant for
+   * hierarchical admins (ADMIN/OWNER/STAFF with an `activeTenantId`).
+   * Authoritative for tenant scoping when present.
+   */
+  effectiveTenantId?: string;
+  /** Service session context, present only for `SERVICE` principals. */
+  serviceSession?: VerifiedServiceSession;
+}
+
+/** Principal kinds reported by nev-api's `GET /auth/me`. */
+export type PrincipalType = 'HUMAN' | 'SERVICE';
+
+/** Subset of nev-api's `ServiceSessionView` this server cares about. */
+export interface VerifiedServiceSession {
+  sessionId?: string;
+  /** `API` or `BROWSER`. */
+  channel?: string;
+  /** `TENANT` (bound to one tenant and descendants) or `PLATFORM`. */
+  scope?: string;
+  /** Tenant of the service session. */
+  tenantId?: string;
+}
+
+/**
+ * Returns the tenant that every tenant-scoped client of the MCP session must
+ * be locked to: nev-api's `effectiveTenantId` when present (authoritative,
+ * resolved server-side from the live token/session), otherwise the
+ * `tenantId` it reported. `undefined` means nev-api gave no tenant at all.
+ */
+export function resolveScopeTenantId(session: VerifiedSession): string | undefined {
+  return session.effectiveTenantId ?? session.tenantId;
 }
 
 /**
@@ -85,6 +128,14 @@ export class SessionVerificationError extends Error {
 
 /** How long a successful verification may be reused, at most. */
 const CACHE_TTL_MS = 60_000;
+
+/**
+ * Shorter reuse window for `SERVICE` principals. Service credentials carry a
+ * documented revocation guarantee (disable / revoke-sessions / tenant switch
+ * stop the very next request at nev-api), so this server must not mask a
+ * revocation for a full minute.
+ */
+const SERVICE_CACHE_TTL_MS = 10_000;
 
 interface CacheEntry {
   session: VerifiedSession;
@@ -125,6 +176,69 @@ function decodeExpMs(token: string): number | undefined {
 /** Clears the verification cache. Exposed for tests only. */
 export function _clearVerificationCacheForTests(): void {
   verificationCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// /auth/me response parsing
+// ---------------------------------------------------------------------------
+
+function str(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Builds a {@link VerifiedSession} from a `200` `/auth/me` body.
+ *
+ * Fail-closed rules (all throw {@link SessionVerificationError}):
+ *  - `principalType` present but neither `HUMAN` nor `SERVICE` — an unknown
+ *    kind of principal is never given tool access by default.
+ *  - `SERVICE` without an `effectiveTenantId` — a service session always
+ *    acts in exactly one tenant; without it the tenant lock cannot be
+ *    established.
+ *
+ * `SERVICE` principals are accepted (both `TENANT` and `PLATFORM` scope):
+ * every tool exposed here is READ-only and locked to the session tenant via
+ * `effectiveTenantId`, tenant-discovery/switching tools are excluded, and
+ * nev-api / nev-data-api re-validate the live service session on every
+ * downstream call.
+ */
+function parseVerifiedSession(userId: string, body: Record<string, unknown>): VerifiedSession {
+  const rawPrincipal = body['principalType'];
+  let principalType: PrincipalType = 'HUMAN';
+  if (rawPrincipal !== undefined && rawPrincipal !== null) {
+    if (rawPrincipal !== 'HUMAN' && rawPrincipal !== 'SERVICE') {
+      throw new SessionVerificationError('nev-api /auth/me returned an unknown principalType');
+    }
+    principalType = rawPrincipal;
+  }
+
+  const effectiveTenantId = str(body['effectiveTenantId']);
+  if (principalType === 'SERVICE' && !effectiveTenantId) {
+    throw new SessionVerificationError('nev-api /auth/me service session is missing "effectiveTenantId"');
+  }
+
+  const rawService = body['serviceSession'];
+  let serviceSession: VerifiedServiceSession | undefined;
+  if (principalType === 'SERVICE' && rawService && typeof rawService === 'object') {
+    const svc = rawService as Record<string, unknown>;
+    serviceSession = {
+      sessionId: str(svc['sessionId']),
+      channel: str(svc['channel']),
+      scope: str(svc['scope']),
+      tenantId: str(svc['tenantId']),
+    };
+  }
+
+  return {
+    userId,
+    email: str(body['email']),
+    name: str(body['name']),
+    role: str(body['role']),
+    tenantId: str(body['tenantId']),
+    principalType,
+    effectiveTenantId,
+    serviceSession,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,21 +300,21 @@ export async function verifySession(token: string, neventApiUrl: string): Promis
     throw new SessionVerificationError('nev-api /auth/me response is missing "id"');
   }
 
-  const session: VerifiedSession = {
-    userId,
-    email: typeof body['email'] === 'string' ? body['email'] : undefined,
-    name: typeof body['name'] === 'string' ? body['name'] : undefined,
-    role: typeof body['role'] === 'string' ? body['role'] : undefined,
-    tenantId: typeof body['tenantId'] === 'string' ? body['tenantId'] : undefined,
-  };
+  const session = parseVerifiedSession(userId, body);
 
   logger.info(
-    { userId: session.userId, tenantId: session.tenantId ?? 'unknown', tokenHash: tokenHash.slice(0, 16) },
+    {
+      userId: session.userId,
+      principalType: session.principalType,
+      tenantId: resolveScopeTenantId(session) ?? 'unknown',
+      tokenHash: tokenHash.slice(0, 16),
+    },
     'bearer-passthrough session verified via nev-api /auth/me'
   );
 
+  const ttl = session.principalType === 'SERVICE' ? SERVICE_CACHE_TTL_MS : CACHE_TTL_MS;
   const expMs = decodeExpMs(token);
-  const expiresAtMs = expMs !== undefined ? Math.min(Date.now() + CACHE_TTL_MS, expMs) : Date.now() + CACHE_TTL_MS;
+  const expiresAtMs = expMs !== undefined ? Math.min(Date.now() + ttl, expMs) : Date.now() + ttl;
   // Only cache when the token has not already reached its own exp — an
   // already-expired token must always re-check with nev-api (which will
   // legitimately 401 it) rather than be cached at all.

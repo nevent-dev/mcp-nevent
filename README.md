@@ -197,6 +197,15 @@ Authorization: Bearer <the promoter's nev-api JWT>
     live, and unexpired. nev-data-api and nev-api additionally validate the
     token themselves on every downstream call they receive, exactly as they
     do for `stdio` mode's shared `NEVENT_JWT_TOKEN`.
+- **Human and service sessions.** `GET /auth/me` also reports `principalType`
+  (`HUMAN` or `SERVICE`), `effectiveTenantId` and `serviceSession`. Technical
+  service sessions minted by `POST /auth/service-token` (unattended agents)
+  are accepted like a human token: the session is locked to
+  `effectiveTenantId` (authoritative when present, also for hierarchical
+  admins navigating a child tenant), an unknown `principalType` or a `SERVICE`
+  response without `effectiveTenantId` is refused, and a `SERVICE`
+  verification is cached for 10 s instead of 60 s so a disabled account or
+  revoked session stops working almost immediately.
 - **Read-only, tenant-locked.** Only READ tools are exposed, minus
   `nevent_segment_execute` (returns raw contact PII) and the tenant-switching
   tools (`nevent_list_tenants` / `nevent_switch_tenant` / `nevent_reset_tenant`)

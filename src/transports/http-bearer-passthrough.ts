@@ -105,7 +105,7 @@ import { SessionClients } from '../clients/session-clients.js';
 import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
-import { verifySession, SessionVerificationError } from '../auth/session-verifier.js';
+import { verifySession, resolveScopeTenantId, SessionVerificationError } from '../auth/session-verifier.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -354,7 +354,17 @@ export async function createBearerPassthroughApp(
       if (!sessionId && isInitializeRequest(req.body)) {
         const authHeader = req.headers['authorization'] ?? '';
         const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
-        const { tenantId } = decodeJwtClaims(bearerToken);
+
+        // `verifyIntrospectedSession` already confirmed this exact token
+        // against nev-api /auth/me for this request (cache hit here in the
+        // common case). That response — not the unverified JWT payload — is
+        // the authority for WHO the caller is and WHICH tenant the session is
+        // locked to: `effectiveTenantId` covers service sessions and
+        // hierarchical admins whose `activeTenantId` differs from the stored
+        // `tenantId`. The JWT claim is only a fallback for older nev-api
+        // versions that do not return it. The token itself is never logged.
+        const verified = await verifySession(bearerToken, config.neventApiUrl);
+        const tenantId = resolveScopeTenantId(verified) ?? decodeJwtClaims(bearerToken).tenantId;
 
         // Fresh clients for THIS session, built from THIS request's token.
         // No shared state with any other session — see module doc.
@@ -373,18 +383,12 @@ export async function createBearerPassthroughApp(
           tenantId
         );
 
-        // `verifyIntrospectedSession` middleware already confirmed this
-        // exact token against nev-api /auth/me for this request (cache hit
-        // here in the common case) — reuse that authoritative identity for
-        // the "session starting" log line instead of the unverified JWT
-        // `sub` claim. The token itself is never logged.
-        const verified = await verifySession(bearerToken, config.neventApiUrl);
-
         logger.info(
           {
             userId: verified.userId,
             email: verified.email ?? 'unknown',
-            tenantId: verified.tenantId ?? tenantId ?? 'unknown',
+            principalType: verified.principalType,
+            tenantId: tenantId ?? 'unknown',
             mode: OPERATION_MODE,
           },
           'bearer-passthrough session starting'
