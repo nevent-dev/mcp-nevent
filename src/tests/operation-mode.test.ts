@@ -46,13 +46,22 @@ describe('isOperationAllowed — Sprint 1 READ tools', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unknown tools — fail-open behavior
+// Unknown tools — fail-closed behavior
+//
+// A tool that has not been explicitly classified in TOOL_OPERATIONS is
+// DENIED. This was flipped from an earlier fail-open policy: fail-open meant
+// a newly added tool that nobody remembered to classify would silently run
+// under any operation mode (and would also bypass the bearer-passthrough
+// read-only allowlist, since that allowlist is derived from the same
+// registry). Fail-closed forces every new tool to be classified before it
+// can be called.
 // ---------------------------------------------------------------------------
 
 describe('isOperationAllowed — unknown tools', () => {
-  it('allows unknown tools (fail-open policy)', () => {
-    // Unknown tools should be allowed to not block future tool additions
-    expect(isOperationAllowed('some_unknown_future_tool')).toBe(true);
+  it('denies unknown tools (fail-closed policy)', () => {
+    // Unknown tools must be denied so a tool nobody classified in
+    // TOOL_OPERATIONS cannot silently run under any operation mode.
+    expect(isOperationAllowed('some_unknown_future_tool')).toBe(false);
   });
 });
 

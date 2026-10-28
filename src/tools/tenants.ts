@@ -35,13 +35,26 @@
  * The nev-api endpoint GET /tenants returns the tenant list filtered by the
  * authenticated user's permissions.
  *
+ * ## Operation-mode guard
+ *
+ * All three tools call `checkMode()` before doing anything else.
+ * `nevent_reset_tenant` is classified `DELETE` in `TOOL_OPERATIONS`
+ * (src/config/operation-mode.ts) — it mutates the SUPERADMIN user record in
+ * the database the same way `nevent_switch_tenant` does — so it is blocked in
+ * READ_ONLY and STANDARD, and only permitted in FULL.
+ *
+ * All three tools are also excluded from the `bearer-passthrough` HTTP auth
+ * mode (see `src/config/bearer-passthrough.ts`): a bearer-passthrough client
+ * always operates in the tenant carried by its own JWT and must never be able
+ * to discover or switch to another tenant.
+ *
  * @module tools/tenants
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionClients } from '../clients/session-clients.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import { ok, err, toErrorEnvelope } from './helpers.js';
+import { ok, err, toErrorEnvelope, checkMode } from './helpers.js';
 import { z } from 'zod';
 import { logger } from '../logger.js';
 
@@ -122,6 +135,9 @@ export function registerTenantTools(
     ListTenantsSchema,
     { title: 'List accessible tenants', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
+      const denied = checkMode('nevent_list_tenants');
+      if (denied) return err(denied);
+
       try {
         // Call nev-api GET /tenants using the DataClient's JWT token.
         // The tenant list endpoint is on nev-api, not nev-data-api, but they
@@ -233,6 +249,9 @@ export function registerTenantTools(
     SwitchTenantSchema,
     { title: 'Switch active tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async (params) => {
+      const denied = checkMode('nevent_switch_tenant');
+      if (denied) return err(denied);
+
       try {
         const jwtToken = sessionClients.dataClient.getJwtToken();
 
@@ -304,8 +323,11 @@ export function registerTenantTools(
     'For OWNER/ADMIN/STAFF users, this resets to the session\'s home tenant. ' +
     'No parameters needed.',
     ResetTenantSchema,
-    { title: 'Reset to home tenant', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    { title: 'Reset to home tenant', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async (_params) => {
+      const denied = checkMode('nevent_reset_tenant');
+      if (denied) return err(denied);
+
       try {
         const homeTenantId = sessionClients.homeTenantId;
 

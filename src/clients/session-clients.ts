@@ -197,8 +197,13 @@ export class SessionClients {
    * context is discarded via `dataClient.clearAllCaches()`.
    *
    * @param newAccessToken - The new bearer JWT to apply to all clients.
+   * @param lockedTenantId  - When provided, the active tenant is pinned to this
+   *                          value instead of being re-read from the token's
+   *                          (unverified) claims. Used by bearer-passthrough,
+   *                          where the tenant comes only from nev-api's
+   *                          verification and a rotation must never move it.
    */
-  rotateJwt(newAccessToken: string): void {
+  rotateJwt(newAccessToken: string, lockedTenantId?: string): void {
     this.dataClient.rotateAccessToken(newAccessToken);
     this.paidMediaClient.rotateAccessToken(newAccessToken);
     this.templateClient.rotateAccessToken(newAccessToken);
@@ -207,7 +212,7 @@ export class SessionClients {
     // Invalidate cached data that was scoped to the previous tenant
     this.dataClient.clearAllCaches();
     // Update activeTenantId to reflect the new JWT's tenant claim
-    const newTenantId = decodeJwtTenantId(newAccessToken);
+    const newTenantId = lockedTenantId ?? decodeJwtTenantId(newAccessToken);
     if (newTenantId !== undefined) {
       this.dataClient.activeTenantId = newTenantId;
     }

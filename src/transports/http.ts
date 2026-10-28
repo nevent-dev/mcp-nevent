@@ -180,7 +180,7 @@ const ANON_SESSION_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
  * deployed containers always report their actual version rather than the
  * hardcoded string that was present before NEV-1661.
  */
-const PKG_VERSION: string = (() => {
+export const PKG_VERSION: string = (() => {
   const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
   return pkg.version;
