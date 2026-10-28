@@ -42,11 +42,14 @@
  *     (see `session-verifier.ts` module doc). nev-data-api and nev-api also
  *     continue to validate the token on every call they receive from this
  *     server, exactly as they do for stdio mode's shared token.
- *   - Only tools that pass `isToolAllowedInBearerPassthrough()` are
+ *   - Only tools that pass the per-session predicate
+ *     (`isToolAllowedForSession()`, bound with `createBearerToolFilter()`) are
  *     registered (`toolFilter` on `createNeventServer`): READ tools minus a
  *     short exclusion list (the tenant discovery/switching tools, since a bearer-passthrough client always
  *     operates in the tenant its own JWT carries). Excluded/WRITE/DELETE
  *     tools are absent from `tools/list`, not merely denied at call time.
+ *     With `writesMode: 'human'` (NEV-1854) a HUMAN session additionally gets
+ *     the closed write allowlist; SERVICE sessions never do.
  *   - `MONGODB_URI` and `MCP_JWT_SECRET` are NOT required: there is no OAuth
  *     store and no locally-issued token to verify. `MONGODB_URI` remains
  *     OPTIONAL — when set, it additionally enables the Mongo-backed READ
@@ -101,7 +104,7 @@ import { createNeventServer } from '../server.js';
 import { DataClient } from '../clients/data-client.js';
 import { PaidMediaClient } from '../clients/paid-media-client.js';
 import { SessionClients } from '../clients/session-clients.js';
-import { isToolAllowedInBearerPassthrough } from '../config/bearer-passthrough.js';
+import { createBearerToolFilter, type BearerWritesMode } from '../config/bearer-passthrough.js';
 import { OPERATION_MODE } from '../config/operation-mode.js';
 import { logger } from '../logger.js';
 import { PKG_VERSION, getCommitSha } from './http.js';
@@ -156,6 +159,12 @@ export interface BearerPassthroughConfig {
    * ignored. CORS is not an authentication control either way.
    */
   allowedOrigins?: string;
+  /**
+   * Write policy (NEV-1854). `off` (default): every session is READ-only.
+   * `human`: HUMAN sessions also get the write allowlist; SERVICE stays
+   * READ-only. See `src/config/bearer-passthrough.ts`.
+   */
+  writesMode?: BearerWritesMode;
 }
 
 /** Result of `createBearerPassthroughApp()` — app plus a shutdown function. */
@@ -184,6 +193,7 @@ export async function createBearerPassthroughApp(
   // Fail-closed at construction: a bearer-passthrough app without a valid
   // service key must not exist (it would be open to anyone holding a JWT).
   const serviceKeys = parseServiceKeys(config.serviceKeys);
+  const writesMode: BearerWritesMode = config.writesMode ?? 'off';
 
   const app = express();
 
@@ -584,9 +594,10 @@ export async function createBearerPassthroughApp(
           sessionClients,
           userId: verified.userId,
           getSessionId: () => transport.sessionId ?? null,
-          // Only READ tools minus the PII/tenant-switching exclusions — see
-          // src/config/bearer-passthrough.ts.
-          toolFilter: isToolAllowedInBearerPassthrough,
+          // Per-session policy from the principal verified against /auth/me:
+          // READ tools (+ the HUMAN write allowlist when enabled), minus the
+          // always-denied tools — see src/config/bearer-passthrough.ts.
+          toolFilter: createBearerToolFilter(verified.principalType, writesMode),
         });
         await mcpServer.connect(transport);
 

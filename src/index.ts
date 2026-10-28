@@ -79,11 +79,13 @@
  * |------------------------|----------------------------------------|----------------------------|-------------|
  * | NEVENT_JWT_TOKEN       | Yes (stdio only)                       | —                          | Shared JWT for nev-data-api (stdio mode) |
  * | NEVENT_DATA_API_URL    | No                                      | https://data.nevent.es     | nev-data-api base URL |
- * | NEVENT_OPERATION_MODE  | No                                      | READ_ONLY                  | READ_ONLY / STANDARD / FULL (oauth mode only — ignored by bearer-passthrough, which always exposes READ tools only) |
+ * | NEVENT_OPERATION_MODE  | No                                      | READ_ONLY                  | READ_ONLY / STANDARD / FULL (call-time guard in both modes; bearer-passthrough tool *visibility* is governed by MCP_BEARER_PASSTHROUGH_WRITES, and writes need STANDARD/FULL here too) |
  * | MCP_TRANSPORT          | No                                      | stdio                      | stdio or http |
  * | MCP_AUTH_MODE          | No (http only)                         | oauth                      | oauth or bearer-passthrough |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY | Yes (bearer-passthrough)       | —                          | Pre-shared key (>= 32 chars) required in the `X-Nevent-Service-Key` header of every request; startup fails without it |
  * | MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS | No                      | —                          | Previous key, accepted only during rotation |
+ * | MCP_BEARER_PASSTHROUGH_WRITES | No (bearer-passthrough)               | off                        | `off` = READ-only; `human` = HUMAN sessions also get the 12-tool write allowlist (SERVICE never). Startup refuses `human` until the write grant (NEV-1855) exists |
+ * | MCP_BEARER_PASSTHROUGH_WRITES_UNSAFE_NO_GRANT | No                    | —                          | `true` lets `human` start WITHOUT a write grant (non-production testing only) |
  * | MCP_PORT               | No                                      | 3000                       | HTTP port |
  * | MCP_SERVER_URL         | No (http, oauth mode only)              | http://localhost:{port}    | Public HTTPS URL of this server (used in OAuth metadata) |
  * | MCP_JWT_SECRET         | Yes (http, oauth mode only)             | —                          | JWT signing key for locally-issued MCP access tokens |
@@ -191,6 +193,51 @@ if (transportArg === 'http') {
       process.exit(1);
     }
 
+    // Write policy (NEV-1854): default `off` = READ-only for everyone.
+    const {
+      parseBearerWritesMode,
+      BEARER_WRITES_ENV,
+      WRITES_WITHOUT_GRANT_ENV,
+      WRITE_GRANT_ENFORCEMENT_AVAILABLE,
+    } = await import('./config/bearer-passthrough.js');
+
+    let writesMode: 'off' | 'human';
+    try {
+      writesMode = parseBearerWritesMode(process.env[BEARER_WRITES_ENV]);
+    } catch (err) {
+      logger.fatal(`FATAL: ${err instanceof Error ? err.message : 'invalid bearer-passthrough writes mode'}`);
+      process.exit(1);
+    }
+
+    if (writesMode === 'human') {
+      // The write grant (NEV-1855) is the real barrier between the model and
+      // the writes. Until it exists, the flag alone must not enable writes.
+      if (!WRITE_GRANT_ENFORCEMENT_AVAILABLE) {
+        if (process.env[WRITES_WITHOUT_GRANT_ENV] !== 'true') {
+          logger.fatal(
+            `FATAL: ${BEARER_WRITES_ENV}=human requires the write-grant verification (NEV-1855), which is not available in this build. ` +
+            `Leave ${BEARER_WRITES_ENV} unset, or set ${WRITES_WITHOUT_GRANT_ENV}=true for NON-production testing only.`
+          );
+          process.exit(1);
+        }
+        logger.warn(
+          { writesMode },
+          `bearer-passthrough WRITES ENABLED WITHOUT A WRITE GRANT (${WRITES_WITHOUT_GRANT_ENV}=true). ` +
+          'HUMAN sessions can execute the write allowlist with no per-action confirmation proof. Never use in production.'
+        );
+      }
+    }
+
+    if (writesMode === 'human' && OPERATION_MODE !== 'FULL') {
+      // Call-time guard (tools/helpers.ts) still applies: write tools are
+      // listed but `schedule_campaign` (DELETE) needs FULL and the other
+      // writes need at least STANDARD.
+      logger.warn(
+        { writesMode, operationMode: OPERATION_MODE },
+        `${BEARER_WRITES_ENV}=human but NEVENT_OPERATION_MODE is not FULL: write tools will be listed but the call-time operation-mode guard will reject them (schedule_campaign needs FULL, the other writes at least STANDARD).`
+      );
+    }
+
     const { createBearerPassthroughApp } = await import('./transports/http-bearer-passthrough.js');
 
     const { app, shutdown } = await createBearerPassthroughApp({
@@ -200,6 +247,7 @@ if (transportArg === 'http') {
       mongoUri: MONGODB_URI,
       serviceKeys,
       allowedOrigins: process.env['MCP_ALLOWED_ORIGINS'],
+      writesMode,
     });
 
     process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
