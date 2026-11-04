@@ -6,7 +6,9 @@
  *
  *  1. nevent_get_sending_profile
  *     Reads warm-up state, throttle settings and validated sending domains
- *     from three MongoDB collections and returns them as a unified profile.
+ *     from three MongoDB collections and returns them as a unified profile,
+ *     plus the senders a campaign can be sent with and the default sender
+ *     (nev-api `GET /sender-identities/campaign-options`, nevent-work#323).
  *
  *  2. nevent_get_suppressions_summary
  *     Counts suppressions and unsubscriptions by reason (lifetime totals)
@@ -54,11 +56,13 @@ import { TIMEOUTS } from '../config/timeouts.js';
  * @param server     — The `McpServer` instance to register tools on.
  * @param mongoUri   — MongoDB connection URI for the `nevent` database.
  * @param dataClient — The session's `DataClient` (carries `activeTenantId`).
+ * @param neventApiUrl — nev-api base URL; without it the profile has no `senders` section.
  */
 export function registerDeliverabilityTools(
   server: McpServer,
   mongoUri: string,
-  dataClient: DataClient
+  dataClient: DataClient,
+  neventApiUrl?: string
 ): void {
 
   // -------------------------------------------------------------------------
@@ -90,7 +94,7 @@ export function registerDeliverabilityTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_get_sending_profile',
-    'Call this before creating a campaign to verify the tenant is ready to send email. Returns: sender domain(s) and their validation status, warm-up phase (cold/warming/warmed), daily send rate cap, and throttle settings. If the sending profile is not validated or still in warm-up, warn the user before scheduling a large campaign. Combine with nevent_get_suppressions_summary for a full deliverability health check.',
+    'Call this before creating a campaign to verify the tenant is ready to send email. Returns: sender domain(s) and their validation status, warm-up phase (cold/warming/warmed), daily send rate cap, throttle settings, and senders: the senders an email campaign can be sent with (identityId, name, From address, default, selectable and the reasons a sender is not selectable) and the default sender (defaultIdentityId). Pass a selectable identityId as sender_identity_id to nevent_create_campaign to send with that sender; omit it to use the default. senders.perCampaign=false means the organization does not choose the sender per campaign: every campaign uses its sender. If the sending profile is not validated or still in warm-up, warn the user before scheduling a large campaign. Combine with nevent_get_suppressions_summary for a full deliverability health check.',
     GetSendingProfileSchema,
     { title: 'Get sending profile', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     async (_params) => {
@@ -170,6 +174,11 @@ export function registerDeliverabilityTools(
           validatedAt: doc['validatedAt'],
           lastCheckedAt: doc['lastCheckedAt'],
         }));
+
+        // Senders a campaign can be sent with, and the default one (nevent-work#323)
+        if (neventApiUrl) {
+          result['senders'] = await campaignSenders(neventApiUrl, dataClient.getJwtToken());
+        }
 
         return ok(result);
       } catch (caught) {
@@ -306,4 +315,89 @@ export function registerDeliverabilityTools(
       }
     }
   );
+}
+
+// ---------------------------------------------------------------------------
+// Senders per campaign (nevent-work#323)
+// ---------------------------------------------------------------------------
+
+/** One sender as `nevent_get_sending_profile` returns it. */
+export interface CampaignSenderOption {
+  identityId: string;
+  displayName: string | null;
+  fromEmail: string | null;
+  replyTo: string | null;
+  domain: string | null;
+  state: string;
+  default: boolean;
+  selectable: boolean;
+  /** Why it is not selectable (nev-api blocker codes); empty when it is. */
+  blockers: string[];
+  warnings: string[];
+}
+
+/** The `senders` section of the sending profile. */
+export interface CampaignSenders {
+  perCampaign: boolean;
+  defaultIdentityId: string | null;
+  senders: CampaignSenderOption[];
+  error?: string;
+}
+
+function codesOf(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((entry) => (entry !== null && typeof entry === 'object' ? (entry as Record<string, unknown>)['code'] : entry))
+    .filter((code): code is string => typeof code === 'string');
+}
+
+/**
+ * The senders an email campaign of the active tenant can be sent with, from nev-api
+ * `GET /sender-identities/campaign-options` (the same list the campaign editor shows). Never throws: when the
+ * call fails the section says so (`error`) and the rest of the profile is still returned.
+ *
+ * @param neventApiUrl — nev-api base URL.
+ * @param jwtToken     — the session's token; without it the section reports the error.
+ * @param fetchImpl    — injectable for tests.
+ */
+export async function campaignSenders(
+  neventApiUrl: string,
+  jwtToken: string | null | undefined,
+  fetchImpl: typeof fetch = fetch
+): Promise<CampaignSenders> {
+  const unavailable = (error: string): CampaignSenders => ({
+    perCampaign: false, defaultIdentityId: null, senders: [], error,
+  });
+  if (!jwtToken) return unavailable('missing_token');
+  try {
+    const response = await fetchImpl(`${neventApiUrl}/sender-identities/campaign-options`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      signal: AbortSignal.timeout(TIMEOUTS.LONG_MS),
+    });
+    if (!response.ok) return unavailable(`HTTP ${response.status}`);
+    const body = (await response.json()) as Record<string, unknown>;
+    const options = Array.isArray(body['senders']) ? (body['senders'] as Array<Record<string, unknown>>) : [];
+    return {
+      perCampaign: body['enabled'] === true,
+      defaultIdentityId: typeof body['defaultIdentityId'] === 'string' ? body['defaultIdentityId'] : null,
+      senders: options.map((option) => {
+        const evaluation = (option['evaluation'] ?? {}) as Record<string, unknown>;
+        return {
+          identityId: String(option['identityId']),
+          displayName: typeof option['displayName'] === 'string' ? option['displayName'] : null,
+          fromEmail: typeof option['fromEmail'] === 'string' ? option['fromEmail'] : null,
+          replyTo: typeof option['replyTo'] === 'string' ? option['replyTo'] : null,
+          domain: typeof option['domain'] === 'string' ? option['domain'] : null,
+          state: String(option['state']),
+          default: option['default'] === true,
+          selectable: option['selectable'] === true,
+          blockers: codesOf(evaluation['blockers']),
+          warnings: codesOf(evaluation['warnings']),
+        };
+      }),
+    };
+  } catch (caught) {
+    return unavailable(caught instanceof Error ? caught.name : 'request_failed');
+  }
 }

@@ -89,6 +89,8 @@ export interface TestTemplateBody {
    * Ignored when sampleUserId is provided.
    */
   sampleUserEmail?: string;
+  /** Optional campaign whose sender the test goes out with (nevent-work#323). */
+  campaignId?: string;
 }
 
 // ---------------------------------------------------------------------------

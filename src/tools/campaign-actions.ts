@@ -52,7 +52,9 @@
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataClient } from '../clients/data-client.js';
-import { ok, err, toErrorEnvelope, checkMode, senderIneligibleEnvelope } from './helpers.js';
+import {
+  ok, err, toErrorEnvelope, checkMode, senderIneligibleEnvelope, campaignSenderUnavailableEnvelope,
+} from './helpers.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { CreateCampaignSchema, ScheduleCampaignSchema, QuoteCampaignSchema, CHANNEL_ALIAS_MAP } from '../schemas/campaign-actions.js';
 import { logger } from '../logger.js';
@@ -159,7 +161,7 @@ export function registerCampaignActionTools(
   // -------------------------------------------------------------------------
   server.tool(
     'nevent_create_campaign',
-    'Create a new campaign draft (email, SMS, WhatsApp, push, or multi-channel). PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL_ONLY (and email multi-channel): email_subject is required. For SMS_ONLY/WHATSAPP_ONLY/PUSH_ONLY and multi-channel involving those: message is required. Optional fields: from_name, preview_text, template_id, segment_ids, utm_source/medium/campaign/content/term/custom_params, reply_to (email address for reply routing — useful when replies should go to a different mailbox than the From address). Always confirm the segment audience count with the user before scheduling.',
+    'Create a new campaign draft (email, SMS, WhatsApp, push, or multi-channel). PREREQUISITES: call nevent_list_segments to get the target segment_id, and nevent_list_templates to get the template_id. The campaign is always created in DRAFT status — no messages are sent. After creation, call nevent_schedule_campaign to schedule delivery. For EMAIL_ONLY (and email multi-channel): email_subject is required. For SMS_ONLY/WHATSAPP_ONLY/PUSH_ONLY and multi-channel involving those: message is required. Optional fields: from_name, preview_text, template_id, segment_ids, utm_source/medium/campaign/content/term/custom_params, reply_to (email address for reply routing — useful when replies should go to a different mailbox than the From address), sender_identity_id (the sender to send the email campaign with; list the eligible ones and the default with nevent_get_sending_profile; omitted = the organization\'s default sender; a sender that is not eligible is refused with sender_unavailable). Always confirm the segment audience count with the user before scheduling.',
     CreateCampaignSchema,
     { title: 'Create campaign draft', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async (params) => {
@@ -299,6 +301,12 @@ export function registerCampaignActionTools(
           payload['replyTo'] = params.reply_to;
         }
 
+        // --- sender_identity_id → senderIdentityId (nevent-work#323) ---
+        // Omitted: nev-api gives the campaign the organization's default sender.
+        if (params.sender_identity_id !== undefined) {
+          payload['senderIdentityId'] = params.sender_identity_id;
+        }
+
         // --- POST to nev-api ---
         const response = await fetch(`${neventApiUrl}/campaigns`, {
           method: 'POST',
@@ -312,6 +320,10 @@ export function registerCampaignActionTools(
 
         if (!response.ok) {
           const body = await response.text();
+          if (response.status === 409) {
+            const senderConflict = campaignSenderUnavailableEnvelope(body);
+            if (senderConflict) return err(senderConflict);
+          }
           return err({
             error: {
               type: response.status === 403 ? 'authentication_error' : 'api_error',
@@ -496,7 +508,7 @@ export function registerCampaignActionTools(
         if (!scheduleResponse.ok) {
           const body = await scheduleResponse.text();
           if (scheduleResponse.status === 409) {
-            const senderConflict = senderIneligibleEnvelope(body);
+            const senderConflict = senderIneligibleEnvelope(body) ?? campaignSenderUnavailableEnvelope(body, 'schedule');
             if (senderConflict) return err(senderConflict);
           }
           return err({

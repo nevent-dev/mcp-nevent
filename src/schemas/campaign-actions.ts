@@ -301,6 +301,24 @@ export const CreateCampaignSchema = {
       'Reply-To email address (optional). Recipients\' replies go to this address instead of the From address. ' +
       'Must be a valid email, max 254 chars. Only meaningful for email-bearing channels.'
     ),
+
+  /**
+   * Sender identity the email campaign is sent with (nevent-work#323). Maps to
+   * `senderIdentityId` in the backend payload. Omitted: the organization's
+   * default sender. Only identities listed by nevent_get_sending_profile with
+   * selectable=true can be used; any other is refused with 409
+   * CAMPAIGN_SENDER_UNAVAILABLE.
+   */
+  sender_identity_id: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      'Sender to send the email campaign with: an identityId from nevent_get_sending_profile → senders.senders[] ' +
+      'with selectable=true. Omit it to use the organization\'s default sender (senders.defaultIdentityId). ' +
+      'Only meaningful for email-bearing channels and when senders.perCampaign is true.'
+    ),
 };
 
 // ---------------------------------------------------------------------------

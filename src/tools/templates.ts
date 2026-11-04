@@ -797,7 +797,9 @@ export function registerTemplateTools(
     'Use after nevent_preview_template validates rendering. ' +
     'Test emails carry test indicators in headers and are sent via AWS SES. ' +
     'This call may take up to 60 seconds due to SES delivery. ' +
-    'Returns success status, list of recipients the email was sent to, and any error details.',
+    'Returns success status, list of recipients the email was sent to, and any error details. ' +
+    'Pass campaign_id to send the test as that campaign will go out (its sender, sender name and reply-to); ' +
+    'without it the test uses the organization\'s default sender.',
     SendTestTemplateSchema,
     // destructiveHint: true — sends a real email via AWS SES to the specified inbox(es); the send is irreversible
     { title: 'Send test email', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
@@ -815,6 +817,7 @@ export function registerTemplateTools(
           sampleUserId?: string;
           sampleUserEmail?: string;
           parameters?: Record<string, unknown>;
+          campaignId?: string;
         } = {
           emails: params.emails,
         };
@@ -830,6 +833,10 @@ export function registerTemplateTools(
         }
         if (params.parameters !== undefined) {
           body.parameters = params.parameters;
+        }
+        // nevent-work#323: the test of a campaign goes out with that campaign's sender.
+        if (params.campaign_id !== undefined) {
+          body.campaignId = params.campaign_id;
         }
 
         const result = await templateClient.sendTestEmail(params.template_id, body);

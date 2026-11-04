@@ -526,4 +526,19 @@ export const SendTestTemplateSchema = {
       'Key-value pairs where keys match merge tag names. Example: {name: "Juan", city: "Madrid"}. ' +
       'When provided, overrides sample user profile data for the corresponding tags.'
     ),
+
+  /**
+   * Campaign this test is of (nevent-work#323). Maps to `campaignId` in the
+   * request body: the test goes out with the campaign's sender and its own
+   * name and reply-to address. A campaign of another organization is a 404.
+   */
+  campaign_id: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      'Optional campaign ID: send the test as that campaign will be sent (its sender, its own sender name and ' +
+      'reply-to address). Omit to send it with the organization\'s default sender.'
+    ),
 };
