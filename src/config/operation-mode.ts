@@ -176,6 +176,10 @@ export const TOOL_OPERATIONS: Readonly<Record<string, OperationType>> = Object.f
   // filters the registered tool set by TOOL_OPERATIONS rather than by
   // whether the tool happens to call checkMode().
   nevent_help: 'READ',
+
+  // nevent_get_regional_settings — READ. The regional settings (currency, time zone, country, language) of the
+  // session's own organization; no input, no other tenant (nevent-work#279, L8).
+  nevent_get_regional_settings: 'READ',
 });
 
 // ---------------------------------------------------------------------------

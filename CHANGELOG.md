@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`nevent_get_regional_settings` (nevent-work#279).** Read-only tool with no input: the reporting currency, time zone, operating country and communication language of the organization the session works in, each with its source (own, inherited, market or platform default), and `in_use` (whether the organization has adopted them, `I18N_TENANT_CONTEXT`). The tenant comes from the session, never from a parameter; the output carries no other organization's id or name. Calls nev-api `GET /tenants/{tenantId}/regional-context` (ADMIN, OWNER, SUPERADMIN; other roles get `forbidden`). Classified READ, so it is also exposed in bearer-passthrough (snapshot 46 → 47 tools).
+
 ### Security
 - **bearer-passthrough: mandatory service key.** The instance is reachable from outside (no private network), so every request must now carry `X-Nevent-Service-Key` in addition to the user's JWT. `MCP_BEARER_PASSTHROUGH_SERVICE_KEY` (min 32 chars) is required and startup fails without it; `MCP_BEARER_PASSTHROUGH_SERVICE_KEY_PREVIOUS` is accepted during rotation. The key is compared in constant time and checked before `/auth/me`, so outsiders cannot make the server call nev-api; a missing or wrong key gets a detail-free `401`.
 - **bearer-passthrough: tenant only from the verification (fail-closed).** A session whose `/auth/me` answer carries no tenant is refused; the fallback to the unverified JWT `tenantId`/`activeTenantId` claim and `decodeJwtClaims` are removed, and `SessionClients.rotateJwt(token, lockedTenantId)` pins the tenant so a token rotation can never move a session to another tenant.

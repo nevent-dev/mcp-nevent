@@ -188,7 +188,7 @@ Authorization: Bearer <the promoter's nev-api JWT>
   repository. Requests are also capped per IP (600/min, applied before body parsing) and per token (300/min). `GET /health` is unauthenticated for load balancers and returns only `{status, version, commitSha}`.
 
 - **Write policy (off by default).** By default every session is READ-only
-  (46 tools). `MCP_BEARER_PASSTHROUGH_WRITES=human` additionally exposes, to
+  (47 tools). `MCP_BEARER_PASSTHROUGH_WRITES=human` additionally exposes, to
   sessions of a person (`principalType` HUMAN verified in `/auth/me`), 12
   write tools: `nevent_create_segment`, `nevent_update_segment`,
   `nevent_create_template`, `nevent_update_template`, `nevent_clone_template`,

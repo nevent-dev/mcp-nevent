@@ -34,6 +34,7 @@ const EXPECTED_TOOLS: readonly string[] = [
   "nevent_get_paid_ad_group_insights",
   "nevent_get_paid_ad_group_targeting",
   "nevent_get_paid_campaign_insights",
+  "nevent_get_regional_settings",
   "nevent_get_segment",
   "nevent_get_sending_profile",
   "nevent_get_short_url",
