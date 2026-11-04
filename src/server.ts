@@ -312,7 +312,7 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
     registerTemplateTools(server, mongoUri, dataClient, neventApiUrl, templateClient);
 
     // Deliverability tools (sending profile + suppressions from MongoDB)
-    registerDeliverabilityTools(server, mongoUri, dataClient);
+    registerDeliverabilityTools(server, mongoUri, dataClient, neventApiUrl);
   }
 
   // Paid media tools (11 tools) — registered when paidMediaClient is provided

@@ -175,6 +175,41 @@ export function senderIneligibleEnvelope(body: string): NeventErrorEnvelope | nu
 }
 
 /**
+ * Map a 409 `CAMPAIGN_SENDER_UNAVAILABLE` response (nevent-work#323: the sender
+ * chosen for a campaign is not one the organization can send with) to an
+ * actionable error. Returns `null` when the body is not that conflict.
+ *
+ * Nothing was created or scheduled when this fires. `reason` is one of
+ * NOT_FOUND, NOT_MARKETING, NOT_ACTIVE, RETIRED or STARTED.
+ *
+ * @param body - Raw response body text of the 409.
+ */
+export function campaignSenderUnavailableEnvelope(body: string): NeventErrorEnvelope | null {
+  const parsed = parseJsonObject(body);
+  if (errorCodeOf(parsed) !== 'CAMPAIGN_SENDER_UNAVAILABLE') return null;
+  const reason = typeof parsed?.['reason'] === 'string' ? parsed['reason'] : 'UNKNOWN';
+  const sender = typeof parsed?.['senderIdentityId'] === 'string' ? ` ${parsed['senderIdentityId']}` : '';
+  const why: Record<string, string> = {
+    NOT_FOUND: 'it is not a sender of this organization',
+    NOT_MARKETING: 'it is not a marketing sender',
+    NOT_ACTIVE: 'it has not been applied yet (its domain or data are still pending)',
+    RETIRED: 'it has been retired and is no longer available',
+    STARTED: 'the campaign has already started sending with the sender it had',
+  };
+  return {
+    error: {
+      type: 'invalid_request',
+      message:
+        `The sender${sender} cannot be used for this campaign: ${why[reason] ?? 'it is not available'} ` +
+        `(nev-api code CAMPAIGN_SENDER_UNAVAILABLE, reason ${reason}). Nothing was created or scheduled. ` +
+        'List the senders the campaign can use with nevent_get_sending_profile (senders with selectable=true) ' +
+        'and choose one of them, or omit sender_identity_id to use the default sender.',
+      code: 'sender_unavailable',
+    },
+  };
+}
+
+/**
  * Map a 409 `template_edit_conflict` response (nev-api compare-and-set on
  * template writes) to an actionable error. Returns `null` when the body is not
  * that conflict.

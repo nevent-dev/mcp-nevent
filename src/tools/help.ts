@@ -205,7 +205,7 @@ const HELP_CAMPAIGNS = `
 - nevent_get_campaign_unsubscribes(campaign_id, view?) — unsubscribes/complaints of one email campaign (summary | reasons | segment_breakdown)
 
 ## Write tools (require STANDARD/FULL mode)
-- nevent_create_campaign(...) — creates in DRAFT state ONLY (cannot create as SENT)
+- nevent_create_campaign(...) — creates in DRAFT state ONLY (cannot create as SENT). sender_identity_id (optional): the sender of an email campaign, one of nevent_get_sending_profile → senders with selectable=true; omitted = the default sender
 - nevent_schedule_campaign(campaign_id, scheduled_time, confirmed=true) — schedule a DRAFT
 
 ## Which performance tool to use
@@ -219,6 +219,7 @@ const HELP_CAMPAIGNS = `
 - create_campaign: max 5 per hour per tenant (in-memory sliding window)
 - schedule_campaign: requires confirmed=true (explicit confirmation gate)
 - schedule_campaign 409 SENDER_INELIGIBLE: the sender or domain is not eligible; the campaign stays DRAFT. Check nevent_get_sending_profile, fix the sender/domain, schedule again. A scheduled campaign can be paused later with AUTO_PAUSED_SENDER_INELIGIBLE
+- create_campaign / schedule_campaign 409 CAMPAIGN_SENDER_UNAVAILABLE (sender_unavailable): the chosen sender is not one the campaign can use (not of this organization, not applied, retired); nothing is created or scheduled. Choose a selectable sender from nevent_get_sending_profile or omit sender_identity_id
 
 ## Credits
 Sends debit a credit pool. Call nevent_quote_campaign before nevent_schedule_campaign:
@@ -266,7 +267,7 @@ const HELP_DELIVERABILITY = `
 # Deliverability Tools Guide
 
 ## Tools
-- nevent_get_sending_profile — warm-up state, throttle settings, validated domains
+- nevent_get_sending_profile — warm-up state, throttle settings, validated domains, and senders: the senders an email campaign can use (selectable, with the reasons when not) and the default sender
 - nevent_get_suppressions_summary — suppression counts by reason (lifetime + 30-day rolling)
 - nevent_get_campaign_deliverability(campaign_id, view?, bounce_type?) — per campaign: sent/delivered/bounces/complaints, bounce reasons (soft|hard) and per-segment breakdown
 - nevent_get_campaign_unsubscribes(campaign_id, view?) — per campaign: unsubscribes, reasons and per-segment breakdown

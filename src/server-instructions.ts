@@ -37,6 +37,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 7. **"Create per-user tracking links"** → nevent_create_short_url → nevent_create_bulk_user_short_urls → nevent_get_short_url_campaign_metrics
 8. **"Where do an event's sales come from?"** → nevent_list_events → nevent_event_sales_provenance(view=overview, then summary/daily/campaigns)
 9. **"Why did this campaign bounce or lose subscribers?"** → nevent_get_campaign_deliverability / nevent_get_campaign_unsubscribes
+10. **"Send this campaign as another of our senders"** → nevent_get_sending_profile (senders: selectable ones and the default) → nevent_create_campaign(sender_identity_id=...); without sender_identity_id the campaign uses the default sender
 
 ## MANDATORY: Analytics query rules
 - ALWAYS call nevent_analytics_table_schema BEFORE querying to discover exact field names. NEVER guess.
