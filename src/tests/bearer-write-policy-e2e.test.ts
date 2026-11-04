@@ -132,8 +132,8 @@ describe('bearer-passthrough write policy over HTTP', () => {
     const { human, service } = principals();
     const h = await toolsFor(human);
     const s = await toolsFor(service);
-    // 38 = READ tools available without MONGODB_URI (46 with it).
-    expect(h.names).toHaveLength(38);
+    // 39 = READ tools available without MONGODB_URI (47 with it).
+    expect(h.names).toHaveLength(39);
     expect(s.names).toEqual(h.names);
     expect(h.names).not.toContain('nevent_create_campaign');
   });
@@ -143,13 +143,13 @@ describe('bearer-passthrough write policy over HTTP', () => {
     const { human, service } = principals();
     const h = await toolsFor(human);
     const s = await toolsFor(service);
-    // Without MONGODB_URI the template writes are not registered: 38 READ + 7 writes
-    // (the full 46 + 12 = 58 with Mongo is pinned in bearer-write-policy-snapshot.test.ts).
-    expect(h.names).toHaveLength(45);
+    // Without MONGODB_URI the template writes are not registered: 39 READ + 7 writes
+    // (the full 47 + 12 = 59 with Mongo is pinned in bearer-write-policy-snapshot.test.ts).
+    expect(h.names).toHaveLength(46);
     expect(h.names).toContain('nevent_schedule_campaign');
     expect(h.names).toContain('nevent_create_segment');
     expect(h.names).not.toContain('nevent_upload_image');
-    expect(s.names).toHaveLength(38);
+    expect(s.names).toHaveLength(39);
     expect(s.names).not.toContain('nevent_create_campaign');
   });
 
