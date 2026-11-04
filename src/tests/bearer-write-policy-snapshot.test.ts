@@ -1,9 +1,9 @@
 /**
  * NEV-1854 — exact tool lists per (principal, writes flag) in
  * bearer-passthrough. The READ-only list (flag off, and SERVICE with the flag
- * on) must stay byte-for-byte the 46 tools pinned in
+ * on) must stay byte-for-byte the 47 tools pinned in
  * `bearer-passthrough-tool-snapshot.test.ts`; HUMAN with the flag on is those
- * 46 plus the 12 reviewed write tools.
+ * 47 plus the 12 reviewed write tools.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -48,19 +48,19 @@ function registeredTools(principal: PrincipalType, mode: BearerWritesMode): stri
 describe('bearer-passthrough per-session tool lists', () => {
   const readOnly = registeredTools('HUMAN', 'off');
 
-  it('flag off: 46 READ tools for HUMAN and SERVICE (unchanged)', () => {
-    expect(readOnly).toHaveLength(46);
+  it('flag off: 47 READ tools for HUMAN and SERVICE (unchanged)', () => {
+    expect(readOnly).toHaveLength(47);
     expect(registeredTools('SERVICE', 'off')).toEqual(readOnly);
   });
 
-  it('flag on + SERVICE: still exactly the 46 READ tools', () => {
+  it('flag on + SERVICE: still exactly the 47 READ tools', () => {
     expect(registeredTools('SERVICE', 'human')).toEqual(readOnly);
   });
 
-  it('flag on + HUMAN: 46 READ + the 12 allowlisted writes, nothing else', () => {
+  it('flag on + HUMAN: 47 READ + the 12 allowlisted writes, nothing else', () => {
     const human = registeredTools('HUMAN', 'human');
     expect(human).toEqual([...readOnly, ...WRITE_TOOLS].sort());
-    expect(human).toHaveLength(58);
+    expect(human).toHaveLength(59);
   });
 
   it('flag on + HUMAN never exposes the excluded tools', () => {

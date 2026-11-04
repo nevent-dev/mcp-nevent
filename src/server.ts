@@ -46,6 +46,7 @@ import { DataClient } from './clients/data-client.js';
 import { SessionClients } from './clients/session-clients.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
 import { registerTenantTools } from './tools/tenants.js';
+import { registerRegionalContextTools } from './tools/regional-context.js';
 import { registerSegmentTools } from './tools/segments.js';
 import { registerCampaignTools } from './tools/campaigns.js';
 import { registerTemplateTools } from './tools/templates.js';
@@ -286,6 +287,9 @@ export function createNeventServer(options: CreateNeventServerOptions): McpServe
 
     // Tenant management (list/switch/reset)
     registerTenantTools(server, sc, neventApiUrl);
+
+    // Regional settings of the session's own organization (nevent-work#279, L8)
+    registerRegionalContextTools(server, sc, neventApiUrl);
 
     // Sprint 2: Segment management (list/get/create/update via nev-api)
     registerSegmentTools(server, dataClient, neventApiUrl);

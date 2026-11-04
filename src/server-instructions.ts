@@ -25,6 +25,7 @@ export const NEVENT_MCP_INSTRUCTIONS = `
 - **Paid Media (11 tools):** nevent_paid_ads_status | nevent_paid_ads_health | nevent_list_paid_campaigns | nevent_get_paid_campaign_insights | nevent_paid_attribution | nevent_list_paid_ad_groups | nevent_get_paid_ad_group_comparative_stats | nevent_get_paid_ad_group_targeting | nevent_list_paid_ads | nevent_get_paid_ad_creative | nevent_get_paid_ad_group_insights
 - **Short URLs (9 tools):** nevent_list_short_urls | nevent_get_short_url | nevent_get_short_url_metrics | nevent_get_short_url_campaign_metrics | nevent_get_short_url_clicks | nevent_list_short_url_user_links | nevent_create_short_url | nevent_update_short_url | nevent_create_bulk_user_short_urls
 - **Multi-tenant (3 tools):** nevent_list_tenants | nevent_switch_tenant | nevent_reset_tenant
+- **Regional settings (1 tool):** nevent_get_regional_settings — currency, time zone, country and language of the organization in session; format amounts and dates with them when in_use is true
 - **Help (1 tool):** nevent_help
 
 ## Common workflows
