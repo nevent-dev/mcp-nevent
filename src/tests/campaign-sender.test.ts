@@ -153,6 +153,50 @@ describe('nevent_schedule_campaign — 409 CAMPAIGN_SENDER_UNAVAILABLE', () => {
 
     expect(error.code).toBe('sender_unavailable');
     expect(error.message).toContain('RETIRED');
+    // n1: schedule has no sender_identity_id to omit; it says what the caller can do instead.
+    expect(error.message).not.toContain('omit sender_identity_id');
+    expect(error.message).toContain('campaign editor');
+  });
+});
+
+describe('nevent_send_test_template — campaign_id', () => {
+  async function setupTemplateTools(fetchImpl: ReturnType<typeof vi.fn>) {
+    const { registerTemplateTools } = await import('../tools/templates.js');
+    const { DataClient } = await import('../clients/data-client.js');
+    const { PaidMediaClient } = await import('../clients/paid-media-client.js');
+    const { SessionClients } = await import('../clients/session-clients.js');
+    const dataClient = new DataClient({ baseUrl: 'https://data.nevent.es', jwtToken: 'jwt' }, 'tenant-323');
+    const sessionClients = new SessionClients(dataClient,
+      new PaidMediaClient({ baseUrl: 'https://api.nevent.es', jwtToken: 'jwt' }), 'https://api.nevent.es', 'tenant-323');
+    const server = makeMockServer();
+    registerTemplateTools(server as never, 'mongodb://localhost:27017', dataClient, 'https://api.nevent.es',
+      sessionClients.templateClient);
+    vi.stubGlobal('fetch', fetchImpl);
+    return server;
+  }
+
+  const sent = (fetchMock: ReturnType<typeof vi.fn>) =>
+    JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+
+  it('sends campaignId to POST /templates/{id}/test when campaign_id is given', async () => {
+    const fetchMock = vi.fn(async () => response(200, { success: true, sentTo: ['qa@example.com'] }));
+    const server = await setupTemplateTools(fetchMock);
+
+    await server.invoke('nevent_send_test_template', {
+      template_id: 'tpl', emails: ['qa@example.com'], campaign_id: 'camp_1',
+    });
+
+    expect(String(fetchMock.mock.calls[0]![0])).toContain('/templates/tpl/test');
+    expect(sent(fetchMock)['campaignId']).toBe('camp_1');
+  });
+
+  it('omits campaignId without campaign_id (the default sender, as before)', async () => {
+    const fetchMock = vi.fn(async () => response(200, { success: true, sentTo: ['qa@example.com'] }));
+    const server = await setupTemplateTools(fetchMock);
+
+    await server.invoke('nevent_send_test_template', { template_id: 'tpl', emails: ['qa@example.com'] });
+
+    expect(sent(fetchMock)).not.toHaveProperty('campaignId');
   });
 });
 

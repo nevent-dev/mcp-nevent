@@ -508,7 +508,7 @@ export function registerCampaignActionTools(
         if (!scheduleResponse.ok) {
           const body = await scheduleResponse.text();
           if (scheduleResponse.status === 409) {
-            const senderConflict = senderIneligibleEnvelope(body) ?? campaignSenderUnavailableEnvelope(body);
+            const senderConflict = senderIneligibleEnvelope(body) ?? campaignSenderUnavailableEnvelope(body, 'schedule');
             if (senderConflict) return err(senderConflict);
           }
           return err({

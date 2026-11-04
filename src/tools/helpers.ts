@@ -183,8 +183,12 @@ export function senderIneligibleEnvelope(body: string): NeventErrorEnvelope | nu
  * NOT_FOUND, NOT_MARKETING, NOT_ACTIVE, RETIRED or STARTED.
  *
  * @param body - Raw response body text of the 409.
+ * @param from - The tool that got it: what the caller can do next differs (create takes a sender, schedule does not).
  */
-export function campaignSenderUnavailableEnvelope(body: string): NeventErrorEnvelope | null {
+export function campaignSenderUnavailableEnvelope(
+  body: string,
+  from: 'create' | 'schedule' = 'create'
+): NeventErrorEnvelope | null {
   const parsed = parseJsonObject(body);
   if (errorCodeOf(parsed) !== 'CAMPAIGN_SENDER_UNAVAILABLE') return null;
   const reason = typeof parsed?.['reason'] === 'string' ? parsed['reason'] : 'UNKNOWN';
@@ -202,8 +206,12 @@ export function campaignSenderUnavailableEnvelope(body: string): NeventErrorEnve
       message:
         `The sender${sender} cannot be used for this campaign: ${why[reason] ?? 'it is not available'} ` +
         `(nev-api code CAMPAIGN_SENDER_UNAVAILABLE, reason ${reason}). Nothing was created or scheduled. ` +
-        'List the senders the campaign can use with nevent_get_sending_profile (senders with selectable=true) ' +
-        'and choose one of them, or omit sender_identity_id to use the default sender.',
+        (from === 'create'
+          ? 'List the senders the campaign can use with nevent_get_sending_profile (senders with selectable=true) ' +
+            'and choose one of them, or omit sender_identity_id to use the default sender.'
+          : 'The draft keeps that sender: choose another one for it in the Nevent campaign editor, or create a new ' +
+            'draft with nevent_create_campaign and a sender_identity_id that nevent_get_sending_profile lists as ' +
+            'selectable, then schedule that draft.'),
       code: 'sender_unavailable',
     },
   };
